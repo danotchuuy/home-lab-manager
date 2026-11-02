@@ -2,6 +2,7 @@ import type {
   Account,
   APIKeyInfo,
   KeyRole,
+  HTTPSStatus,
   SSHKey,
   App,
   AuthConfig,
@@ -504,6 +505,11 @@ export const api = {
   /** Path of a stream of cloudflared's log lines. */
   tunnelLogsUrl: (tail = 500) => withTail("/api/tunnel/logs", tail),
   connectionLogsUrl: (id: string, tail = 500) => withTail(`/api/connections/${encodeURIComponent(id)}/logs`, tail),
+
+  httpsStatus: () => json<HTTPSStatus>("/api/system/https"),
+  saveHTTPS: (s: { enabled: boolean; domain: string; email: string; staging: boolean }) =>
+    json<HTTPSStatus>("/api/system/https", { method: "PUT", body: JSON.stringify(s) }),
+  renewHTTPS: () => json<HTTPSStatus>("/api/system/https/renew", { method: "POST" }),
 
   /** Confirms it's the signed-in person, for changes that could give lasting access. */
   confirm: (password: string) => json<{ confirmedUntil: string }>("/api/auth/confirm", { method: "POST", body: JSON.stringify({ password }) }),

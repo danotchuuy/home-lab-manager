@@ -10,6 +10,7 @@ import { MyAccount } from "../components/MyAccount";
 import { ServerGroups } from "../components/ServerGroups";
 import { APIKeys } from "../components/APIKeys";
 import { SignInSettings } from "../components/SignInSettings";
+import { HTTPSSettings } from "../components/HTTPSSettings";
 import { SSOSettings } from "../components/SSOSettings";
 import { UnifiSettings } from "../components/UnifiSettings";
 import type { DeployEvent, SystemInfo } from "../types";
@@ -268,6 +269,11 @@ export function SystemPage() {
       <section className="card" id="sign-in">
         <h2>Sign-in</h2>
         <SignInSettings />
+      </section>
+
+      <section className="card" id="https">
+        <h2>HTTPS</h2>
+        <HTTPSSettings />
       </section>
 
       <section className="card" id="server-groups">

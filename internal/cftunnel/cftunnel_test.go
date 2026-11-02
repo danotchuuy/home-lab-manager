@@ -627,3 +627,35 @@ func TestLegacyRecordComment(t *testing.T) {
 		}
 	}
 }
+
+func TestSetTXT(t *testing.T) {
+	s, _, fake := newService(t, fakeServers{})
+	ctx := context.Background()
+	if s.Connected() {
+		t.Error("connected before saving an account")
+	}
+	if _, err := s.SetTXT(ctx, "_acme-challenge.hlm.example.com", "v"); err == nil {
+		t.Error("made a record without an account")
+	}
+	if err := s.SaveAccount(ctx, AccountInput{Token: cloudflaretest.Token}); err != nil {
+		t.Fatal(err)
+	}
+	if !s.Connected() {
+		t.Error("not connected after saving an account")
+	}
+	// The most specific zone is used.
+	remove, err := s.SetTXT(ctx, "_acme-challenge.hlm.Games.Example.org.", "token-value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recs := fake.Records("z2")
+	if len(recs) != 1 || recs[0].Type != "TXT" || recs[0].Name != "_acme-challenge.hlm.games.example.org" || recs[0].Content != "token-value" {
+		t.Fatalf("records = %+v", recs)
+	}
+	if err := remove(ctx); err != nil || len(fake.Records("z2")) != 0 {
+		t.Errorf("remove: %v, left %+v", err, fake.Records("z2"))
+	}
+	if _, err := s.SetTXT(ctx, "_acme-challenge.hlm.example.net", "v"); err == nil || !strings.Contains(err.Error(), "none of") {
+		t.Errorf("a name in no zone: %v", err)
+	}
+}

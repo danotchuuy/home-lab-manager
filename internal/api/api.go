@@ -38,23 +38,26 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/remote"
 	"github.com/danotchuuy/home-lab-manager/internal/s3"
 	"github.com/danotchuuy/home-lab-manager/internal/selfupdate"
+	"github.com/danotchuuy/home-lab-manager/internal/tlscert"
 	"github.com/danotchuuy/home-lab-manager/internal/unifi"
 	"github.com/danotchuuy/home-lab-manager/web"
 )
 
 // Options configures the API server.
 type Options struct {
-	Docker      *docker.Client
-	Catalog     *catalog.Catalog
-	Manager     *manager.Manager
-	Host        *hostmetrics.Collector
-	Updater     *selfupdate.Updater
-	Forwarding  *forwarding.Service
-	Proxy       *proxy.Service
-	Tunnel      *cftunnel.Service
-	Backup      *backup.Service
-	Auth        *auth.Service
-	Groups      *rbac.Store
+	Docker     *docker.Client
+	Catalog    *catalog.Catalog
+	Manager    *manager.Manager
+	Host       *hostmetrics.Collector
+	Updater    *selfupdate.Updater
+	Forwarding *forwarding.Service
+	Proxy      *proxy.Service
+	Tunnel     *cftunnel.Service
+	Backup     *backup.Service
+	Auth       *auth.Service
+	Groups     *rbac.Store
+	// HTTPS serves hlm with a Let's Encrypt certificate, if it's turned on.
+	HTTPS       *tlscert.Service
 	Version     string
 	AppdataRoot string
 	// Token, when set, must be sent as a bearer token (or ?token= for
@@ -2572,4 +2575,45 @@ func (s *server) deleteOIDC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- HTTPS ---
+
+var errNoHTTPS = errors.New("HTTPS isn't available in this build")
+
+func (s *server) httpsStatus(w http.ResponseWriter, r *http.Request) {
+	if s.HTTPS == nil {
+		writeError(w, http.StatusNotFound, errNoHTTPS)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.HTTPS.Status())
+}
+
+// saveHTTPS turns HTTPS on or off. It changes how everyone reaches hlm, so it
+// takes a confirmed session, like the other sign-in settings.
+func (s *server) saveHTTPS(w http.ResponseWriter, r *http.Request) {
+	if s.HTTPS == nil {
+		writeError(w, http.StatusNotFound, errNoHTTPS)
+		return
+	}
+	var in tlscert.Settings
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8<<10)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	st, err := s.HTTPS.Save(in)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+func (s *server) renewHTTPS(w http.ResponseWriter, r *http.Request) {
+	if s.HTTPS == nil {
+		writeError(w, http.StatusNotFound, errNoHTTPS)
+		return
+	}
+	s.HTTPS.Renew()
+	writeJSON(w, http.StatusAccepted, s.HTTPS.Status())
 }

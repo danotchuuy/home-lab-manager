@@ -57,6 +57,7 @@ var expected = map[string]string{
 	// Changes that could give lasting access take a confirmed browser
 	// session, so even an admin's API key or token is refused.
 	"PUT /api/auth/config":                   "confirmed",
+	"PUT /api/system/https":                  "confirmed",
 	"POST /api/auth/keys":                    "confirmed",
 	"PUT /api/auth/keys/{id}":                "confirmed",
 	"PUT /api/auth/oidc":                     "confirmed",

@@ -865,6 +865,39 @@ itself permanent. They can still revoke: delete keys, SSH keys, accounts and gro
 first account, so a new install can be set up, and `hlm reset-password` on the host is the way back in if every admin
 is locked out. While sign-in isn't required, everyone is an admin anyway, so nothing asks.
 
+### HTTPS
+
+hlm serves plain HTTP until you turn HTTPS on under **System → HTTPS**. Passwords, session cookies and tokens then
+travel encrypted. It's optional: left off, hlm works as before, and its session cookies aren't marked `Secure`, because
+browsers don't send `Secure` cookies back over plain HTTP.
+
+The certificate is a free one from Let's Encrypt, proved with a DNS record that hlm makes through the
+[Cloudflare connection](#web-addresses-with-cloudflare-tunnel) and removes after, so hlm needn't be reachable from the
+internet. You need:
+
+- a name for hlm in a Cloudflare zone, like `hlm.home.example.com`, that points at the server on your network: a local
+  DNS entry (in your router or Pi-hole), or a Cloudflare record with its private address (`192.168.11.101`). Let's
+  Encrypt doesn't issue certificates for IP addresses, so open hlm by the name.
+- the Cloudflare connection saved, with a token that can edit that zone's DNS (which tunnel hostnames need anyway).
+
+hlm then gets a certificate, renews it when a third of its life is left, and serves HTTPS on the same port as HTTP
+(`https://hlm.home.example.com:8080`). Only once there is a certificate is plain HTTP sent to HTTPS, so hlm stays
+reachable while it's being issued or if renewing fails, until the certificate expires. The redirect is temporary, so
+turning HTTPS off works straight away; connections already open close within two minutes. Cookies are `Secure`
+whenever the request came over HTTPS. **Use Let's Encrypt's staging server** for trying it out: it allows many more
+attempts, but browsers don't trust its certificates.
+
+Things to change when you turn it on:
+
+- Anything that reaches hlm at `http://`, like a tunnel route to `http://…:8080` or a script, gets a redirect. Point
+  it at `https://` and the name instead.
+- With single sign-on, the redirect URL registered with the provider (`http://…/auth/callback`) has to become
+  `https://`, and the **Public URL** in hlm's single sign-on settings too.
+- The certificate's name is public: Let's Encrypt logs every certificate it issues.
+
+If HTTPS goes wrong and you can't get in, start hlm with `HLM_TLS=off` to serve plain HTTP only, whatever is saved.
+Another ACME CA, like `step-ca` for a private CA, works with `HLM_ACME_DIRECTORY` and `HLM_ACME_CA`.
+
 ### Single sign-on with Authelia (OpenID Connect)
 
 hlm sends the browser to the provider, which signs the person in (with two-factor, if the provider asks for it) and
@@ -990,6 +1023,10 @@ accounts; single sign-on users don't have one in hlm, so they use API keys.
 | `HLM_DATA_DIR`     | `./data`                      | Feed cache and default appdata location.                   |
 | `HLM_APPDATA_ROOT` | `$HLM_DATA_DIR/appdata`       | Host directory that replaces Unraid's `/mnt/user/appdata`. |
 | `HLM_TOKEN`        | (none)                        | If set, API requests need `Authorization: Bearer <token>`. |
+| `HLM_TLS`          | (none)                        | `off` ignores the [HTTPS](#https) setting and serves plain HTTP only. |
+| `HLM_ACME_DIRECTORY` | Let's Encrypt               | Another ACME CA's directory URL for HTTPS certificates, e.g. step-ca. |
+| `HLM_ACME_CA`      | (none)                        | PEM file of extra CA certificates to trust for that ACME CA. |
+| `HLM_ACME_RESOLVER`| `1.1.1.1:53`                  | DNS server checked for the challenge record before the CA is asked to look. |
 | `HLM_WEB_DIR`      | (none)                        | Directory of built frontend files to serve (`web/dist`).   |
 | `HLM_FEED_URL`     | CA feed                       | Override the application feed URL.                         |
 | `HLM_FEED_REFRESH` | `6h`                          | How often to refresh the feed.                             |
@@ -1031,6 +1068,7 @@ when the `HLM_*` one isn't set.
 | `DELETE /api/auth/accounts/{username}`         | Removes an account.                                                               |
 | `GET/POST /api/auth/accounts/{username}/ssh-keys`, `PUT/DELETE …/ssh-keys/{id}` | [SSH keys](#ssh-keys) of an account, for an admin or the account itself. `POST {publicKey, name?, allowFrom?}` and `PUT {allowFrom}` need a [confirmed](#confirming-its-you) session. |
 | `POST /api/auth/confirm`                       | Confirm a password session for 10 minutes: `{password}`. Single sign-on confirms at `/auth/login?confirm=1`. |
+| `GET/PUT /api/system/https`, `POST /api/system/https/renew` | [HTTPS](#https) settings and certificate status; `PUT {enabled, domain, email?, staging?}` needs a [confirmed](#confirming-its-you) session. |
 | `POST /api/auth/download-ticket`               | `{url}` of a backup download returns a URL that works once, for a minute, from the same address: for downloads when signed in with a token. |
 | `POST /api/auth/ssh/challenge`, `POST /api/auth/ssh/login` | Sign in with an SSH key: `{username}` returns `{challenge}`; `{challenge, signature}` returns `{token, expires}`. |
 | `GET/POST /api/auth/keys`, `PUT/DELETE /api/auth/keys/{id}` | [API keys](#api-keys); `POST {name, days, role, allowFrom?}` returns the key, once; `PUT {allowFrom}`. Both need a [confirmed](#confirming-its-you) session. |

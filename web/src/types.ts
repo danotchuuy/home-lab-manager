@@ -1092,3 +1092,22 @@ export interface OIDCTestResult {
   scopes?: string[];
   pkce: boolean;
 }
+
+/** HTTPS with a Let's Encrypt certificate (GET /api/system/https). */
+export interface HTTPSStatus {
+  enabled: boolean;
+  domain?: string;
+  email?: string;
+  staging?: boolean;
+  /** HTTPS is served and plain HTTP sent to it. */
+  active: boolean;
+  state: "off" | "waiting" | "issuing" | "active" | "error";
+  error?: string;
+  /** HLM_TLS=off overrides the settings. */
+  off?: boolean;
+  cloudflare: boolean;
+  notAfter?: string;
+  issued?: string;
+  issuer?: string;
+  certFor?: string;
+}

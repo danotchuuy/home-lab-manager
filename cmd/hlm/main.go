@@ -4,10 +4,13 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -31,6 +34,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
 	"github.com/danotchuuy/home-lab-manager/internal/selfupdate"
+	"github.com/danotchuuy/home-lab-manager/internal/tlscert"
 )
 
 // version is set at build time with -ldflags "-X main.version=v1.2.3".
@@ -276,6 +280,21 @@ func run(log *slog.Logger) error {
 	}
 
 	groups := rbac.NewStore(store, log)
+	// HTTPS is optional, set up on the System page; HLM_TLS=off ignores the
+	// setting, to get back in over plain HTTP if it goes wrong.
+	tlsOff := strings.EqualFold(env("HLM_TLS", ""), "off")
+	if tlsOff {
+		log.Warn("HLM_TLS=off: serving plain HTTP only")
+	}
+	acmeClient, err := acmeHTTPClient(env("HLM_ACME_CA", ""))
+	if err != nil {
+		return fmt.Errorf("HLM_ACME_CA: %w", err)
+	}
+	certs := tlscert.New(tlscert.Options{
+		Secrets: store, DNS: tunnel, Log: log, Off: tlsOff,
+		Directory: env("HLM_ACME_DIRECTORY", ""), HTTPClient: acmeClient, Resolver: env("HLM_ACME_RESOLVER", ""),
+	})
+	go certs.Run(ctx)
 	handler := api.Handler(api.Options{
 		Docker:      dc,
 		Catalog:     cat,
@@ -290,6 +309,7 @@ func run(log *slog.Logger) error {
 		Version:     version,
 		AppdataRoot: appdataRoot,
 		Groups:      groups,
+		HTTPS:       certs,
 		Token:       env("HLM_TOKEN", ""),
 		WebDir:      env("HLM_WEB_DIR", ""),
 		Log:         log,
@@ -297,13 +317,21 @@ func run(log *slog.Logger) error {
 
 	srv := &http.Server{
 		Addr:              listen,
-		Handler:           handler,
+		Handler:           certs.Redirect(handler),
 		ReadHeaderTimeout: 10 * time.Second,
+		// Close idle keep-alive connections, so that turning HTTPS off (or
+		// on) reaches browsers within a couple of minutes.
+		IdleTimeout: 2 * time.Minute,
+	}
+	ln, err := net.Listen("tcp", listen)
+	if err != nil {
+		return err
 	}
 	errc := make(chan error, 1)
 	go func() {
-		log.Info("listening", "addr", listen, "appdata", appdataRoot)
-		errc <- srv.ListenAndServe()
+		log.Info("listening", "addr", listen, "appdata", appdataRoot, "https", certs.Active())
+		// HTTPS and HTTP share the port; see tlscert.Listener.
+		errc <- srv.Serve(certs.Listener(ln))
 	}()
 
 	select {
@@ -378,4 +406,26 @@ func env(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// acmeHTTPClient talks to the ACME CA, trusting the extra CA certificates in
+// caFile if it's set: for a private ACME CA, like step-ca.
+func acmeHTTPClient(caFile string) (*http.Client, error) {
+	c := &http.Client{Timeout: 30 * time.Second}
+	if caFile == "" {
+		return c, nil
+	}
+	pem, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, err
+	}
+	pool, err := x509.SystemCertPool()
+	if err != nil {
+		pool = x509.NewCertPool()
+	}
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("%s has no PEM certificates", caFile)
+	}
+	c.Transport = &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}
+	return c, nil
 }
