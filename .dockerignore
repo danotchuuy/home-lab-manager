@@ -1,0 +1,6 @@
+.git
+.idea
+bin
+data
+web/node_modules
+web/dist

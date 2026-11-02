@@ -1,0 +1,52 @@
+services:
+  # The service and its volume keep the short name from before it changed
+  # from gsh to hlm, so "docker compose up" carries on with the same
+  # container and data.
+  gsh:
+    # Published by the release workflow. hlm can update itself to new
+    # releases from its web UI; it keeps following this tag when it does.
+    image: danotchuuy/home-lab-manager:latest
+    # To run your own build instead, replace the image line with:
+    # build: .
+    container_name: home-lab-manager
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # Game server data folders are bind-mounted by the Docker daemon, so this
+      # must be a path on the machine running the game servers, not inside this
+      # container.
+      HLM_APPDATA_ROOT: /srv/hlm/appdata
+      # Anyone who can reach this API can run containers as root on the host.
+      # Set a token unless the port is only reachable from a trusted network.
+      HLM_TOKEN: ${HLM_TOKEN:-${GSH_TOKEN:-}}
+      # Optional: key for encrypting stored credentials (e.g. UniFi). Without
+      # it, a key file is created in the data volume.
+      HLM_SECRET_KEY: ${HLM_SECRET_KEY:-${GSH_SECRET_KEY:-}}
+      # The Host page reads the host's /proc and filesystems through the
+      # read-only mounts below. Remove these (and the mounts) to turn it off.
+      HLM_HOST_PROC: /host/proc
+      HLM_HOST_ROOT: /host/rootfs
+
+      # Option B: manage a remote Docker host instead of the local socket.
+      # Remove the docker.sock volume below and uncomment these. The certs
+      # directory must hold ca.pem, cert.pem and key.pem.
+      # DOCKER_HOST: tcp://game-host.lan:2376
+      # DOCKER_TLS_VERIFY: "1"
+      # DOCKER_CERT_PATH: /certs
+    volumes:
+      # Option A (default): manage the Docker daemon on this machine.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Host metrics and data folder sizes (read-only). Disks mounted under /
+      # are included as they were when hlm started; restart hlm to see disks
+      # mounted later. (Adding ",rslave" would show them live, but only works
+      # when / is a shared mount on the host, which isn't the case on Unraid,
+      # Docker Desktop or WSL.)
+      - /proc:/host/proc:ro
+      - /:/host/rootfs:ro
+      # Option B: client certificates for a remote Docker host.
+      # - ./certs:/certs:ro
+      - gsh-data:/data
+
+volumes:
+  gsh-data:

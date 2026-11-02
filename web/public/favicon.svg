@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Home Lab Manager: a house holding a server rack, on the app's accent orange. -->
+  <rect width="64" height="64" rx="14" fill="#e8590c"/>
+  <path d="M32 10 55 30h-7v23H16V30H9z" fill="#fff" stroke="#fff" stroke-width="2" stroke-linejoin="round"/>
+  <rect x="21.5" y="33" width="21" height="7" rx="2" fill="#e8590c"/>
+  <rect x="21.5" y="43" width="21" height="7" rx="2" fill="#e8590c"/>
+  <circle cx="37.5" cy="36.5" r="1.7" fill="#fff"/>
+  <circle cx="37.5" cy="46.5" r="1.7" fill="#fff"/>
+</svg>

@@ -31,3 +31,13 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Build output and local state
+/bin/
+/dist/
+/data/
+web/node_modules/
+web/dist/
+
+# Local credentials
+.keys

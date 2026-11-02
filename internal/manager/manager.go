@@ -132,7 +132,11 @@ type Server struct {
 	Autostart     bool            `json:"autostart"`
 	Update        *UpdateStatus   `json:"update,omitempty"`
 	Request       *deploy.Request `json:"request,omitempty"`
-	imageID       string
+	// Access is the caller's role on the server, and Groups the server
+	// groups they can see it in. The API fills these in per caller.
+	Access  string   `json:"access,omitempty"`
+	Groups  []string `json:"groups,omitempty"`
+	imageID string
 }
 
 // startsOnBoot reports whether a restart policy starts the container when the
@@ -312,7 +316,18 @@ type Event struct {
 }
 
 // Install pulls the image for req and creates and starts the container.
-func (m *Manager) Install(ctx context.Context, req deploy.Request, emit func(Event)) (srv Server, err error) {
+func (m *Manager) Install(ctx context.Context, req deploy.Request, emit func(Event)) (Server, error) {
+	return m.installJob(ctx, req, false, emit)
+}
+
+// InstallConfined creates and starts a server that can't reach the host (see
+// deploy.Confine), or refuses to if the template needs more than that. It
+// stays confined whenever it's recreated.
+func (m *Manager) InstallConfined(ctx context.Context, req deploy.Request, emit func(Event)) (Server, error) {
+	return m.installJob(ctx, req, true, emit)
+}
+
+func (m *Manager) installJob(ctx context.Context, req deploy.Request, confined bool, emit func(Event)) (srv Server, err error) {
 	job := Job{Kind: "install", Server: req.Name}
 	if app, ok := m.App(req.TemplateID); ok {
 		job.App, job.Icon, job.Image = app.Name, app.Icon, app.Repository
@@ -322,13 +337,26 @@ func (m *Manager) Install(ctx context.Context, req deploy.Request, emit func(Eve
 		return Server{}, err
 	}
 	defer func() { finish(err) }()
-	return m.install(ctx, req, emit)
+	return m.install(ctx, req, confined, emit)
 }
 
-func (m *Manager) install(ctx context.Context, req deploy.Request, emit func(Event)) (Server, error) {
+func (m *Manager) install(ctx context.Context, req deploy.Request, confined bool, emit func(Event)) (Server, error) {
+	if confined {
+		if app, ok := m.App(req.TemplateID); ok {
+			req = deploy.ConfinePaths(app, req, m.appdataRoot)
+		}
+	}
 	spec, err := m.build(ctx, req)
 	if err != nil {
 		return Server{}, err
+	}
+	if confined {
+		if bad := deploy.Confine(spec, m.appdataRoot); len(bad) > 0 {
+			return Server{}, errors.New("not allowed without an admin: " + strings.Join(bad, "; "))
+		}
+		if err := m.checkFreshData(ctx, spec.Name); err != nil {
+			return Server{}, err
+		}
 	}
 	if err := m.checkLANAddress(ctx, spec, req, nil, emit); err != nil {
 		return Server{}, err
@@ -372,17 +400,23 @@ func (m *Manager) install(ctx context.Context, req deploy.Request, emit func(Eve
 // kept, renamed, until the new one has been created, so a bad configuration
 // leaves the server as it was.
 func (m *Manager) Reconfigure(ctx context.Context, id string, req deploy.Request, emit func(Event)) (Server, error) {
-	return m.recreateJob(ctx, "reconfigure", id, &req, emit)
+	return m.recreateJob(ctx, "reconfigure", id, &req, false, emit)
+}
+
+// ReconfigureAsAdmin is Reconfigure for an admin, who may take a server out of
+// confinement by giving it what a confined server can't have.
+func (m *Manager) ReconfigureAsAdmin(ctx context.Context, id string, req deploy.Request, emit func(Event)) (Server, error) {
+	return m.recreateJob(ctx, "reconfigure", id, &req, true, emit)
 }
 
 // Update pulls the latest image for a server and recreates it with the same
 // settings.
 func (m *Manager) Update(ctx context.Context, id string, emit func(Event)) (Server, error) {
-	return m.recreateJob(ctx, "update", id, nil, emit)
+	return m.recreateJob(ctx, "update", id, nil, false, emit)
 }
 
 // recreateJob runs recreate as a tracked job.
-func (m *Manager) recreateJob(ctx context.Context, kind, id string, req *deploy.Request, emit func(Event)) (srv Server, err error) {
+func (m *Manager) recreateJob(ctx context.Context, kind, id string, req *deploy.Request, unconfine bool, emit func(Event)) (srv Server, err error) {
 	info, err := m.inspect(ctx, id)
 	if err != nil {
 		return Server{}, err
@@ -399,10 +433,10 @@ func (m *Manager) recreateJob(ctx context.Context, kind, id string, req *deploy.
 		return Server{}, err
 	}
 	defer func() { finish(err) }()
-	return m.recreate(ctx, info.ID, req, emit)
+	return m.recreate(ctx, info.ID, req, unconfine, emit)
 }
 
-func (m *Manager) recreate(ctx context.Context, id string, req *deploy.Request, emit func(Event)) (Server, error) {
+func (m *Manager) recreate(ctx context.Context, id string, req *deploy.Request, unconfine bool, emit func(Event)) (Server, error) {
 	info, err := m.inspect(ctx, id)
 	if err != nil {
 		return Server{}, err
@@ -430,6 +464,16 @@ func (m *Manager) recreate(ctx context.Context, id string, req *deploy.Request, 
 	spec, err := m.build(ctx, *req)
 	if err != nil {
 		return Server{}, err
+	}
+	// A template can change after a server is created, so this isn't only
+	// about what the request asks for.
+	if info.Config.Labels[deploy.LabelConfined] == "true" {
+		if bad := deploy.Confine(spec, m.appdataRoot); len(bad) > 0 {
+			if !unconfine {
+				return Server{}, errors.New("this server has to stay confined, so an admin has to change this: " + strings.Join(bad, "; "))
+			}
+			emit(Event{Stage: "warning", Message: "This server is no longer confined: " + strings.Join(bad, "; ")})
+		}
 	}
 	// The server itself may already hold the address; don't count it, by
 	// its current MAC or the stable one it gets on LAN networks.
@@ -737,6 +781,13 @@ func (m *Manager) AllStats(ctx context.Context) (map[string]docker.Stats, error)
 	for _, c := range conns {
 		servers = append(servers, Server{ID: c.ID, State: c.State})
 	}
+	return m.StatsOf(ctx, servers), nil
+}
+
+// StatsOf returns a resource usage sample for each of the given servers that
+// is running, keyed by container ID. Containers whose stats can't be read are
+// left out.
+func (m *Manager) StatsOf(ctx context.Context, servers []Server) map[string]docker.Stats {
 	var (
 		mu  sync.Mutex
 		wg  sync.WaitGroup
@@ -767,7 +818,7 @@ func (m *Manager) AllStats(ctx context.Context) (map[string]docker.Stats, error)
 		}(srv.ID)
 	}
 	wg.Wait()
-	return out, nil
+	return out
 }
 
 // Config returns the server's template (localized) and the request it was

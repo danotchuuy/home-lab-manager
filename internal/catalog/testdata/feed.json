@@ -1,0 +1,508 @@
+{
+ "last_updated": "2026-10-18 16:15",
+ "applist": [
+  {
+   "Name": "Enshrouded-broccoli",
+   "Repository": "indifferentbroccoli/enshrouded-server-docker:latest",
+   "Registry": "https://hub.docker.com/r/indifferentbroccoli/enshrouded-server-docker",
+   "Network": "bridge",
+   "Shell": "bash",
+   "Privileged": "false",
+   "Support": "https://github.com/juddisjudd/unraid-templates/issues",
+   "Project": "https://www.enshrouded.com/",
+   "ReadMe": "https://github.com/indifferentbroccoli/enshrouded-server-docker#readme",
+   "Overview": "A dedicated server for Enshrouded. The server is a Windows program. The default (latest) tag runs it with Proton GE. You can choose the wine tag when you install.\n\nForward UDP port 15637 on your router. If you change the port, also change QUERY_PORT.\n\nSet GENERATE_SETTINGS to false if you edit enshrouded_server.json by hand. Otherwise the container writes over your changes on each start.\n\nDocker image by indifferentbroccoli.",
+   "TemplateURL": "https://raw.githubusercontent.com/juddisjudd/unraid-templates/main/templates/enshrouded-server.xml",
+   "Icon": "https://raw.githubusercontent.com/juddisjudd/unraid-templates/refs/heads/main/images/enshrouded.png",
+   "ExtraParams": "--restart=unless-stopped --stop-timeout=30",
+   "Requires": "2 to 4 CPU cores at 3.2 GHz, 8 GB RAM (16 GB recommended), 20 GB SSD storage.",
+   "License": "GPL-3.0",
+   "ExtraSearchTerms": "enshrouded keen dedicated server steam proton wine",
+   "DefaultTagDescription": "Proton GE build",
+   "Branch": {
+    "Tag": "wine",
+    "TagDescription": "Wine build"
+   },
+   "Screenshot": [
+    "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1203620/09a1e99c47ba7ffb2413c4708a9f5fbef1397652/ss_09a1e99c47ba7ffb2413c4708a9f5fbef1397652.1920x1080.jpg",
+    "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1203620/9c2db32975d266f1051f77e46d347a118c824c57/ss_9c2db32975d266f1051f77e46d347a118c824c57.1920x1080.jpg",
+    "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1203620/4cc606e46868db2159ced08f6fe585a03d7e360f/ss_4cc606e46868db2159ced08f6fe585a03d7e360f.1920x1080.jpg"
+   ],
+   "Config": [
+    {
+     "@attributes": {
+      "Name": "Query Port",
+      "Target": "15637",
+      "Default": "15637",
+      "Mode": "udp",
+      "Description": "UDP query port. Forward it on your router. Must be the same as QUERY_PORT.",
+      "Type": "Port",
+      "Display": "always",
+      "Required": "true",
+      "Mask": "false"
+     },
+     "value": "15637"
+    },
+    {
+     "@attributes": {
+      "Name": "Server Files",
+      "Target": "/home/steam/enshrouded",
+      "Default": "/mnt/user/appdata/enshrouded",
+      "Mode": "rw",
+      "Description": "Server files, saves, and enshrouded_server.json.",
+      "Type": "Path",
+      "Display": "always",
+      "Required": "true",
+      "Mask": "false"
+     },
+     "value": "/mnt/user/appdata/enshrouded"
+    },
+    {
+     "@attributes": {
+      "Name": "Server Name",
+      "Target": "SERVER_NAME",
+      "Default": "EnshroudedServer",
+      "Mode": "",
+      "Description": "Display name of the server.",
+      "Type": "Variable",
+      "Display": "always",
+      "Required": "true",
+      "Mask": "false"
+     },
+     "value": "EnshroudedServer"
+    },
+    {
+     "@attributes": {
+      "Name": "Server Password",
+      "Target": "SERVER_PASSWORD",
+      "Default": "",
+      "Mode": "",
+      "Description": "Optional password to join. Leave empty for a public server.",
+      "Type": "Variable",
+      "Display": "always",
+      "Required": "false",
+      "Mask": "true"
+     },
+     "value": ""
+    },
+    {
+     "@attributes": {
+      "Name": "Max Players",
+      "Target": "MAX_PLAYERS",
+      "Default": "12",
+      "Mode": "",
+      "Description": "Maximum number of players at the same time.",
+      "Type": "Variable",
+      "Display": "always",
+      "Required": "false",
+      "Mask": "false"
+     },
+     "value": "12"
+    },
+    {
+     "@attributes": {
+      "Name": "Query Port Variable",
+      "Target": "QUERY_PORT",
+      "Default": "15637",
+      "Mode": "",
+      "Description": "UDP query port the server listens on. Must be the same as the Query Port.",
+      "Type": "Variable",
+      "Display": "advanced",
+      "Required": "false",
+      "Mask": "false"
+     },
+     "value": "15637"
+    },
+    {
+     "@attributes": {
+      "Name": "Generate Settings",
+      "Target": "GENERATE_SETTINGS",
+      "Default": "true",
+      "Mode": "",
+      "Description": "Write the settings from this template to enshrouded_server.json on each start. Set to false to use the file on disk as it is.",
+      "Type": "Variable",
+      "Display": "advanced",
+      "Required": "false",
+      "Mask": "false"
+     },
+     "value": "true"
+    },
+    {
+     "@attributes": {
+      "Name": "Update On Start",
+      "Target": "UPDATE_ON_START",
+      "Default": "true",
+      "Mode": "",
+      "Description": "Download and validate the server files on each start. Set to false to skip.",
+      "Type": "Variable",
+      "Display": "advanced",
+      "Required": "false",
+      "Mask": "false"
+     },
+     "value": "true"
+    },
+    {
+     "@attributes": {
+      "Name": "PUID",
+      "Target": "PUID",
+      "Default": "99",
+      "Mode": "",
+      "Description": "User ID the server runs as.",
+      "Type": "Variable",
+      "Display": "advanced",
+      "Required": "true",
+      "Mask": "false"
+     },
+     "value": "99"
+    },
+    {
+     "@attributes": {
+      "Name": "PGID",
+      "Target": "PGID",
+      "Default": "100",
+      "Mode": "",
+      "Description": "Group ID the server runs as.",
+      "Type": "Variable",
+      "Display": "advanced",
+      "Required": "true",
+      "Mask": "false"
+     },
+     "value": "100"
+    }
+   ],
+   "TemplatePath": "/tmp/GitHub/AppFeed/templates/enshrouded-server.xml",
+   "Repo": "Judd's Repository",
+   "CategoryList": [
+    "GameServers"
+   ],
+   "downloads": 3597,
+   "FirstSeen": 1789791280,
+   "LastUpdate": 1783452247,
+   "LastUpdateScan": 1789791280
+  },
+  {
+   "Name": "Enshrouded",
+   "Repository": "nodiaque/steamcmd:enshrouded",
+   "Registry": "https://hub.docker.com/r/nodiaque/steamcmd/",
+   "Network": "bridge",
+   "Shell": "bash",
+   "Privileged": "false",
+   "Support": "https://forums.unraid.net/topic/151809-support-nodiaque-gameserver-docker/",
+   "Project": "https://steampowered.com/",
+   "Overview": "This Docker will download and install SteamCMD. It will also install Enshrouded and run it.\r\n\r\n**Server Name:** Enshrouded Docker  \r\n**Password:** Docker  \r\n\r\n**Configuration:** The configuration is located at: ./enshrouded_server.json. \r\n\r\n**ATTENTION:** First Startup can take very long since it downloads the gameserver files!\r\n\r\nDO NOT EDIT IP IN CONFIG FILE\r\n\r\nUpdate Notice: Simply restart the container if a newer version of the game is available.\r\n\r\nYou can also run multiple servers with only one SteamCMD directory!",
+   "TemplateURL": "https://raw.githubusercontent.com/nodiaque/unraid_template/master/nodiaque/enshrouded.xml",
+   "Icon": "https://raw.githubusercontent.com/nodiaque/unraid_template/master/nodiaque/images/enshrouded.png",
+   "ExtraParams": "--restart=unless-stopped",
+   "Config": [
+    {
+     "@attributes": {
+      "Name": "SteamCMD",
+      "Target": "/serverdata/steamcmd",
+      "Default": "",
+      "Mode": "rw",
+      "Description": "",
+      "Type": "Path",
+      "Display": "always",
+      "Required": "true",
+      "Mask": "false"
+     },
+     "value": "/mnt/user/appdata/steamcmd"
+    },
+    {
+     "@attributes": {
+      "Name": "ServerFiles",
+      "Target": "/serverdata/serverfiles",
+      "Default": "",
+      "Mode": "rw",
+      "Description": "",
+      "Type": "Path",
+      "Display": "always",
+      "Required": "true",
+      "Mask": "false"
+     },
+     "value": "/mnt/user/appdata/enshrouded"
+    },
+    {
+     "@attributes": {
+      "Name": "GAME_ID",
+      "Target": "GAME_ID",
+      "Default": "",
+      "Mode": "",
+      "Description": "The GAME_ID that the container download at startup.\r\nIf you want to install a static or beta version of the game change the value to: '2278520 -beta YOURBRANCH' (without quotes, replace YOURBRANCH with the branch or version you want to install).",
+      "Type": "Variable",
+      "Display": "always",
+      "Required": "true",
+      "Mask": "false"
+     },
+     "value": "2278520"
+    },
+    {
+     "@attributes": {
+      "Name": "UDP - Queryport",
+      "Target": "15637",
+      "Default": "15637",
+      "Mode": "udp",
+      "Description": "UDP Queryport (if you need another port, please delete this entry and create a new UDP Port with the required port number, also don't forget to click an 'Show more settings ...' and change the port number)",
+      "Type": "Port",
+      "Display": "always",
+      "Required": "true",
+      "Mask": "false"
+     },
+     "value": "15637"
+    },
+    {
+     "@attributes": {
+      "Name": "Game parameters",
+      "Target": "GAME_PARAMS",
+      "Default": "",
+      "Mode": "",
+      "Description": "Enter your game parameters",
+      "Type": "Variable",
+      "Display": "always-hide",
+      "Required": "false",
+      "Mask": "false"
+     },
+     "value": ""
+    },
+    {
+     "@attributes": {
+      "Name": "Enable Backups",
+      "Target": "BACKUP",
+      "Default": "false|true",
+      "Mode": "",
+      "Description": "Set this value to 'true' to enable the automated backup function from the container, you find the Backups in '/Backups/'. Set to 'false' to disable the backup function.",
+      "Type": "Variable",
+      "Display": "always",
+      "Required": "true",
+      "Mask": "false"
+     },
+     "value": "true"
+    },
+    {
+     "@attributes": {
+      "Name": "Backup Interval",
+      "Target": "BACKUP_INTERVAL",
+      "Default": "120",
+      "Mode": "",
+      "Description": "The backup interval in minutes (ATTENTION: The first backup will be triggered after the set interval in this variable after the start/restart of the container)",
+      "Type": "Variable",
+      "Display": "always",
+      "Required": "true",
+      "Mask": "false"
+     },
+     "value": "120"
+    },
+    {
+     "@attributes": {
+      "Name": "Backups to Keep",
+      "Target": "BACKUPS_TO_KEEP",
+      "Default": "12",
+      "Mode": "",
+      "Description": "Number of backups to keep (by default set to 12 to keep the backups of the last 24 hours)",
+      "Type": "Variable",
+      "Display": "always",
+      "Required": "true",
+      "Mask": "false"
+     },
+     "value": "12"
+    },
+    {
+     "@attributes": {
+      "Name": "Steam-Username",
+      "Target": "USERNAME",
+      "Default": "",
+      "Mode": "",
+      "Description": "Your Steam username goes here if you want to install a game that needs a valid account, otherwise leave it blank (ATTENTION: You have to disable Steam Guard).",
+      "Type": "Variable",
+      "Display": "advanced-hide",
+      "Required": "false",
+      "Mask": "false"
+     },
+     "value": ""
+    },
+    {
+     "@attributes": {
+      "Name": "Steam-Password",
+      "Target": "PASSWRD",
+      "Default": "",
+      "Mode": "",
+      "Description": "Your Steam password goes here if you want to install a game that needs a valid account, otherwise leave it blank (ATTENTION: You have to disable Steam Guard).",
+      "Type": "Variable",
+      "Display": "advanced-hide",
+      "Required": "false",
+      "Mask": "true"
+     },
+     "value": ""
+    },
+    {
+     "@attributes": {
+      "Name": "UID",
+      "Target": "UID",
+      "Default": "",
+      "Mode": "",
+      "Description": "",
+      "Type": "Variable",
+      "Display": "advanced-hide",
+      "Required": "true",
+      "Mask": "false"
+     },
+     "value": "99"
+    },
+    {
+     "@attributes": {
+      "Name": "GID",
+      "Target": "GID",
+      "Default": "",
+      "Mode": "",
+      "Description": "",
+      "Type": "Variable",
+      "Display": "advanced-hide",
+      "Required": "true",
+      "Mask": "false"
+     },
+     "value": "100"
+    }
+   ],
+   "TemplatePath": "/tmp/GitHub/AppFeed/nodiaque/enshrouded.xml",
+   "Repo": "Nodiaque's Repository",
+   "CategoryList": [
+    "GameServers"
+   ],
+   "stars": 3,
+   "downloads": 50926,
+   "trending": 17.017,
+   "FirstSeen": 1706490381,
+   "LastUpdate": 1777311780,
+   "LastUpdateScan": 1790698417,
+   "topTrending": 13.981
+  },
+  {
+   "Name": "Vast.ai Monitor",
+   "PluginURL": "https://raw.githubusercontent.com/0xntpower/VastAI-Unraid-Widget/main/vastai.plg",
+   "PluginAuthor": "0xntpower",
+   "Support": "https://forums.unraid.net/topic/200608-plugin-vastai-dashboard-tile/",
+   "Project": "https://github.com/0xntpower/VastAI-Unraid-Widget",
+   "Icon": "https://raw.githubusercontent.com/0xntpower/VastAI-Unraid-Widget/main/src/vastai/usr/local/emhttp/plugins/vastai/images/vastai.png",
+   "Overview": "Adds a dashboard tile for your Vast.ai host machines.\n\n    Shows each machine's rental state (on-demand, interruptible, reserved, listed, unlisted\n    or offline), live hourly earnings and projected daily income, GPU model and VRAM, real\n    time GPU temperature with colour thresholds, and host reliability score. An expandable\n    details row adds CPU, RAM, storage and network bandwidth. A summary line shows combined\n    earnings across the fleet and your account balance.\n\n    Responses are cached server side with a configurable TTL so several open dashboard tabs\n    do not each hit the Vast.ai API, and the tile falls back to the last good response and\n    labels it clearly when the API is unreachable.\n\n    Requires a Vast.ai account and an API key, which is stored on the flash drive readable\n    only by root and is scrubbed when the plugin is uninstalled.",
+   "TemplateURL": "https://raw.githubusercontent.com/0xntpower/VastAI-Unraid-Widget/main/templates/vastai.xml",
+   "TemplatePath": "/tmp/GitHub/AppFeed/templates/vastai.xml",
+   "Repo": "0xntpower's Repository",
+   "Repository": "https://raw.githubusercontent.com/0xntpower/VastAI-Unraid-Widget/main/vastai.plg",
+   "CategoryList": [
+    "Tools-System",
+    "Plugins"
+   ],
+   "Plugin": true,
+   "pluginVersion": "2026.09.17.0040",
+   "MinVer": "6.12.0",
+   "Author": "0xntpower",
+   "ChangeLogPresent": "1",
+   "downloads": 9,
+   "FirstSeen": 1790796335,
+   "LastUpdateScan": 1791953108,
+   "pluginStats": {
+    "10": 9,
+    "11": 0,
+    "12": 0,
+    "01": 0,
+    "02": 0,
+    "03": 0,
+    "04": 0,
+    "05": 0,
+    "06": 0,
+    "07": 0,
+    "08": 0,
+    "09": 0,
+    "T": 9
+   }
+  },
+  {
+   "Name": "blueiris",
+   "Repository": "jshridha/blueiris:gpu",
+   "Registry": "https://hub.docker.com/r/jshridha/blueiris/",
+   "Network": "bridge",
+   "Shell": "sh",
+   "Privileged": "true",
+   "Support": "https://forums.unraid.net/topic/100915-support-a75g-blueiris/",
+   "Project": "https://hub.docker.com/r/jshridha/blueiris/",
+   "Overview": "Blue Iris video security software runs on a PC and can provide recording and playback for up to 64 IP network cameras or webcams. Blue Iris is affordable and powerful enough to safeguard your family, property and valuables at home or work.",
+   "WebUI": "http://[IP]:[PORT:8080]/",
+   "TemplateURL": "https://raw.githubusercontent.com/A75G/docker-templates/master/templates/deprecated/blueiris.xml",
+   "Icon": "https://raw.githubusercontent.com/A75G/docker-templates/master/templates/icons/blueiris.png",
+   "ExtraParams": "--init --log-opt max-size=5m --log-opt max-file=2",
+   "Config": [
+    {
+     "@attributes": {
+      "Name": "VNC Web Server Port",
+      "Target": "8080",
+      "Default": "8080",
+      "Mode": "tcp",
+      "Description": "VNC Web Server Port",
+      "Type": "Port",
+      "Display": "always",
+      "Required": "false",
+      "Mask": "false"
+     },
+     "value": "8080"
+    },
+    {
+     "@attributes": {
+      "Name": "VNC Server Port",
+      "Target": "5900",
+      "Default": "5950",
+      "Mode": "tcp",
+      "Description": "VNC Server Port",
+      "Type": "Port",
+      "Display": "always",
+      "Required": "false",
+      "Mask": "false"
+     },
+     "value": "5950"
+    },
+    {
+     "@attributes": {
+      "Name": "Web Server Port",
+      "Target": "81",
+      "Default": "8181",
+      "Mode": "tcp",
+      "Description": "Web Server Port",
+      "Type": "Port",
+      "Display": "always",
+      "Required": "false",
+      "Mask": "false"
+     },
+     "value": "8181"
+    },
+    {
+     "@attributes": {
+      "Name": "Data Path",
+      "Target": "/home/wineuser/prefix",
+      "Default": "/mnt/user/appdata/blueiris",
+      "Mode": "rw",
+      "Description": "Data Path",
+      "Type": "Path",
+      "Display": "always",
+      "Required": "false",
+      "Mask": "false"
+     },
+     "value": "/mnt/user/appdata/blueiris"
+    }
+   ],
+   "Deprecated": true,
+   "TemplatePath": "/tmp/GitHub/AppFeed/templates/deprecated/blueiris.xml",
+   "Repo": "A75G's Repository",
+   "CategoryList": [
+    "Security"
+   ],
+   "CAComment": "This template is set up to run as Privileged. This is a possible security risk and usually does not need to be enabled. Note that some applications require privileged in order to operate correctly",
+   "stars": 32,
+   "downloads": 544319,
+   "trending": 0.06,
+   "FirstSeen": 1610133117,
+   "LastUpdate": 1613192794,
+   "LastUpdateScan": 1790525754,
+   "topTrending": -0.047,
+   "topPerforming": 0.06
+  }
+ ]
+}
