@@ -48,6 +48,9 @@ type SSHKey struct {
 	Key         string    `json:"key"` // in authorized_keys form, without a comment
 	Added       time.Time `json:"added"`
 	LastUsed    time.Time `json:"lastUsed,omitzero"`
+	// AllowFrom limits where the key can sign in and its tokens be used
+	// from; empty is anywhere.
+	AllowFrom []string `json:"allowFrom,omitempty"`
 }
 
 // Errors from SSH keys.
@@ -107,10 +110,14 @@ func (s *Service) SSHKeys(username string) ([]SSHKey, error) {
 	return a.SSHKeys, nil
 }
 
-// AddSSHKey lets a public key sign in as an account.
-func (s *Service) AddSSHKey(username, line, name string) (SSHKey, error) {
+// AddSSHKey lets a public key sign in as an account, from the addresses in
+// allowFrom (or anywhere).
+func (s *Service) AddSSHKey(username, line, name string, allowFrom []string) (SSHKey, error) {
 	k, err := parseSSHKey(line, name)
 	if err != nil {
+		return SSHKey{}, err
+	}
+	if k.AllowFrom, err = parseAllowFrom(allowFrom); err != nil {
 		return SSHKey{}, err
 	}
 	k.Added = s.now().UTC()
@@ -133,6 +140,32 @@ func (s *Service) AddSSHKey(username, line, name string) (SSHKey, error) {
 	}
 	s.log.Info("added SSH key", "user", list[i].Username, "fingerprint", k.Fingerprint)
 	return k, nil
+}
+
+// SetSSHKeyAllowFrom changes where a key can sign in and be used from.
+func (s *Service) SetSSHKeyAllowFrom(username, id string, allowFrom []string) (SSHKey, error) {
+	from, err := parseAllowFrom(allowFrom)
+	if err != nil {
+		return SSHKey{}, err
+	}
+	s.accountsMu.Lock()
+	defer s.accountsMu.Unlock()
+	list := s.accounts()
+	i := slices.IndexFunc(list, func(a Account) bool { return strings.EqualFold(a.Username, username) })
+	if i < 0 {
+		return SSHKey{}, ErrNoAccount
+	}
+	j := slices.IndexFunc(list[i].SSHKeys, func(k SSHKey) bool { return k.ID == id })
+	if j < 0 {
+		return SSHKey{}, ErrNoSSHKey
+	}
+	list[i].SSHKeys = slices.Clone(list[i].SSHKeys)
+	list[i].SSHKeys[j].AllowFrom = from
+	if err := s.secrets.Set(secretAccounts, list); err != nil {
+		return SSHKey{}, err
+	}
+	s.log.Info("changed where an SSH key can be used from", "user", list[i].Username, "fingerprint", list[i].SSHKeys[j].Fingerprint, "allowFrom", from)
+	return list[i].SSHKeys[j], nil
 }
 
 // DeleteSSHKey stops a key signing in, and ends what it signed in.
@@ -160,6 +193,7 @@ func (s *Service) DeleteSSHKey(username, id string) error {
 // sshChallenge is what a signature answers. It's signed by hlm, so hlm needn't
 // keep anything for people who only ask for one.
 type sshChallenge struct {
+	Boot    string    `json:"boot"`
 	User    string    `json:"user"`
 	Nonce   string    `json:"nonce"`
 	Expires time.Time `json:"expires"`
@@ -172,7 +206,7 @@ func (s *Service) SSHChallenge(username string) (string, time.Time, error) {
 	if _, err := rand.Read(nonce); err != nil {
 		return "", time.Time{}, err
 	}
-	c := sshChallenge{strings.ToLower(strings.TrimSpace(username)), hex.EncodeToString(nonce), s.now().Add(sshChallengeLife).UTC()}
+	c := sshChallenge{s.boot, strings.ToLower(strings.TrimSpace(username)), hex.EncodeToString(nonce), s.now().Add(sshChallengeLife).UTC()}
 	text, err := s.sign("ssh-challenge", c)
 	return text, c.Expires, err
 }
@@ -186,42 +220,64 @@ type sshToken struct {
 	Expires     time.Time `json:"expires"`
 }
 
-// SSHLogin swaps a signature of a challenge for a token. A challenge works
-// once.
-func (s *Service) SSHLogin(challenge, signature string) (string, time.Time, error) {
+// SSHLogin swaps a signature of a challenge, from remote, for a token. A
+// challenge works once, and only until hlm restarts. Failures count towards
+// the same limit as wrong passwords, for the user and address together.
+func (s *Service) SSHLogin(challenge, signature, remote string) (string, time.Time, error) {
 	var c sshChallenge
 	now := s.now()
-	if !s.open("ssh-challenge", challenge, &c) || !now.Before(c.Expires) {
+	if !s.open("ssh-challenge", challenge, &c) {
+		s.log.Warn("refused SSH sign-in", "remote", remote, "err", "not a challenge from hlm")
 		return "", time.Time{}, ErrBadSSHLogin
+	}
+	ip, _ := remoteAddr(remote)
+	limit := "ssh:" + c.User + "|" + ip.String()
+	if wait := s.limiter.wait(limit, now); wait > 0 {
+		s.log.Warn("refused SSH sign-in", "user", c.User, "remote", remote, "err", "too many failures")
+		return "", time.Time{}, &LoginError{fmt.Errorf("too many failed sign-ins for %s from here; try again in %s", c.User, roundUp(wait)), wait}
+	}
+	fail := func(fp string, why string) (string, time.Time, error) {
+		wait := s.limiter.fail(limit, now)
+		s.log.Warn("refused SSH sign-in", "user", c.User, "fingerprint", fp, "remote", remote, "err", why)
+		return "", time.Time{}, &LoginError{ErrBadSSHLogin, wait}
+	}
+	if c.Boot != s.boot || !now.Before(c.Expires) {
+		return fail("", "challenge expired, or from before hlm restarted")
 	}
 	pub, err := verifySSHSignature(signature, []byte(challenge))
 	if err != nil {
-		s.log.Warn("refused SSH sign-in", "user", c.User, "err", err)
-		return "", time.Time{}, ErrBadSSHLogin
+		return fail("", err.Error())
 	}
 	fp := ssh.FingerprintSHA256(pub)
 	a, ok := s.account(c.User)
-	if !ok || !a.hasKey(fp) {
-		s.log.Warn("refused SSH sign-in", "user", c.User, "fingerprint", fp)
-		return "", time.Time{}, ErrBadSSHLogin
+	key, has := a.key(fp)
+	if !ok || !has {
+		return fail(fp, "not a key of this account")
+	}
+	if !allowedFrom(key.AllowFrom, remote) {
+		return fail(fp, "not allowed from this address")
 	}
 	if !s.spendChallenge(c, now) {
-		return "", time.Time{}, ErrBadSSHLogin
+		return fail(fp, "challenge already used")
 	}
+	s.limiter.succeed(limit)
 	t := sshToken{a.Username, fp, a.version(), now.Add(sshTokenLife).UTC()}
 	v, err := s.sign("ssh-token", t)
 	if err != nil {
 		return "", time.Time{}, err
 	}
 	s.noteSSHKeyUse(a.Username, fp, now)
-	s.log.Info("signed in", "user", a.Username, "method", "ssh", "fingerprint", fp)
+	s.log.Info("signed in", "user", a.Username, "method", "ssh", "key", key.Name, "fingerprint", fp, "remote", remote)
 	return SSHTokenPrefix + v, t.Expires, nil
 }
 
-func (a Account) hasKey(fingerprint string) bool {
-	return slices.ContainsFunc(a.SSHKeys, func(k SSHKey) bool {
-		return subtle.ConstantTimeCompare([]byte(k.Fingerprint), []byte(fingerprint)) == 1
-	})
+func (a Account) key(fingerprint string) (SSHKey, bool) {
+	for _, k := range a.SSHKeys {
+		if subtle.ConstantTimeCompare([]byte(k.Fingerprint), []byte(fingerprint)) == 1 {
+			return k, true
+		}
+	}
+	return SSHKey{}, false
 }
 
 // spendChallenge records a used challenge until it expires anyway, and
@@ -264,9 +320,9 @@ func (s *Service) noteSSHKeyUse(username, fingerprint string, now time.Time) {
 	}
 }
 
-// CheckSSHToken returns who a token from an SSH sign-in acts as: its account,
-// with the role that has now.
-func (s *Service) CheckSSHToken(token string) (rbac.Principal, bool) {
+// CheckSSHToken returns who a token from an SSH sign-in, used from remote,
+// acts as: its account, with the role that has now.
+func (s *Service) CheckSSHToken(token, remote string) (rbac.Principal, bool) {
 	rest, ok := strings.CutPrefix(token, SSHTokenPrefix)
 	if !ok {
 		return rbac.Principal{}, false
@@ -276,7 +332,15 @@ func (s *Service) CheckSSHToken(token string) (rbac.Principal, bool) {
 		return rbac.Principal{}, false
 	}
 	a, ok := s.account(t.User)
-	if !ok || a.version() != t.Version || !a.hasKey(t.Fingerprint) {
+	if !ok || a.version() != t.Version {
+		return rbac.Principal{}, false
+	}
+	key, has := a.key(t.Fingerprint)
+	if !has {
+		return rbac.Principal{}, false
+	}
+	if !allowedFrom(key.AllowFrom, remote) {
+		s.log.Warn("refused SSH token from an address its key isn't allowed from", "user", a.Username, "key", key.Name, "remote", remote)
 		return rbac.Principal{}, false
 	}
 	p := s.Principal(User{Method: MethodLocal, Username: a.Username})

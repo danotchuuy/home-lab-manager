@@ -103,7 +103,17 @@ export class ApiError extends Error {
 /** Dispatched when the API rejects our token, so the app can ask for one. */
 export const UNAUTHORIZED_EVENT = "hlm:unauthorized";
 
-async function request(path: string, init: RequestInit = {}): Promise<Response> {
+/**
+ * Asks the person to confirm it's them, for changes that need it; resolves
+ * true once they have, so the request can be sent again. Set by the app.
+ */
+let confirmer: ((method: string) => Promise<boolean>) | undefined;
+
+export function setConfirmer(f: typeof confirmer) {
+  confirmer = f;
+}
+
+async function request(path: string, init: RequestInit = {}, confirmed = false): Promise<Response> {
   const headers = new Headers(init.headers);
   const token = getToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
@@ -122,6 +132,9 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
       // Not JSON; keep the status text.
     }
     if (res.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+    if (res.status === 403 && body?.code === "confirm_required" && confirmer && !confirmed) {
+      if (await confirmer(String(body.method ?? "local"))) return request(path, init, true);
+    }
     throw new ApiError(res.status, message, body);
   }
   return res;
@@ -153,6 +166,56 @@ async function stream<T = DeployEvent>(path: string, init: RequestInit, onEvent:
   if (buf.trim()) onEvent(JSON.parse(buf) as T);
 }
 
+/**
+ * Follows a stream of server-sent events with fetch rather than EventSource,
+ * which can't send the Authorization header. Resolves when the stream ends;
+ * ended is true if the server said so with an "end" event.
+ */
+export async function followEvents(
+  path: string,
+  on: { open: () => void; message: (data: string) => void },
+  signal: AbortSignal,
+): Promise<{ ended: boolean }> {
+  const res = await request(path, { signal, headers: { Accept: "text/event-stream" } });
+  if (!res.body) throw new Error("streaming is not supported by this browser");
+  on.open();
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return { ended: false };
+    buf += value;
+    let end: number;
+    while ((end = buf.indexOf("\n\n")) >= 0) {
+      const block = buf.slice(0, end);
+      buf = buf.slice(end + 2);
+      let event = "message";
+      const data: string[] = [];
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event: ")) event = line.slice(7);
+        else if (line.startsWith("data: ")) data.push(line.slice(6));
+        else if (line === "data:") data.push("");
+      }
+      if (event === "end") return { ended: true };
+      if (data.length > 0) on.message(data.join("\n"));
+    }
+  }
+}
+
+/**
+ * Starts a download. A session cookie goes with a plain link; a token can't,
+ * so it gets a link that works once instead, rather than putting the token in
+ * the URL.
+ */
+export async function download(path: string) {
+  if (!getToken()) {
+    window.location.href = path;
+    return;
+  }
+  const { url } = await json<{ url: string }>("/api/auth/download-ticket", { method: "POST", body: JSON.stringify({ url: path }) });
+  window.location.href = url;
+}
+
 export const api = {
   status: () => json<Status>("/api/status"),
 
@@ -180,7 +243,7 @@ export const api = {
   servers: () => json<Server[]>("/api/servers"),
   server: (id: string) => json<Server>(`/api/servers/${encodeURIComponent(id)}`),
   serverConfig: (id: string) =>
-    json<{ app: App; request: DeployRequest }>(`/api/servers/${encodeURIComponent(id)}/config`),
+    json<{ app: App; request: DeployRequest; hidden?: string[] }>(`/api/servers/${encodeURIComponent(id)}/config`),
   /** Resource usage of every running server and connection container, keyed by container ID. */
   allStats: () => json<Record<string, Stats>>("/api/stats"),
   /** Containers hlm runs for connections (WireGuard, cloudflared). */
@@ -285,18 +348,25 @@ export const api = {
   setAccountRole: (username: string, role: Role) =>
     json<Account>(`/api/auth/accounts/${encodeURIComponent(username)}/role`, { method: "PUT", body: JSON.stringify({ role }) }),
   sshKeys: (username: string) => json<SSHKey[]>(`/api/auth/accounts/${encodeURIComponent(username)}/ssh-keys`),
-  addSSHKey: (username: string, publicKey: string, name: string, current: string) =>
+  addSSHKey: (username: string, publicKey: string, name: string, allowFrom: string[]) =>
     json<SSHKey>(`/api/auth/accounts/${encodeURIComponent(username)}/ssh-keys`, {
       method: "POST",
-      body: JSON.stringify({ publicKey, name, current }),
+      body: JSON.stringify({ publicKey, name, allowFrom }),
+    }),
+  setSSHKeyAllowFrom: (username: string, id: string, allowFrom: string[]) =>
+    json<SSHKey>(`/api/auth/accounts/${encodeURIComponent(username)}/ssh-keys/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify({ allowFrom }),
     }),
   deleteSSHKey: (username: string, id: string) =>
     json<void>(`/api/auth/accounts/${encodeURIComponent(username)}/ssh-keys/${encodeURIComponent(id)}`, { method: "DELETE" }),
   deleteAccount: (username: string) => json<void>(`/api/auth/accounts/${encodeURIComponent(username)}`, { method: "DELETE" }),
   apiKeys: () => json<APIKeyInfo[]>("/api/auth/keys"),
   /** Makes an API key; the response's key is the only time its secret is shown. */
-  createAPIKey: (name: string, days: number, role: KeyRole) =>
-    json<APIKeyInfo & { key: string }>("/api/auth/keys", { method: "POST", body: JSON.stringify({ name, days, role }) }),
+  createAPIKey: (name: string, days: number, role: KeyRole, allowFrom: string[]) =>
+    json<APIKeyInfo & { key: string }>("/api/auth/keys", { method: "POST", body: JSON.stringify({ name, days, role, allowFrom }) }),
+  setAPIKeyAllowFrom: (id: string, allowFrom: string[]) =>
+    json<APIKeyInfo>(`/api/auth/keys/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ allowFrom }) }),
   deleteAPIKey: (id: string) => json<void>(`/api/auth/keys/${encodeURIComponent(id)}`, { method: "DELETE" }),
   groups: () => json<ServerGroup[]>("/api/groups"),
   createGroup: (g: Omit<ServerGroup, "id">) => json<ServerGroup>("/api/groups", { method: "POST", body: JSON.stringify(g) }),
@@ -429,25 +499,21 @@ export const api = {
   update: (id: string, onEvent: (e: DeployEvent) => void) =>
     stream(`/api/servers/${encodeURIComponent(id)}/update`, { method: "POST" }, onEvent),
 
-  /** URL for an EventSource of log lines. EventSource can't send headers, so the token goes in the query. */
-  logsUrl: (id: string, tail = 500) => withToken(`/api/servers/${encodeURIComponent(id)}/logs`, tail),
-  /** URL for an EventSource of cloudflared's log lines. */
-  tunnelLogsUrl: (tail = 500) => withToken("/api/tunnel/logs", tail),
-  connectionLogsUrl: (id: string, tail = 500) => withToken(`/api/connections/${encodeURIComponent(id)}/logs`, tail),
+  /** Path of a stream of log lines, for followEvents. */
+  logsUrl: (id: string, tail = 500) => withTail(`/api/servers/${encodeURIComponent(id)}/logs`, tail),
+  /** Path of a stream of cloudflared's log lines. */
+  tunnelLogsUrl: (tail = 500) => withTail("/api/tunnel/logs", tail),
+  connectionLogsUrl: (id: string, tail = 500) => withTail(`/api/connections/${encodeURIComponent(id)}/logs`, tail),
+
+  /** Confirms it's the signed-in person, for changes that could give lasting access. */
+  confirm: (password: string) => json<{ confirmedUntil: string }>("/api/auth/confirm", { method: "POST", body: JSON.stringify({ password }) }),
 };
 
-/** Adds a backup's key and, since a plain link can't send headers, the token to a download URL. */
+/** Adds a backup's key to a download path, for download. */
 function withKey(path: string, key: string): string {
-  const qs = new URLSearchParams({ key });
-  const token = getToken();
-  if (token) qs.set("token", token);
-  return `${path}?${qs}`;
+  return `${path}?${new URLSearchParams({ key })}`;
 }
 
-/** Adds the tail length and, since EventSource can't send headers, the token to a log URL. */
-function withToken(path: string, tail: number): string {
-  const qs = new URLSearchParams({ tail: String(tail) });
-  const token = getToken();
-  if (token) qs.set("token", token);
-  return `${path}?${qs}`;
+function withTail(path: string, tail: number): string {
+  return `${path}?${new URLSearchParams({ tail: String(tail) })}`;
 }

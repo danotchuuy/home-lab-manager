@@ -63,7 +63,7 @@ export function MyAccount() {
       {user?.method === "local" && user.username && (
         <>
           <h3>SSH keys</h3>
-          <SSHKeys username={user.username} needsPassword />
+          <SSHKeys username={user.username} />
         </>
       )}
     </>

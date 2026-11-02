@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -49,6 +50,14 @@ func main() {
 		case "reset-password":
 			if err := resetPassword(os.Args[2:]); err != nil {
 				fmt.Fprintln(os.Stderr, "hlm reset-password:", err)
+				os.Exit(1)
+			}
+			return
+		case "ssh-login":
+			if err := sshLoginCommand(os.Args[2:], os.Stdout, os.Stderr); err != nil {
+				if !errors.Is(err, flag.ErrHelp) {
+					fmt.Fprintln(os.Stderr, "hlm ssh-login:", err)
+				}
 				os.Exit(1)
 			}
 			return

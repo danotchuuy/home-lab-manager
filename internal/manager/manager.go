@@ -134,8 +134,11 @@ type Server struct {
 	Request       *deploy.Request `json:"request,omitempty"`
 	// Access is the caller's role on the server, and Groups the server
 	// groups they can see it in. The API fills these in per caller.
-	Access  string   `json:"access,omitempty"`
-	Groups  []string `json:"groups,omitempty"`
+	Access string   `json:"access,omitempty"`
+	Groups []string `json:"groups,omitempty"`
+	// Hidden lists the settings left out of Request for this caller, as
+	// deploy.HideSecrets does.
+	Hidden  []string `json:"hidden,omitempty"`
 	imageID string
 }
 

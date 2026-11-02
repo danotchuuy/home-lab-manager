@@ -1,0 +1,88 @@
+import { useEffect, useState, type FormEvent } from "react";
+import { api, setConfirmer } from "../api";
+
+interface Ask {
+  method: string;
+  resolve: (ok: boolean) => void;
+}
+
+/**
+ * Asks the person to confirm it's them when a change could give lasting
+ * access, like a new API key, then lets the change go ahead. A password
+ * session confirms with the password; single sign-on by signing in again,
+ * which leaves the page, so the change has to be made again after.
+ */
+export function ConfirmPrompt() {
+  const [ask, setAsk] = useState<Ask>();
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    setConfirmer((method) => new Promise<boolean>((resolve) => setAsk({ method, resolve })));
+    return () => setConfirmer(undefined);
+  }, []);
+
+  if (!ask) return null;
+  const done = (ok: boolean) => {
+    ask.resolve(ok);
+    setAsk(undefined);
+    setPassword("");
+    setError(undefined);
+  };
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(undefined);
+    try {
+      await api.confirm(password);
+      done(true);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const back = window.location.pathname + window.location.search + window.location.hash;
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <div className="card modal">
+        <h2 id="confirm-title">Confirm it&apos;s you</h2>
+        <p className="muted small no-margin">
+          This changes who can get in, so it needs you to confirm it&apos;s you. It lasts 10 minutes.
+        </p>
+        {ask.method === "oidc" ? (
+          <>
+            <p className="small no-margin">You&apos;ll sign in with single sign-on again, then come back here. Make the change again after.</p>
+            <div className="btn-row">
+              <a className="btn primary" href={`/auth/login?confirm=1&return=${encodeURIComponent(back)}`}>
+                Sign in again
+              </a>
+              <button type="button" className="btn ghost" onClick={() => done(false)}>
+                Cancel
+              </button>
+            </div>
+          </>
+        ) : (
+          <form onSubmit={submit} className="modal-form">
+            <label className="field">
+              <span className="field-label">Your password</span>
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" autoFocus required />
+            </label>
+            {error && <div className="alert error">{error}</div>}
+            <div className="btn-row">
+              <button className="btn primary" type="submit" disabled={busy || !password}>
+                {busy ? "Checking…" : "Confirm"}
+              </button>
+              <button type="button" className="btn ghost" onClick={() => done(false)}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}

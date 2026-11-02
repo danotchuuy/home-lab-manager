@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from "react";
-import { api } from "../api";
+import { api, followEvents } from "../api";
 import { ansiCSS, parseAnsiLine, type AnsiSegment, type AnsiStyle } from "../ansi";
 
 const MAX_LINES = 5000;
@@ -29,7 +29,7 @@ const Line = memo(function Line({ segments }: { segments: AnsiSegment[] }) {
   );
 });
 
-/** Follows a server's logs over server-sent events; `url` follows another container's instead. */
+/** Follows a server's logs as server-sent events; `url` follows another container's instead. */
 export function LogViewer({ serverId, url, running }: { serverId?: string; url?: string; running: boolean }) {
   const src = url ?? api.logsUrl(serverId ?? "");
   const [lines, setLines] = useState<LogLine[]>([]);
@@ -43,7 +43,7 @@ export function LogViewer({ serverId, url, running }: { serverId?: string; url?:
   useEffect(() => {
     setLines([]);
     style.current = {};
-    const es = new EventSource(src);
+    const stop = new AbortController();
     // Batch incoming lines into one state update per animation frame.
     let pending: string[] = [];
     let frame = 0;
@@ -60,20 +60,32 @@ export function LogViewer({ serverId, url, running }: { serverId?: string; url?:
         return next.length > MAX_LINES ? next.slice(next.length - MAX_LINES) : next;
       });
     };
-    es.onopen = () => setConnected(true);
-    es.onmessage = (e) => {
-      pending.push(e.data);
+    const onMessage = (data: string) => {
+      pending.push(data);
       if (!frame) frame = requestAnimationFrame(flush);
     };
-    // The backend sends "end" when the container stops; don't let the
-    // browser reconnect and replay the tail.
-    es.addEventListener("end", () => {
-      setConnected(false);
-      es.close();
-    });
-    es.onerror = () => setConnected(false);
+    (async () => {
+      // Reconnect after a dropped connection, as EventSource would, but not
+      // after "end", which the backend sends when the container stops:
+      // reconnecting would replay the tail.
+      for (let first = true; !stop.signal.aborted; first = false) {
+        if (!first) await new Promise((r) => setTimeout(r, 3000));
+        if (stop.signal.aborted) return;
+        try {
+          if (!first) {
+            setLines([]);
+            style.current = {};
+          }
+          const { ended } = await followEvents(src, { open: () => setConnected(true), message: onMessage }, stop.signal);
+          setConnected(false);
+          if (ended) return;
+        } catch {
+          setConnected(false);
+        }
+      }
+    })();
     return () => {
-      es.close();
+      stop.abort();
       if (frame) cancelAnimationFrame(frame);
     };
     // Reconnect when the container starts again.

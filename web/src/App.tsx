@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { AdminContext } from "./access";
 import { api, getToken, setToken, UNAUTHORIZED_EVENT } from "./api";
+import { ConfirmPrompt } from "./components/ConfirmPrompt";
 import { usePoll } from "./usePoll";
 import { CatalogPage } from "./pages/Catalog";
 import { ConnectionDetailPage } from "./pages/ConnectionDetail";
@@ -114,6 +115,7 @@ export function App() {
         )}
 
       {needToken && <SignInPrompt auth={auth} onDone={() => window.location.reload()} />}
+      <ConfirmPrompt />
 
       <main>
         <Routes>

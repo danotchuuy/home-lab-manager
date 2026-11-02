@@ -17,6 +17,8 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
 )
 
+const testRemote = "10.0.3.115:51234"
+
 func sshService(t *testing.T) *Service {
 	t.Helper()
 	store, err := secrets.Open(t.TempDir(), "")
@@ -82,7 +84,7 @@ func challengeFor(t *testing.T, s *Service, user string) string {
 func sshIn(t *testing.T, s *Service, k keygen, user string) string {
 	t.Helper()
 	c := challengeFor(t, s, user)
-	token, _, err := s.SSHLogin(c, k.sign(t, SSHNamespace, c))
+	token, _, err := s.SSHLogin(c, k.sign(t, SSHNamespace, c), testRemote)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,10 +95,10 @@ func TestSSHLoginWithEachKeyType(t *testing.T) {
 	for _, kind := range []string{"ed25519", "ecdsa", "rsa"} {
 		t.Run(kind, func(t *testing.T) {
 			s, k := sshService(t), newKeygen(t, kind)
-			if _, err := s.AddSSHKey("alice", k.public(t), ""); err != nil {
+			if _, err := s.AddSSHKey("alice", k.public(t), "", nil); err != nil {
 				t.Fatal(err)
 			}
-			p, ok := s.CheckSSHToken(sshIn(t, s, k, "ALICE"))
+			p, ok := s.CheckSSHToken(sshIn(t, s, k, "ALICE"), testRemote)
 			if !ok || p.Role != rbac.Admin || p.Name != "ssh:alice" {
 				t.Errorf("principal = %+v, %v", p, ok)
 			}
@@ -113,15 +115,15 @@ func TestSSHLoginWithEachKeyType(t *testing.T) {
 
 func TestSSHLoginRefused(t *testing.T) {
 	s, k, other := sshService(t), newKeygen(t, "ed25519"), newKeygen(t, "ed25519")
-	if _, err := s.AddSSHKey("alice", k.public(t), ""); err != nil {
+	if _, err := s.AddSSHKey("alice", k.public(t), "", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.AddSSHKey("bob", other.public(t), ""); err != nil {
+	if _, err := s.AddSSHKey("bob", other.public(t), "", nil); err != nil {
 		t.Fatal(err)
 	}
 	refused := func(name, challenge, signature string) {
 		t.Helper()
-		if token, _, err := s.SSHLogin(challenge, signature); err == nil || token != "" {
+		if token, _, err := s.SSHLogin(challenge, signature, testRemote); err == nil || token != "" {
 			t.Errorf("%s was let in", name)
 		}
 	}
@@ -138,14 +140,14 @@ func TestSSHLoginRefused(t *testing.T) {
 	token := sshIn(t, s, k, "alice")
 	raw := strings.TrimPrefix(token, SSHTokenPrefix)
 	refused("a token as a challenge", raw, k.sign(t, SSHNamespace, raw))
-	if _, ok := s.CheckSSHToken(SSHTokenPrefix + c); ok {
+	if _, ok := s.CheckSSHToken(SSHTokenPrefix+c, testRemote); ok {
 		t.Error("a challenge worked as a token")
 	}
 
 	// A challenge works once.
 	c = challengeFor(t, s, "alice")
 	sig := k.sign(t, SSHNamespace, c)
-	if _, _, err := s.SSHLogin(c, sig); err != nil {
+	if _, _, err := s.SSHLogin(c, sig, testRemote); err != nil {
 		t.Fatal(err)
 	}
 	refused("a used challenge", c, sig)
@@ -158,7 +160,7 @@ func TestSSHLoginRefused(t *testing.T) {
 	s.now = func() time.Time { return now.Add(sshChallengeLife + time.Second) }
 	refused("an old challenge", c, sig)
 	s.now = func() time.Time { return now.Add(sshTokenLife + time.Second) }
-	if _, ok := s.CheckSSHToken(token); ok {
+	if _, ok := s.CheckSSHToken(token, testRemote); ok {
 		t.Error("an old token worked")
 	}
 }
@@ -186,20 +188,20 @@ func TestSHA1SignaturesRefused(t *testing.T) {
 
 func TestSSHTokenFollowsTheAccount(t *testing.T) {
 	s, k := sshService(t), newKeygen(t, "ed25519")
-	key, err := s.AddSSHKey("bob", k.public(t), "laptop")
+	key, err := s.AddSSHKey("bob", k.public(t), "laptop", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	token := sshIn(t, s, k, "bob")
 
 	// The role is read each time.
-	if p, ok := s.CheckSSHToken(token); !ok || p.Role != rbac.Member {
+	if p, ok := s.CheckSSHToken(token, testRemote); !ok || p.Role != rbac.Member {
 		t.Fatalf("principal = %+v, %v", p, ok)
 	}
 	if _, err := s.SetAccountRole(nil, "bob", rbac.Admin); err != nil {
 		t.Fatal(err)
 	}
-	if p, _ := s.CheckSSHToken(token); p.Role != rbac.Admin {
+	if p, _ := s.CheckSSHToken(token, testRemote); p.Role != rbac.Admin {
 		t.Errorf("after promotion, role = %s", p.Role)
 	}
 
@@ -207,7 +209,7 @@ func TestSSHTokenFollowsTheAccount(t *testing.T) {
 	if _, err := s.setPassword("bob", "a whole new password"); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := s.CheckSSHToken(token); ok {
+	if _, ok := s.CheckSSHToken(token, testRemote); ok {
 		t.Error("the token outlived the password")
 	}
 
@@ -216,23 +218,23 @@ func TestSSHTokenFollowsTheAccount(t *testing.T) {
 	if err := s.DeleteSSHKey("bob", key.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := s.CheckSSHToken(token); ok {
+	if _, ok := s.CheckSSHToken(token, testRemote); ok {
 		t.Error("the token outlived the key")
 	}
 	c := challengeFor(t, s, "bob")
-	if _, _, err := s.SSHLogin(c, k.sign(t, SSHNamespace, c)); err == nil {
+	if _, _, err := s.SSHLogin(c, k.sign(t, SSHNamespace, c), testRemote); err == nil {
 		t.Error("a removed key signed in")
 	}
 
 	// So does removing the account.
-	if _, err := s.AddSSHKey("bob", k.public(t), ""); err != nil {
+	if _, err := s.AddSSHKey("bob", k.public(t), "", nil); err != nil {
 		t.Fatal(err)
 	}
 	token = sshIn(t, s, k, "bob")
 	if err := s.DeleteAccount(nil, "bob"); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := s.CheckSSHToken(token); ok {
+	if _, ok := s.CheckSSHToken(token, testRemote); ok {
 		t.Error("the token outlived the account")
 	}
 }
@@ -241,7 +243,7 @@ func TestAddSSHKeyChecks(t *testing.T) {
 	s, k := sshService(t), newKeygen(t, "ed25519")
 	fields := strings.Fields(k.public(t))
 	pub := fields[0] + " " + fields[1]
-	got, err := s.AddSSHKey("alice", pub+" laptop", "")
+	got, err := s.AddSSHKey("alice", pub+" laptop", "", nil)
 	if err != nil || got.Name != "laptop" || got.Type != "ssh-ed25519" || !strings.HasPrefix(got.Fingerprint, "SHA256:") {
 		t.Fatalf("key = %+v, %v", got, err)
 	}
@@ -253,20 +255,20 @@ func TestAddSSHKeyChecks(t *testing.T) {
 		"two keys":    strings.TrimSpace(newKeygen(t, "ed25519").public(t)) + "\n" + strings.TrimSpace(newKeygen(t, "ed25519").public(t)),
 		"cut short":   fields[0] + " " + fields[1][:20],
 	} {
-		if _, err := s.AddSSHKey("alice", line, ""); err == nil {
+		if _, err := s.AddSSHKey("alice", line, "", nil); err == nil {
 			t.Errorf("%s was accepted", name)
 		}
 	}
-	if _, err := s.AddSSHKey("nobody", strings.TrimSpace(newKeygen(t, "ed25519").public(t)), ""); err != ErrNoAccount {
+	if _, err := s.AddSSHKey("nobody", strings.TrimSpace(newKeygen(t, "ed25519").public(t)), "", nil); err != ErrNoAccount {
 		t.Errorf("no account: %v", err)
 	}
-	if _, err := s.AddSSHKey("alice", strings.TrimSpace(newKeygen(t, "ed25519").public(t)), strings.Repeat("x", 101)); err == nil {
+	if _, err := s.AddSSHKey("alice", strings.TrimSpace(newKeygen(t, "ed25519").public(t)), strings.Repeat("x", 101), nil); err == nil {
 		t.Error("a long name was accepted")
 	}
 	weak := filepath.Join(t.TempDir(), "weak")
 	if out, err := exec.Command("ssh-keygen", "-q", "-t", "rsa", "-b", "1024", "-N", "", "-f", weak).CombinedOutput(); err == nil {
 		b, _ := os.ReadFile(weak + ".pub")
-		if _, err := s.AddSSHKey("alice", string(b), ""); err == nil {
+		if _, err := s.AddSSHKey("alice", string(b), "", nil); err == nil {
 			t.Error("a 1024-bit RSA key was accepted")
 		}
 	} else {

@@ -38,6 +38,10 @@ type provider struct {
 	codes  map[string]authRequest
 	user   string
 	groups []string
+	// authTime is when the user last signed in, as the ID token says; nil
+	// means just now. prompt and maxAge are what the last sign-in asked for.
+	authTime       func() time.Time
+	prompt, maxAge string
 }
 
 type authRequest struct {
@@ -73,6 +77,7 @@ func newProvider(t *testing.T) *provider {
 		}
 		code := "code-" + q.Get("state")
 		p.mu.Lock()
+		p.prompt, p.maxAge = q.Get("prompt"), q.Get("max_age")
 		p.codes[code] = authRequest{q.Get("nonce"), q.Get("code_challenge"), q.Get("redirect_uri")}
 		p.mu.Unlock()
 		http.Redirect(w, r, q.Get("redirect_uri")+"?code="+code+"&state="+url.QueryEscape(q.Get("state")), http.StatusFound)
@@ -100,9 +105,15 @@ func newProvider(t *testing.T) *provider {
 		}
 		signer, _ := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key}, (&jose.SignerOptions{}).WithHeader("kid", "k1"))
 		now := time.Now()
+		authTime := now
+		p.mu.Lock()
+		if p.authTime != nil {
+			authTime = p.authTime()
+		}
+		p.mu.Unlock()
 		idt, _ := jwt.Signed(signer).Claims(map[string]any{
 			"iss": p.URL, "sub": "uid-" + p.user, "aud": "hlm", "nonce": req.nonce,
-			"iat": now.Unix(), "exp": now.Add(time.Hour).Unix(),
+			"iat": now.Unix(), "exp": now.Add(time.Hour).Unix(), "auth_time": authTime.Unix(),
 		}).Serialize()
 		json.NewEncoder(w).Encode(map[string]any{"access_token": "at-" + p.user, "token_type": "Bearer", "expires_in": 3600, "id_token": idt})
 	})
@@ -179,6 +190,19 @@ func (e *env) require(t *testing.T, c *http.Client, on bool) (int, string) {
 	return do(t, c, "PUT", e.hlm.URL+"/api/auth/config", csrf, jsonBody(auth.Config{Required: on}))
 }
 
+// confirm confirms a browser's session, with its password, or with single
+// sign-on if password is empty.
+func (e *env) confirm(t *testing.T, c *http.Client, password string) {
+	t.Helper()
+	if password == "" {
+		do(t, c, "GET", e.hlm.URL+"/auth/login?confirm=1", nil, "") // ends at the web UI, which isn't served here
+		return
+	}
+	if code, body := do(t, c, "POST", e.hlm.URL+"/api/auth/confirm", csrf, jsonBody(map[string]string{"password": password})); code != 200 {
+		t.Fatalf("confirm = %d %s", code, body)
+	}
+}
+
 func (e *env) localLogin(t *testing.T, c *http.Client, user, pass string) (int, string) {
 	t.Helper()
 	return do(t, c, "POST", e.hlm.URL+"/api/auth/login", csrf, jsonBody(map[string]string{"username": user, "password": pass}))
@@ -211,7 +235,11 @@ func TestSignInFlow(t *testing.T) {
 		t.Fatalf("not verified: %+v", pub)
 	}
 
-	// Signed in, sign-in can be required.
+	// Signed in and confirmed, sign-in can be required.
+	if code, _ := e.require(t, b, true); code != 403 {
+		t.Fatalf("require before confirming = %d", code)
+	}
+	e.confirm(t, b, "")
 	if code, body := e.require(t, b, true); code != 200 {
 		t.Fatalf("require = %d %s", code, body)
 	}
@@ -263,6 +291,7 @@ func TestSignInFlow(t *testing.T) {
 	if code, body := e.localLogin(t, local, "admin", "correct horse"); code != 200 {
 		t.Fatalf("local login = %d %s", code, body)
 	}
+	e.confirm(t, local, "correct horse")
 	c.AllowedUsers = []string{"ALICE@example.com"}
 	if code, body := e.saveOIDC(t, local, c); code != 200 {
 		t.Fatalf("save = %d %s", code, body)
@@ -317,6 +346,7 @@ func TestLocalAccounts(t *testing.T) {
 	if code != 200 || !strings.Contains(body, `"method":"local"`) || !strings.Contains(body, `"username":"Admin"`) {
 		t.Fatalf("login = %d %s", code, body)
 	}
+	e.confirm(t, b, "correct horse")
 	if code, body := e.require(t, b, true); code != 200 {
 		t.Fatalf("require = %d %s", code, body)
 	}
@@ -394,7 +424,19 @@ func TestAPIKeys(t *testing.T) {
 	e := setup(t, "tok")
 	b := browser(t)
 	tokenHeader := map[string]string{"Authorization": "Bearer tok", "X-HLM-Request": "1"}
-	code, body := do(t, b, "POST", e.hlm.URL+"/api/auth/keys", tokenHeader, `{"name":"backup script","days":30,"role":"admin"}`)
+	// HLM_TOKEN can't make keys, but can make the first account, which can.
+	if code, body := do(t, b, "POST", e.hlm.URL+"/api/auth/keys", tokenHeader, `{"name":"x"}`); code != 403 || !strings.Contains(body, "interactive_required") {
+		t.Fatalf("key from HLM_TOKEN = %d %s", code, body)
+	}
+	if code, body := do(t, b, "POST", e.hlm.URL+"/api/auth/accounts", tokenHeader, jsonBody(map[string]string{"username": "first", "password": "correct horse"})); code != 201 {
+		t.Fatalf("first account from HLM_TOKEN = %d %s", code, body)
+	}
+	if code, body := do(t, b, "POST", e.hlm.URL+"/api/auth/accounts", tokenHeader, jsonBody(map[string]string{"username": "second", "password": "correct horse"})); code != 403 {
+		t.Fatalf("second account from HLM_TOKEN = %d %s", code, body)
+	}
+	e.localLogin(t, b, "first", "correct horse")
+	e.confirm(t, b, "correct horse")
+	code, body := do(t, b, "POST", e.hlm.URL+"/api/auth/keys", csrf, `{"name":"backup script","days":30,"role":"admin"}`)
 	var made struct {
 		Key     string    `json:"key"`
 		ID      string    `json:"id"`
@@ -405,7 +447,7 @@ func TestAPIKeys(t *testing.T) {
 	if code != 201 || !strings.HasPrefix(made.Key, "hlm_"+made.ID+"_") || made.Expires.IsZero() {
 		t.Fatalf("create = %d %s", code, body)
 	}
-	if code, _ := do(t, b, "POST", e.hlm.URL+"/api/auth/keys", tokenHeader, `{"name":""}`); code != 400 {
+	if code, _ := do(t, b, "POST", e.hlm.URL+"/api/auth/keys", csrf, `{"name":""}`); code != 400 {
 		t.Errorf("unnamed key = %d", code)
 	}
 
@@ -414,12 +456,21 @@ func TestAPIKeys(t *testing.T) {
 	if code, _ := do(t, anon, "GET", e.hlm.URL+"/api/auth/keys", bearer(made.Key), ""); code != 200 {
 		t.Errorf("with the key = %d", code)
 	}
-	// Keys need no CSRF header, and work in ?token= (for EventSource).
+	// Keys need no CSRF header, and only work in the header: in a URL they'd
+	// end up in logs and history.
 	if code, _ := do(t, anon, "POST", e.hlm.URL+"/api/auth/oidc/test", bearer(made.Key), `{}`); code != 400 {
 		t.Errorf("key, POST = %d (want 400 for the empty settings, not 401/403)", code)
 	}
-	if code, _ := do(t, anon, "GET", e.hlm.URL+"/api/auth/keys?token="+url.QueryEscape(made.Key), nil, ""); code != 200 {
+	if code, _ := do(t, anon, "GET", e.hlm.URL+"/api/auth/keys?token="+url.QueryEscape(made.Key), nil, ""); code != 401 {
 		t.Errorf("key in query = %d", code)
+	}
+	if code, _ := do(t, anon, "GET", e.hlm.URL+"/api/auth/keys?token=tok", nil, ""); code != 401 {
+		t.Errorf("HLM_TOKEN in query = %d", code)
+	}
+	// An admin key can't make more keys, so a stolen one can't outlive its
+	// revocation.
+	if code, _ := do(t, anon, "POST", e.hlm.URL+"/api/auth/keys", bearer(made.Key), `{"name":"spare"}`); code != 403 {
+		t.Errorf("key making a key = %d", code)
 	}
 	for _, bad := range []string{made.Key + "x", "hlm_" + made.ID + "_", "hlm_nope_" + strings.Split(made.Key, "_")[2], strings.TrimPrefix(made.Key, "hlm_")} {
 		if code, _ := do(t, anon, "GET", e.hlm.URL+"/api/auth/keys", bearer(bad), ""); code != 401 {
@@ -476,6 +527,7 @@ func TestRoles(t *testing.T) {
 	if code, body := e.localLogin(t, b, "first", "correct horse"); code != 200 {
 		t.Fatalf("login = %d %s", code, body)
 	}
+	e.confirm(t, b, "correct horse")
 	if code, body := e.require(t, b, true); code != 200 {
 		t.Fatalf("require sign-in = %d %s", code, body)
 	}
@@ -559,6 +611,7 @@ func TestOIDCAdmins(t *testing.T) {
 		t.Fatalf("save = %d %s", code, body)
 	}
 	do(t, b, "GET", e.hlm.URL+"/auth/login", nil, "") // ends at the web UI, which isn't served here
+	e.confirm(t, b, "")
 	if code, body := e.require(t, b, true); code != 200 {
 		t.Fatalf("require = %d %s", code, body)
 	}
@@ -664,7 +717,7 @@ func TestOIDCOff(t *testing.T) {
 
 func TestDeployerIsForKeys(t *testing.T) {
 	e := setup(t, "")
-	if _, info, err := e.svc.CreateAPIKey("ci", 0, rbac.Deployer); err != nil || info.Role != rbac.Deployer {
+	if _, info, err := e.svc.CreateAPIKey("ci", 0, rbac.Deployer, nil); err != nil || info.Role != rbac.Deployer {
 		t.Errorf("key = %+v, %v", info, err)
 	}
 	if _, err := e.svc.CreateAccount("first", "correct horse battery", rbac.Admin); err != nil {
@@ -672,5 +725,83 @@ func TestDeployerIsForKeys(t *testing.T) {
 	}
 	if _, err := e.svc.CreateAccount("second", "correct horse battery", rbac.Deployer); err == nil {
 		t.Error("an account was made a deployer")
+	}
+}
+
+func TestConfirmWithSingleSignOn(t *testing.T) {
+	e := setup(t, "")
+	b := browser(t)
+	if code, body := e.saveOIDC(t, b, e.oidc()); code != 200 {
+		t.Fatalf("save = %d %s", code, body)
+	}
+	do(t, b, "GET", e.hlm.URL+"/auth/login", nil, "")
+	makeKey := func() (int, string) {
+		return do(t, b, "POST", e.hlm.URL+"/api/auth/keys", csrf, `{"name":"k"}`)
+	}
+	if code, body := makeKey(); code != 403 || !strings.Contains(body, `"method":"oidc"`) {
+		t.Fatalf("before confirming = %d %s", code, body)
+	}
+
+	// A provider that didn't make the user sign in again can't confirm.
+	e.prov.mu.Lock()
+	e.prov.authTime = func() time.Time { return time.Now().Add(-time.Hour) }
+	e.prov.mu.Unlock()
+	if code, body := do(t, b, "GET", e.hlm.URL+"/auth/login?confirm=1", nil, ""); code != 403 || !strings.Contains(body, "ask you to sign in again") {
+		t.Errorf("stale sign-in = %d %s", code, body)
+	}
+	if e.prov.prompt != "login" || e.prov.maxAge != "0" {
+		t.Errorf("asked for prompt=%q max_age=%q", e.prov.prompt, e.prov.maxAge)
+	}
+	if code, _ := makeKey(); code != 403 {
+		t.Errorf("after a stale sign-in = %d", code)
+	}
+
+	// Nor can someone else's sign-in.
+	e.prov.mu.Lock()
+	e.prov.authTime, e.prov.user = nil, "bob"
+	e.prov.mu.Unlock()
+	if code, body := do(t, b, "GET", e.hlm.URL+"/auth/login?confirm=1", nil, ""); code != 403 || !strings.Contains(body, "different account") {
+		t.Errorf("someone else = %d %s", code, body)
+	}
+	if code, _ := makeKey(); code != 403 {
+		t.Errorf("after someone else signed in = %d", code)
+	}
+
+	e.prov.mu.Lock()
+	e.prov.user = "alice"
+	e.prov.mu.Unlock()
+	e.confirm(t, b, "")
+	if code, body := makeKey(); code != 201 {
+		t.Errorf("after confirming = %d %s", code, body)
+	}
+	// Confirming is for a session there already is.
+	if code, _ := do(t, browser(t), "GET", e.hlm.URL+"/auth/login?confirm=1", nil, ""); code != 400 {
+		t.Errorf("confirm without a session = %d", code)
+	}
+}
+
+func TestConfirmWithPassword(t *testing.T) {
+	e := setup(t, "")
+	if _, err := e.svc.CreateAccount("admin", "correct horse", rbac.Admin); err != nil {
+		t.Fatal(err)
+	}
+	b := browser(t)
+	e.localLogin(t, b, "admin", "correct horse")
+	if code, body := do(t, b, "POST", e.hlm.URL+"/api/auth/confirm", csrf, `{"password":"wrong one"}`); code != 403 {
+		t.Errorf("wrong password = %d %s", code, body)
+	}
+	if code, body := do(t, b, "GET", e.hlm.URL+"/api/auth/status", nil, ""); !strings.Contains(body, "confirmedUntil") == false || code != 200 {
+		t.Errorf("status before = %s", body)
+	}
+	e.confirm(t, b, "correct horse")
+	if _, body := do(t, b, "GET", e.hlm.URL+"/api/auth/status", nil, ""); !strings.Contains(body, "confirmedUntil") {
+		t.Errorf("status after = %s", body)
+	}
+	if code, body := do(t, b, "POST", e.hlm.URL+"/api/auth/keys", csrf, `{"name":"k"}`); code != 201 {
+		t.Errorf("after confirming = %d %s", code, body)
+	}
+	// Without a session there's nothing to confirm.
+	if code, _ := do(t, &http.Client{}, "POST", e.hlm.URL+"/api/auth/confirm", csrf, `{"password":"correct horse"}`); code != 403 && code != 401 {
+		t.Errorf("no session = %d", code)
 	}
 }

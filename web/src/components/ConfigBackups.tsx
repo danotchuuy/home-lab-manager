@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { api } from "../api";
+import { api, download } from "../api";
 import type { ConfigBackupOverview, ConfigBackupPlan } from "../types";
 import { usePoll } from "../usePoll";
 import { formatBytes, timeAgo } from "../util";
@@ -211,7 +211,15 @@ export function ConfigBackups({ storageVersion }: { storageVersion: number }) {
                   {timeAgo(b.lastModified)}
                 </span>
                 <span className="btn-row">
-                  <a className="btn ghost small" href={api.configBackupDownloadUrl(b.key)} download>
+                  <a
+                    className="btn ghost small"
+                    href={api.configBackupDownloadUrl(b.key)}
+                    download
+                    onClick={(e) => {
+                      e.preventDefault();
+                      download(api.configBackupDownloadUrl(b.key)).catch((err) => alert((err as Error).message));
+                    }}
+                  >
                     Download
                   </a>
                   <button className="btn ghost small danger" onClick={() => remove(b.key)} disabled={!!busy}>

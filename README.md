@@ -825,7 +825,7 @@ own **Settings** tab.
 | Role in a group | Can |
 | --- | --- |
 | **Viewer** | See the server, its stats and its port and backup status, but not its settings, logs or files, which can hold passwords |
-| **Operator** | Also start, stop, restart and update it, read its logs, settings and files, and take and download backups |
+| **Operator** | Also start, stop, restart and update it, read its logs, settings and files, and take and download backups. Settings that look like secrets (names with `TOKEN`, `SECRET`, `PASS`, `PWD`, `KEY`, `CREDENTIAL`, `AUTH` or `PRIVATE`, items the template masks, extra parameters and post arguments) are left out |
 | **Manager** | Also change its ports and variables, edit files, set start on boot and port forwarding, change the backup plan, and restore and delete backups |
 
 Some things always take an admin, because they amount to control of the host or of other servers: deleting servers,
@@ -833,6 +833,10 @@ installing them (except for [deployer keys](#deployer-keys)), importing template
 Hostnames in the tunnel and connection containers (cloudflared, WireGuard, hlm itself) are admin-only too. Servers
 someone can't see answer 404, as if they didn't exist.
 
+- **Treat operators as able to see a server's secrets.** Hiding secret-looking settings is a courtesy, not a
+  boundary: an operator can read the server's files and logs, which usually hold the same passwords, and its
+  environment through `/proc`. Don't give operator, or above, on a server whose secrets matter more than the server,
+  such as an identity provider whose keys other systems trust.
 - **A group only contains what the server itself can reach.** Operators and managers run code in the container, so if
   an admin gave a server `--privileged`, the Docker socket or a mount shared with another server, whoever manages it can
   use those too. Keep such servers out of groups, or give viewer only.
@@ -845,7 +849,21 @@ someone can't see answer 404, as if they didn't exist.
   set in hlm apply at once, though a log stream that's already open keeps going until it reconnects.
 - hlm won't demote or remove the last admin way in while sign-in is required. If it's lost anyway,
   `hlm reset-password <user> --admin` makes the account an admin.
-- Changes made through the API are logged with who made them.
+- Changes made through the API are logged with who made them and from which address.
+
+### Confirming it's you
+
+Changes that could give someone lasting access take a person at a browser who has confirmed it's them in the last 10
+minutes: making API keys and changing where they work from, adding SSH keys, adding accounts and setting their
+passwords and roles, changing server groups, and changing sign-in and single sign-on settings. hlm asks for your
+password, or, if you signed in with single sign-on, sends you to sign in there again. hlm checks the provider's
+`auth_time` to make sure it really asked, so a provider that ignores `prompt=login` can't confirm; use a local account
+then.
+
+API keys, SSH tokens and `HLM_TOKEN` can't make these changes, even with the admin role, so a stolen key can't make
+itself permanent. They can still revoke: delete keys, SSH keys, accounts and groups. `HLM_TOKEN` can also add the
+first account, so a new install can be set up, and `hlm reset-password` on the host is the way back in if every admin
+is locked out. While sign-in isn't required, everyone is an admin anyway, so nothing asks.
 
 ### Single sign-on with Authelia (OpenID Connect)
 
@@ -883,9 +901,15 @@ of it. Send it as a bearer token:
 curl -H "Authorization: Bearer hlm_…" https://hlm.example.com/api/servers
 ```
 
-Keys work whether or not sign-in is required, and don't need the `X-HLM-Request` header that cookie sign-ins do. An
-admin key can do everything; a member key only what server groups give it; a [deployer key](#deployer-keys) can also
-create servers. The list shows when each key was last used (updated at most hourly); **Revoke** stops a
+Keys work whether or not sign-in is required, and don't need the `X-HLM-Request` header that cookie sign-ins do. Send
+them only in the `Authorization` header; a token in the URL (`?token=`) isn't accepted, since URLs end up in logs and
+browser history. An admin key can do everything except the changes that [need you at a browser](#confirming-its-you);
+a member key only what server groups give it; a [deployer key](#deployer-keys) can also create servers.
+
+**Allowed from** limits a key to addresses and ranges, like OpenSSH's `from=` (`10.0.3.115, 192.168.11.0/24`). It's
+checked on every request, against the address the connection comes from; `X-Forwarded-For` is ignored, since anyone can
+send it. So behind a proxy or Cloudflare Tunnel, requests come from the proxy's address: limit those keys to it, or
+don't limit them. Click a key's addresses in the list to change them. The list shows when each key was last used (updated at most hourly); **Revoke** stops a
 key straight away.
 
 ### Deployer keys
@@ -926,14 +950,19 @@ Confined isn't isolated from everything:
 
 A local account can have SSH public keys, so a script can use the API as that account, with its role and groups, without
 holding its password or a long-lived key. Add one under **System → Sign-in** (admins, for any account) or **System → Your
-account**, or through the API. Adding one to your own account takes your password, like changing it:
+account**. Adding one takes [confirming it's you](#confirming-its-you), so it can't be done with an API key or token. Set
+**Allowed from** to the addresses the key is used from, as for API keys; it's checked at sign-in and on every request
+with the token.
+
+`hlm ssh-login` signs in and prints a token, using the agent at `SSH_AUTH_SOCK` if there is one (only the `.pub` file
+is needed then), or the private key file:
 
 ```sh
-curl -H "Authorization: Bearer hlm_…" -d "{\"publicKey\": \"$(cat ~/.ssh/id_ed25519.pub)\"}" \
-  https://hlm.example.com/api/auth/accounts/alice/ssh-keys
+token=$(hlm ssh-login -url http://192.168.11.101:8080 -user alice -key ~/.ssh/id_ed25519.pub)
+curl -H "Authorization: Bearer $token" http://192.168.11.101:8080/api/servers
 ```
 
-To sign in, ask for a challenge, sign it with `ssh-keygen`, which can use `ssh-agent` (`-U`) or a hardware key, and swap the signature for a token:
+The `hlm` binary from a release works as the client on any Linux machine with `ssh-keygen`. Without it, ask for a challenge, sign it with `ssh-keygen`, which can use `ssh-agent` (`-U`) or a hardware key, and swap the signature for a token:
 
 ```sh
 HLM=https://hlm.example.com
@@ -944,7 +973,8 @@ token=$(jq -n --arg c "$challenge" --arg s "$signature" '{challenge: $c, signatu
 curl -H "Authorization: Bearer $token" $HLM/api/servers
 ```
 
-A challenge lasts two minutes and works once. A token lasts an hour and stops working as soon as its key or account is
+A challenge lasts two minutes, works once and doesn't survive a restart of hlm. Failed sign-ins count towards the same
+limit as wrong passwords, for each username and address, and are logged with the address. A token lasts an hour and stops working as soon as its key or account is
 removed or the account's password changes. Changing a password doesn't remove the account's keys, so if an account may
 have been taken over, check them as well. Keys can be ed25519, ECDSA or RSA of at least 2048 bits. They're for local
 accounts; single sign-on users don't have one in hlm, so they use API keys.
@@ -999,9 +1029,11 @@ when the `HLM_*` one isn't set.
 | `PUT /api/auth/accounts/{username}/password`   | `{password}`: sets a new password, ending the account's other sessions. Members change only their own, and send `current` too. |
 | `PUT /api/auth/accounts/{username}/role`       | `{role}`: `admin` or `member`.                                                    |
 | `DELETE /api/auth/accounts/{username}`         | Removes an account.                                                               |
-| `GET/POST /api/auth/accounts/{username}/ssh-keys`, `DELETE …/ssh-keys/{id}` | [SSH keys](#ssh-keys) of an account, for an admin or the account itself. `POST {publicKey, name?, current?}`; `current` is the password, for your own account. |
+| `GET/POST /api/auth/accounts/{username}/ssh-keys`, `PUT/DELETE …/ssh-keys/{id}` | [SSH keys](#ssh-keys) of an account, for an admin or the account itself. `POST {publicKey, name?, allowFrom?}` and `PUT {allowFrom}` need a [confirmed](#confirming-its-you) session. |
+| `POST /api/auth/confirm`                       | Confirm a password session for 10 minutes: `{password}`. Single sign-on confirms at `/auth/login?confirm=1`. |
+| `POST /api/auth/download-ticket`               | `{url}` of a backup download returns a URL that works once, for a minute, from the same address: for downloads when signed in with a token. |
 | `POST /api/auth/ssh/challenge`, `POST /api/auth/ssh/login` | Sign in with an SSH key: `{username}` returns `{challenge}`; `{challenge, signature}` returns `{token, expires}`. |
-| `GET/POST /api/auth/keys`, `DELETE /api/auth/keys/{id}` | [API keys](#api-keys); `POST {name, days, role}` returns the key, once.   |
+| `GET/POST /api/auth/keys`, `PUT/DELETE /api/auth/keys/{id}` | [API keys](#api-keys); `POST {name, days, role, allowFrom?}` returns the key, once; `PUT {allowFrom}`. Both need a [confirmed](#confirming-its-you) session. |
 | `GET/POST /api/groups`, `PUT/DELETE /api/groups/{id}` | [Server groups](#roles-and-server-groups): `{name, servers, grants}`. `GET` gives members their own groups, without grants. |
 | `PUT /api/servers/{id}/groups`                 | `{groups}`: the IDs of the groups a server is in.                                 |
 | `GET/PUT/DELETE /api/auth/oidc`                | [Single sign-on](#single-sign-on-with-authelia-openid-connect) settings; the client secret is never returned. |
@@ -1085,7 +1117,7 @@ when the `HLM_*` one isn't set.
 | `DELETE /api/integrations/cloudflare`          | Forget the token (refused while the tunnel is set up).                            |
 | `PUT /api/tunnel`                              | Create the tunnel (the first time) and run cloudflared `{name, lanNetwork, lanAddress}`, then publish the hostnames. Streams NDJSON: `step` and `output` events, then `done` with `status` (and `apply`) or `error`. |
 | `POST /api/tunnel/{start,stop,restart}`        | Control the `hlm-cloudflared` container.                                          |
-| `GET /api/tunnel/logs?tail=`                   | cloudflared's log as server-sent events (`?token=` for `HLM_TOKEN`).              |
+| `GET /api/tunnel/logs?tail=`                   | cloudflared's log as server-sent events.                                           |
 | `DELETE /api/tunnel`                           | Remove the container, hlm's DNS records and the tunnel; the hostnames are kept.   |
 | `GET /api/tunnel/routes`                       | The hostnames with where they go and their states, and the servers' TCP ports.    |
 | `PUT /api/tunnel/routes`                       | Replace the hostnames `{routes: [{hostname, server, port, scheme, noTLSVerify}]}` and publish them if the tunnel is set up. Use `address` (an IP address or host name) instead of `server` for a web server hlm doesn't run. |

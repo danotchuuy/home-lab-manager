@@ -42,6 +42,8 @@ type APIKey struct {
 	// Role is the key's global role. Keys made before roles existed have
 	// none, and keep their full access; see role.
 	Role rbac.Role `json:"role,omitempty"`
+	// AllowFrom limits where the key can be used from; empty is anywhere.
+	AllowFrom []string `json:"allowFrom,omitempty"`
 }
 
 // role returns the key's global role. A key without one predates roles,
@@ -57,13 +59,14 @@ func (k APIKey) role() rbac.Role {
 type APIKeyInfo struct {
 	ID string `json:"id"`
 	// Prefix is the start of the key, to tell keys apart.
-	Prefix   string    `json:"prefix"`
-	Name     string    `json:"name"`
-	Created  time.Time `json:"created"`
-	Expires  time.Time `json:"expires,omitzero"`
-	Expired  bool      `json:"expired,omitempty"`
-	LastUsed time.Time `json:"lastUsed,omitzero"`
-	Role     rbac.Role `json:"role"`
+	Prefix    string    `json:"prefix"`
+	Name      string    `json:"name"`
+	Created   time.Time `json:"created"`
+	Expires   time.Time `json:"expires,omitzero"`
+	Expired   bool      `json:"expired,omitempty"`
+	LastUsed  time.Time `json:"lastUsed,omitzero"`
+	Role      rbac.Role `json:"role"`
+	AllowFrom []string  `json:"allowFrom"`
 }
 
 func (s *Service) apiKeys() []APIKey {
@@ -84,6 +87,7 @@ func (s *Service) APIKeys() []APIKeyInfo {
 		info := APIKeyInfo{
 			ID: k.ID, Prefix: KeyPrefix + k.ID + "_…", Name: k.Name, Created: k.Created, Expires: k.Expires,
 			Expired: !k.Expires.IsZero() && !now.Before(k.Expires), LastUsed: k.LastUsed, Role: k.role(),
+			AllowFrom: orEmpty(k.AllowFrom),
 		}
 		if seen := s.keySeen[k.ID]; seen.After(info.LastUsed) {
 			info.LastUsed = seen
@@ -97,7 +101,11 @@ func (s *Service) APIKeys() []APIKeyInfo {
 // CreateAPIKey makes a key named name with a global role (a member if none
 // is given) that expires after days (0: never). The returned key is the only
 // time its secret is available.
-func (s *Service) CreateAPIKey(name string, days int, role rbac.Role) (string, APIKeyInfo, error) {
+func (s *Service) CreateAPIKey(name string, days int, role rbac.Role, allowFrom []string) (string, APIKeyInfo, error) {
+	from, err := parseAllowFrom(allowFrom)
+	if err != nil {
+		return "", APIKeyInfo{}, err
+	}
 	if role == rbac.None {
 		role = rbac.Member
 	}
@@ -122,7 +130,7 @@ func (s *Service) CreateAPIKey(name string, days int, role rbac.Role) (string, A
 	sec := base64.RawURLEncoding.EncodeToString(secret)
 	sum := sha256.Sum256([]byte(sec))
 	now := s.now().UTC()
-	k := APIKey{ID: hex.EncodeToString(id), Name: name, Hash: hex.EncodeToString(sum[:]), Created: now, Role: role}
+	k := APIKey{ID: hex.EncodeToString(id), Name: name, Hash: hex.EncodeToString(sum[:]), Created: now, Role: role, AllowFrom: from}
 	if days > 0 {
 		k.Expires = now.Add(time.Duration(days) * 24 * time.Hour)
 	}
@@ -132,7 +140,42 @@ func (s *Service) CreateAPIKey(name string, days int, role rbac.Role) (string, A
 		return "", APIKeyInfo{}, err
 	}
 	s.log.Info("created API key", "id", k.ID, "name", k.Name)
-	return KeyPrefix + k.ID + "_" + sec, APIKeyInfo{ID: k.ID, Prefix: KeyPrefix + k.ID + "_…", Name: k.Name, Created: k.Created, Expires: k.Expires, Role: role}, nil
+	return KeyPrefix + k.ID + "_" + sec, APIKeyInfo{ID: k.ID, Prefix: KeyPrefix + k.ID + "_…", Name: k.Name, Created: k.Created, Expires: k.Expires, Role: role, AllowFrom: orEmpty(from)}, nil
+}
+
+func orEmpty(list []string) []string {
+	if list == nil {
+		return []string{}
+	}
+	return list
+}
+
+// SetAPIKeyAllowFrom changes where a key can be used from.
+func (s *Service) SetAPIKeyAllowFrom(id string, allowFrom []string) (APIKeyInfo, error) {
+	from, err := parseAllowFrom(allowFrom)
+	if err != nil {
+		return APIKeyInfo{}, err
+	}
+	s.keyMu.Lock()
+	list := s.apiKeys()
+	i := slices.IndexFunc(list, func(k APIKey) bool { return k.ID == id })
+	if i < 0 {
+		s.keyMu.Unlock()
+		return APIKeyInfo{}, ErrNoAPIKey
+	}
+	list[i].AllowFrom = from
+	err = s.secrets.Set(secretAPIKeys, list)
+	s.keyMu.Unlock()
+	if err != nil {
+		return APIKeyInfo{}, err
+	}
+	s.log.Info("changed where an API key can be used from", "id", id, "allowFrom", from)
+	for _, k := range s.APIKeys() {
+		if k.ID == id {
+			return k, nil
+		}
+	}
+	return APIKeyInfo{}, ErrNoAPIKey
 }
 
 // ErrNoAPIKey means there's no API key with that ID.
@@ -159,7 +202,7 @@ func (s *Service) DeleteAPIKey(id string) error {
 
 // CheckAPIKey returns who a valid, unexpired API key acts as, and notes its
 // use.
-func (s *Service) CheckAPIKey(token string) (rbac.Principal, bool) {
+func (s *Service) CheckAPIKey(token, remote string) (rbac.Principal, bool) {
 	rest, ok := strings.CutPrefix(token, KeyPrefix)
 	if !ok {
 		return rbac.Principal{}, false
@@ -176,6 +219,10 @@ func (s *Service) CheckAPIKey(token string) (rbac.Principal, bool) {
 			continue
 		}
 		if subtle.ConstantTimeCompare([]byte(got), []byte(k.Hash)) != 1 || (!k.Expires.IsZero() && !now.Before(k.Expires)) {
+			return rbac.Principal{}, false
+		}
+		if !allowedFrom(k.AllowFrom, remote) {
+			s.log.Warn("refused API key from an address it isn't allowed from", "key", k.Name, "remote", remote)
 			return rbac.Principal{}, false
 		}
 		s.noteKeyUse(id, now)

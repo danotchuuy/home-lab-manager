@@ -116,14 +116,18 @@ func (s *server) auth(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, errors.New("sign in, or send a valid API key"))
 			return
 		}
-		if session && !safeMethod(r.Method) && r.Header.Get(csrfHeader) == "" {
+		if session != nil && !safeMethod(r.Method) && r.Header.Get(csrfHeader) == "" {
 			writeError(w, http.StatusForbidden, errors.New("requests made with a session cookie need the "+csrfHeader+" header"))
 			return
 		}
+		ctx := context.WithValue(r.Context(), principalKey{}, p)
+		if session != nil {
+			ctx = context.WithValue(ctx, sessionKey{}, session)
+		}
 		rw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(rw, r.WithContext(context.WithValue(r.Context(), principalKey{}, p)))
+		next.ServeHTTP(rw, r.WithContext(ctx))
 		if !safeMethod(r.Method) {
-			s.Log.Info("api request", "by", p.Name, "role", p.Role, "method", r.Method, "path", r.URL.Path, "status", rw.status)
+			s.Log.Info("api request", "by", p.Name, "role", p.Role, "method", r.Method, "path", r.URL.Path, "status", rw.status, "remote", r.RemoteAddr)
 		}
 	})
 }
@@ -367,7 +371,7 @@ func (s *server) getServer(w http.ResponseWriter, r *http.Request) {
 		writeManagerError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, present(s.access(r), srv))
+	writeJSON(w, http.StatusOK, s.present(s.access(r), srv))
 }
 
 func (s *server) removeServer(w http.ResponseWriter, r *http.Request) {
@@ -423,7 +427,7 @@ func (s *server) serverAction(w http.ResponseWriter, r *http.Request) {
 		writeManagerError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, present(s.access(r), srv))
+	writeJSON(w, http.StatusOK, s.present(s.access(r), srv))
 }
 
 func (s *server) installServer(w http.ResponseWriter, r *http.Request) {
@@ -505,9 +509,22 @@ func (s *server) updateServer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) getServerConfig(w http.ResponseWriter, r *http.Request) {
-	app, req, err := s.Manager.Config(r.Context(), r.PathValue("id"))
+	id := r.PathValue("id")
+	app, req, err := s.Manager.Config(r.Context(), id)
 	if err != nil {
 		writeManagerError(w, err)
+		return
+	}
+	info, err := s.Manager.Inspect(r.Context(), id)
+	if err != nil {
+		writeManagerError(w, err)
+		return
+	}
+	// Operators can start and update a server but not change it, so they
+	// needn't see what look like its secrets.
+	if !s.access(r).Can(strings.TrimPrefix(info.Name, "/"), rbac.Manager) {
+		app, req, hidden := deploy.HideSecrets(app, req)
+		writeJSON(w, http.StatusOK, map[string]any{"app": app, "request": req, "hidden": hidden})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"app": app, "request": req})
@@ -1376,7 +1393,7 @@ func (s *server) setAutostart(w http.ResponseWriter, r *http.Request) {
 		writeManagerError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, present(s.access(r), srv))
+	writeJSON(w, http.StatusOK, s.present(s.access(r), srv))
 }
 
 // listConnections returns the containers hlm runs for connections
@@ -2121,9 +2138,14 @@ func (s *server) authStatus(w http.ResponseWriter, r *http.Request) {
 		Token bool `json:"token"`
 		// Role is the caller's global role, if they're let in at all.
 		Role rbac.Role `json:"role,omitempty"`
+		// ConfirmedUntil is when the session's confirmation runs out.
+		ConfirmedUntil time.Time `json:"confirmedUntil,omitzero"`
 	}{Status: s.Auth.Status(r), Token: s.Token != ""}
 	if p, _, ok := s.identify(r); ok {
 		out.Role = p.Role
+	}
+	if u, ok := s.Auth.Session(r); ok && s.Auth.Confirmed(u) {
+		out.ConfirmedUntil = u.Confirmed.Add(auth.ConfirmWindow)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -2208,6 +2230,11 @@ func (s *server) createAccount(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// The first account can be made with HLM_TOKEN, or a new install could
+	// never get one. After that, an account is a way in like a key is.
+	if len(s.Auth.Accounts()) > 0 && !s.stepUp(w, r) {
+		return
+	}
 	a, err := s.Auth.CreateAccount(in.Username, in.Password, in.Role)
 	if errors.Is(err, auth.ErrAccountExists) {
 		writeError(w, http.StatusConflict, err)
@@ -2226,7 +2253,12 @@ func (s *server) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	username := r.PathValue("username")
-	if !s.access(r).Admin() {
+	if s.access(r).Admin() {
+		// Setting a password, even an admin's own, is a way in.
+		if !s.stepUp(w, r) {
+			return
+		}
+	} else {
 		// Their own, then, which they have to know. An API key isn't an account.
 		u, signedIn := s.Auth.Session(r)
 		if !signedIn || u.Method != auth.MethodLocal || !strings.EqualFold(u.Username, username) {
@@ -2282,8 +2314,12 @@ func (s *server) sshLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	token, expires, err := s.Auth.SSHLogin(in.Challenge, in.Signature)
+	token, expires, err := s.Auth.SSHLogin(in.Challenge, in.Signature, r.RemoteAddr)
 	if err != nil {
+		var le *auth.LoginError
+		if errors.As(err, &le) && le.RetryAfter > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(int(le.RetryAfter.Seconds())+1))
+		}
 		writeError(w, http.StatusUnauthorized, err)
 		return
 	}
@@ -2318,34 +2354,23 @@ func (s *server) listSSHKeys(w http.ResponseWriter, r *http.Request) {
 }
 
 // addSSHKey adds a way into an account. That's as strong as changing its
-// password, so it takes the current password too: otherwise a stolen session
-// could turn into access that outlives it.
+// password, so it takes a confirmed session: otherwise a stolen session, API
+// key or token could turn into access that outlives it.
 func (s *server) addSSHKey(w http.ResponseWriter, r *http.Request) {
-	admin, ok := s.mayManageSSHKeys(w, r)
-	if !ok {
+	if _, ok := s.mayManageSSHKeys(w, r); !ok || !s.stepUp(w, r) {
 		return
 	}
 	var in struct {
-		Name      string `json:"name"`
-		PublicKey string `json:"publicKey"`
-		Current   string `json:"current"`
+		Name      string   `json:"name"`
+		PublicKey string   `json:"publicKey"`
+		AllowFrom []string `json:"allowFrom"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 32<<10)).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	username := r.PathValue("username")
-	if !admin {
-		if err := s.Auth.VerifyPassword(username, in.Current); err != nil {
-			var le *auth.LoginError
-			if errors.As(err, &le) && le.RetryAfter > 0 {
-				w.Header().Set("Retry-After", strconv.Itoa(int(le.RetryAfter.Seconds())+1))
-			}
-			writeError(w, http.StatusForbidden, err)
-			return
-		}
-	}
-	k, err := s.Auth.AddSSHKey(username, in.PublicKey, in.Name)
+	k, err := s.Auth.AddSSHKey(username, in.PublicKey, in.Name, in.AllowFrom)
 	switch {
 	case errors.Is(err, auth.ErrNoAccount):
 		writeError(w, http.StatusNotFound, err)
@@ -2353,6 +2378,29 @@ func (s *server) addSSHKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 	default:
 		writeJSON(w, http.StatusCreated, k)
+	}
+}
+
+// setSSHKeyAllowFrom changes where an SSH key can be used from.
+func (s *server) setSSHKeyAllowFrom(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.mayManageSSHKeys(w, r); !ok || !s.stepUp(w, r) {
+		return
+	}
+	var in struct {
+		AllowFrom []string `json:"allowFrom"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8<<10)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	k, err := s.Auth.SetSSHKeyAllowFrom(r.PathValue("username"), r.PathValue("id"), in.AllowFrom)
+	switch {
+	case errors.Is(err, auth.ErrNoAccount), errors.Is(err, auth.ErrNoSSHKey):
+		writeError(w, http.StatusNotFound, err)
+	case err != nil:
+		writeError(w, http.StatusBadRequest, err)
+	default:
+		writeJSON(w, http.StatusOK, k)
 	}
 }
 
@@ -2410,15 +2458,16 @@ func (s *server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) createAPIKey(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Name string    `json:"name"`
-		Days int       `json:"days"`
-		Role rbac.Role `json:"role"`
+		Name      string    `json:"name"`
+		Days      int       `json:"days"`
+		Role      rbac.Role `json:"role"`
+		AllowFrom []string  `json:"allowFrom"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 8<<10)).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	key, info, err := s.Auth.CreateAPIKey(in.Name, in.Days, in.Role)
+	key, info, err := s.Auth.CreateAPIKey(in.Name, in.Days, in.Role, in.AllowFrom)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -2427,6 +2476,26 @@ func (s *server) createAPIKey(w http.ResponseWriter, r *http.Request) {
 		Key string `json:"key"`
 		auth.APIKeyInfo
 	}{key, info})
+}
+
+// setAPIKeyAllowFrom changes where a key can be used from.
+func (s *server) setAPIKeyAllowFrom(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		AllowFrom []string `json:"allowFrom"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8<<10)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	info, err := s.Auth.SetAPIKeyAllowFrom(r.PathValue("id"), in.AllowFrom)
+	switch {
+	case errors.Is(err, auth.ErrNoAPIKey):
+		writeError(w, http.StatusNotFound, err)
+	case err != nil:
+		writeError(w, http.StatusBadRequest, err)
+	default:
+		writeJSON(w, http.StatusOK, info)
+	}
 }
 
 func (s *server) deleteAPIKey(w http.ResponseWriter, r *http.Request) {

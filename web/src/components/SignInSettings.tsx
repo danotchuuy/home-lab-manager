@@ -223,7 +223,7 @@ function AccountRow({ account, me, busy, run, onChange }: { account: Account; me
       {showKeys && (
         <tr>
           <td colSpan={4}>
-            <SSHKeys username={account.username} needsPassword={false} onChange={onChange} />
+            <SSHKeys username={account.username} onChange={onChange} />
           </td>
         </tr>
       )}

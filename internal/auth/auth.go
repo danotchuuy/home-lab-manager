@@ -82,6 +82,12 @@ type User struct {
 	// started; a new password ends older sessions.
 	Version int64     `json:"version,omitempty"`
 	Expires time.Time `json:"expires"`
+	// Confirmed is when the session's password, or single sign-on, was last
+	// confirmed; see ConfirmWindow.
+	Confirmed time.Time `json:"confirmed,omitzero"`
+	// AuthTime is when the provider says the user last signed in, for
+	// confirming. It isn't kept in the session.
+	AuthTime time.Time `json:"-"`
 }
 
 // Display is the name to show for the user.
@@ -108,6 +114,10 @@ type Service struct {
 	key         []byte // session key, once loaded
 
 	limiter limiter
+	tickets tickets
+	// boot is made each time hlm starts, so SSH challenges from before a
+	// restart, whose use isn't remembered, don't work after it.
+	boot string
 
 	sshMu      sync.Mutex
 	sshSpent   map[string]time.Time // used challenges, until they expire
@@ -127,6 +137,7 @@ func New(store *secrets.Store, oidcOff bool, log *slog.Logger) *Service {
 		now:      time.Now,
 		keySeen:  map[string]time.Time{},
 		keySaved: map[string]time.Time{},
+		boot:     randomString(),
 	}
 }
 

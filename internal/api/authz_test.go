@@ -50,8 +50,23 @@ var expected = map[string]string{
 	"GET /api/auth/accounts/{username}/ssh-keys":         "signedIn",
 	"POST /api/auth/accounts/{username}/ssh-keys":        "signedIn",
 	"DELETE /api/auth/accounts/{username}/ssh-keys/{id}": "signedIn",
-	"POST /api/servers/check-ports":                      "signedIn",
-	"/api/":                                              "signedIn",
+	"POST /api/auth/confirm":                             "signedIn",
+	"POST /api/auth/download-ticket":                     "signedIn",
+	"PUT /api/auth/accounts/{username}/ssh-keys/{id}":    "signedIn",
+
+	// Changes that could give lasting access take a confirmed browser
+	// session, so even an admin's API key or token is refused.
+	"PUT /api/auth/config":                   "confirmed",
+	"POST /api/auth/keys":                    "confirmed",
+	"PUT /api/auth/keys/{id}":                "confirmed",
+	"PUT /api/auth/oidc":                     "confirmed",
+	"DELETE /api/auth/oidc":                  "confirmed",
+	"POST /api/groups":                       "confirmed",
+	"PUT /api/groups/{id}":                   "confirmed",
+	"PUT /api/servers/{id}/groups":           "confirmed",
+	"PUT /api/auth/accounts/{username}/role": "confirmed",
+	"POST /api/servers/check-ports":          "signedIn",
+	"/api/":                                  "signedIn",
 
 	"GET /api/servers/{id}":              "viewer",
 	"GET /api/servers/{id}/stats":        "viewer",
@@ -203,7 +218,7 @@ func setup(t *testing.T) *env {
 	}
 	var grants []rbac.Grant
 	for _, name := range []string{"member", "viewer", "operator", "manager"} {
-		key, info, err := e.opts.Auth.CreateAPIKey(name, 0, rbac.Member)
+		key, info, err := e.opts.Auth.CreateAPIKey(name, 0, rbac.Member, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -212,7 +227,7 @@ func setup(t *testing.T) *env {
 			grants = append(grants, rbac.Grant{Subject: rbac.Subject{Kind: rbac.SubjectKey, Name: info.ID}, Role: rbac.Role(name)})
 		}
 	}
-	key, _, err := e.opts.Auth.CreateAPIKey("deployer", 0, rbac.Deployer)
+	key, _, err := e.opts.Auth.CreateAPIKey("deployer", 0, rbac.Deployer, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +241,10 @@ func setup(t *testing.T) *env {
 
 func call(h http.Handler, who, method, path, body string, keys map[string]string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
-	if k := keys[who]; k != "" {
+	if cookie, ok := strings.CutPrefix(keys[who], "cookie:"); ok {
+		r.Header.Set("Cookie", cookie)
+		r.Header.Set("X-HLM-Request", "1")
+	} else if k := keys[who]; k != "" {
 		r.Header.Set("Authorization", "Bearer "+k)
 	}
 	w := httptest.NewRecorder()
@@ -261,6 +279,11 @@ func want(policy, who string) int {
 			return http.StatusUnauthorized
 		}
 		return reached
+	case "confirmed":
+		if who == "anonymous" {
+			return http.StatusUnauthorized
+		}
+		return http.StatusForbidden // every caller here has a key or token
 	}
 	if who == "anonymous" {
 		return http.StatusUnauthorized
@@ -440,6 +463,8 @@ func TestReconfigureIsRestricted(t *testing.T) {
 func TestGroupEndpoints(t *testing.T) {
 	e := setup(t)
 	h := Handler(e.opts)
+	e.browser(t, h, "root", rbac.Admin, true)
+	e.keys["admin"] = e.keys["root"]
 	if w := call(h, "admin", "POST", "/api/groups", `{"name":"typo","servers":["vallheim"]}`, e.keys); w.Code != http.StatusBadRequest {
 		t.Errorf("unknown server = %d %s", w.Code, w.Body)
 	}
@@ -490,7 +515,7 @@ func TestAuthorizeWithoutPrincipal(t *testing.T) {
 func deployerEnv(t *testing.T) (*env, http.Handler, rbac.Group) {
 	t.Helper()
 	e := setup(t)
-	key, info, err := e.opts.Auth.CreateAPIKey("ci", 0, rbac.Deployer)
+	key, info, err := e.opts.Auth.CreateAPIKey("ci", 0, rbac.Deployer, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -619,10 +644,16 @@ func TestSSHKeysBelongToTheirAccount(t *testing.T) {
 			}
 		}
 	}
-	if got := call(h, "admin", "POST", "/api/auth/accounts/bob/ssh-keys", body, e.keys); got.Code != http.StatusCreated {
+	// An admin's token can't add a way into an account; an admin at a
+	// browser who's confirmed it's them can.
+	if got := call(h, "admin", "POST", "/api/auth/accounts/bob/ssh-keys", body, e.keys); got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "interactive_required") {
+		t.Fatalf("as an admin token = %d: %s", got.Code, got.Body)
+	}
+	e.browser(t, h, "root", rbac.Admin, true)
+	if got := call(h, "root", "POST", "/api/auth/accounts/bob/ssh-keys", body, e.keys); got.Code != http.StatusCreated {
 		t.Fatalf("as an admin = %d: %s", got.Code, got.Body)
 	}
-	if got := call(h, "admin", "POST", "/api/auth/accounts/nobody/ssh-keys", body, e.keys).Code; got != http.StatusNotFound {
+	if got := call(h, "root", "POST", "/api/auth/accounts/nobody/ssh-keys", body, e.keys).Code; got != http.StatusNotFound {
 		t.Errorf("no such account = %d", got)
 	}
 	if got := call(h, "anonymous", "POST", "/api/auth/ssh/challenge", `{"username":"nobody"}`, e.keys); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), "hlm-login") {
@@ -631,4 +662,29 @@ func TestSSHKeysBelongToTheirAccount(t *testing.T) {
 	if got := call(h, "anonymous", "POST", "/api/auth/ssh/login", `{"challenge":"x","signature":"y"}`, e.keys).Code; got != http.StatusUnauthorized {
 		t.Errorf("bad login = %d", got)
 	}
+}
+
+// browser signs in as a new local account with role, at a browser, so that
+// call(h, user, ...) sends its session cookie; confirm also confirms it.
+func (e *env) browser(t *testing.T, h http.Handler, user string, role rbac.Role, confirm bool) {
+	t.Helper()
+	if _, err := e.opts.Auth.CreateAccount(user, "correct horse battery", role); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"`+user+`","password":"correct horse battery"}`))
+	r.Header.Set("X-HLM-Request", "1")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("sign in as %s = %d %s", user, w.Code, w.Body)
+	}
+	e.keys[user] = "cookie:" + w.Result().Cookies()[0].Name + "=" + w.Result().Cookies()[0].Value
+	if !confirm {
+		return
+	}
+	w = call(h, user, "POST", "/api/auth/confirm", `{"password":"correct horse battery"}`, e.keys)
+	if w.Code != http.StatusOK {
+		t.Fatalf("confirm as %s = %d %s", user, w.Code, w.Body)
+	}
+	e.keys[user] = "cookie:" + w.Result().Cookies()[0].Name + "=" + w.Result().Cookies()[0].Value
 }

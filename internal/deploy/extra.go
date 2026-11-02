@@ -27,7 +27,7 @@ func extraConfigs(extra []ExtraConfig) ([]catalog.Config, error) {
 	out := make([]catalog.Config, 0, len(extra))
 	for i, e := range extra {
 		cfg := catalog.Config{
-			ID:       "extra:" + strconv.Itoa(i),
+			ID:       extraID(i),
 			Name:     strings.TrimSpace(e.Name),
 			Target:   strings.TrimSpace(e.Target),
 			Value:    strings.TrimSpace(e.Value),
@@ -103,3 +103,6 @@ func orDefault[T any](override *T, def T) T {
 	}
 	return def
 }
+
+// extraID is the ID of the i'th extra item, which Values are keyed by.
+func extraID(i int) string { return "extra:" + strconv.Itoa(i) }

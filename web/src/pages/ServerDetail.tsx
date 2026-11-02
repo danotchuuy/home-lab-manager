@@ -42,7 +42,7 @@ export function ServerDetailPage() {
   const setTab = (t: Tab) => setParams(t === "logs" ? {} : { tab: t });
   const [busy, setBusy] = useState(false);
   const [events, setEvents] = useState<DeployEvent[]>([]);
-  const [config, setConfig] = useState<{ app: App; request: DeployRequest }>();
+  const [config, setConfig] = useState<{ app: App; request: DeployRequest; hidden?: string[] }>();
   const [configError, setConfigError] = useState<string>();
 
   const load = useCallback(async () => {
@@ -240,6 +240,12 @@ export function ServerDetailPage() {
           <p className="muted small">Saving recreates the container. The old one is restored if the new one fails to start.</p>
           {configError && <div className="alert error">{configError}</div>}
           {!config && !configError && <Spinner />}
+          {config?.hidden && config.hidden.length > 0 && (
+            <div className="alert info small">
+              Settings that look like passwords, keys or tokens are blank here: only managers of this server can see
+              them.
+            </div>
+          )}
           {config && (
             <ConfigForm
               key={server.id}

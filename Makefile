@@ -70,8 +70,8 @@ release: web
 	done
 	cd dist && sha256sum hlm_* gsh_* > checksums.txt
 
-# Release a version: test, tag the current commit with VERSION, push the
-# branch and the tag together, then build and push the image with that
+# Release a version: test, tag the current commit of RELEASE_BRANCH with
+# VERSION, push the branch and the tag together, then build and push the image with that
 # version. For example: make publish VERSION=v0.0.23
 #
 # It stops before changing anything if VERSION isn't vX.Y.Z, the checkout has
@@ -79,13 +79,20 @@ release: web
 # remote. If the image push fails, the tag is already pushed: rerun
 # make docker-push VERSION=... from the same commit.
 #
+# Releases come from RELEASE_BRANCH, up to date with the remote, so that tags
+# and the default branch match.
+#
 # Pushing a v* tag to GitHub also starts the release workflow, which publishes
 # the binaries and pushes the same image tags.
 REMOTE ?= origin
+RELEASE_BRANCH ?= main
 publish:
 	@echo "$(VERSION)" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$$' || \
 		{ echo "Give a release version: make publish VERSION=vX.Y.Z (latest tag: $$(git describe --tags --abbrev=0 2>/dev/null || echo none))"; exit 1; }
 	@test -z "$$(git status --porcelain)" || { echo "Commit or stash your changes first:"; git status --short; exit 1; }
+	@test "$$(git rev-parse --abbrev-ref HEAD)" = "$(RELEASE_BRANCH)" || { echo "Release from $(RELEASE_BRANCH): git switch $(RELEASE_BRANCH)"; exit 1; }
+	@git fetch -q $(REMOTE) $(RELEASE_BRANCH) && git merge-base --is-ancestor FETCH_HEAD HEAD || \
+		{ echo "$(RELEASE_BRANCH) is behind $(REMOTE)/$(RELEASE_BRANCH), or that can't be checked: pull first."; exit 1; }
 	@! git rev-parse -q --verify "refs/tags/$(VERSION)" >/dev/null || { echo "Tag $(VERSION) already exists here."; exit 1; }
 	@! git ls-remote --exit-code --tags $(REMOTE) "refs/tags/$(VERSION)" >/dev/null || { echo "Tag $(VERSION) already exists on $(REMOTE)."; exit 1; }
 	$(MAKE) test

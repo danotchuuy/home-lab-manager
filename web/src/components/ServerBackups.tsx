@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../api";
+import { api, download } from "../api";
 import type { BackupOverview, BackupPlan, FileListing } from "../types";
 import { usePoll } from "../usePoll";
 import { formatBytes, timeAgo } from "../util";
@@ -362,7 +362,15 @@ export function ServerBackups({
                       </button>
                     )}
                     {canRun && (
-                      <a className="btn ghost small" href={api.backupDownloadUrl(server, b.key)} download>
+                      <a
+                        className="btn ghost small"
+                        href={api.backupDownloadUrl(server, b.key)}
+                        download
+                        onClick={(e) => {
+                          e.preventDefault();
+                          download(api.backupDownloadUrl(server, b.key)).catch((err) => alert((err as Error).message));
+                        }}
+                      >
                         Download
                       </a>
                     )}

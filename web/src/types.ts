@@ -165,6 +165,8 @@ export interface Server {
   access?: ServerAccess;
   /** The server groups the caller can see it in. */
   groups?: string[];
+  /** Settings left out of request because they look like secrets; managers see them. */
+  hidden?: string[];
 }
 
 /** A role on a server, each including the ones before. */
@@ -1021,6 +1023,8 @@ export interface SSHKey {
   fingerprint: string;
   added: string;
   lastUsed?: string;
+  /** Addresses and ranges the key can be used from; missing is anywhere. */
+  allowFrom?: string[];
 }
 
 /** An API key (GET /api/auth/keys); its secret is only shown when it's made. */
@@ -1034,6 +1038,8 @@ export interface APIKeyInfo {
   expired?: boolean;
   lastUsed?: string;
   role: KeyRole;
+  /** Addresses and ranges the key can be used from; empty is anywhere. */
+  allowFrom: string[];
 }
 
 /** Single sign-on with an OpenID Connect provider such as Authelia (GET /api/auth/oidc). */

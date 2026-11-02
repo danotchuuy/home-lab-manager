@@ -405,6 +405,11 @@ type login struct {
 	Verifier string    `json:"verifier"`
 	Return   string    `json:"return"`
 	Expires  time.Time `json:"expires"`
+	// Confirm is set when the user is confirming the session they have,
+	// whose subject is Subject, by signing in again from Started.
+	Confirm bool      `json:"confirm,omitempty"`
+	Subject string    `json:"subject,omitempty"`
+	Started time.Time `json:"started,omitzero"`
 }
 
 func randomString() string {
@@ -447,6 +452,18 @@ func (s *Service) Login(w http.ResponseWriter, r *http.Request) {
 		State: randomString(), Nonce: randomString(), Verifier: oauth2.GenerateVerifier(),
 		Return: safeReturn(r.URL.Query().Get("return")), Expires: s.now().Add(loginTTL),
 	}
+	opts := []oauth2.AuthCodeOption{oidc.Nonce(l.Nonce), oauth2.S256ChallengeOption(l.Verifier)}
+	if r.URL.Query().Get("confirm") == "1" {
+		cur, ok := s.Session(r)
+		if !ok || cur.Method != MethodOIDC {
+			s.page(w, http.StatusBadRequest, "Nothing to confirm", "Confirming signs you in to "+c.name()+" again, which is for a single sign-on session.")
+			return
+		}
+		l.Confirm, l.Subject, l.Started = true, cur.Subject, s.now()
+		// Ask the provider to check who it is again, rather than reuse its
+		// own session. Whether it did is checked from auth_time.
+		opts = append(opts, oauth2.SetAuthURLParam("prompt", "login"), oauth2.SetAuthURLParam("max_age", "0"))
+	}
 	v, err := s.sign("login", l)
 	if err != nil {
 		s.page(w, http.StatusInternalServerError, "Couldn't start signing in", err.Error())
@@ -456,7 +473,7 @@ func (s *Service) Login(w http.ResponseWriter, r *http.Request) {
 		Name: loginCookie, Value: v, Path: "/auth/", MaxAge: int(loginTTL / time.Second),
 		HttpOnly: true, Secure: c.secure(), SameSite: http.SameSiteLaxMode,
 	})
-	http.Redirect(w, r, c.oauth(p).AuthCodeURL(l.State, oidc.Nonce(l.Nonce), oauth2.S256ChallengeOption(l.Verifier)), http.StatusFound)
+	http.Redirect(w, r, c.oauth(p).AuthCodeURL(l.State, opts...), http.StatusFound)
 }
 
 // Callback finishes a sign-in: it checks the provider's answer, starts a
@@ -498,6 +515,19 @@ func (s *Service) Callback(w http.ResponseWriter, r *http.Request) {
 		s.page(w, http.StatusForbidden, "Not allowed", u.Display()+" signed in, but isn't one of the users or groups allowed into Home Lab Manager.")
 		return
 	}
+	if l.Confirm {
+		cur, ok := s.Session(r)
+		switch {
+		case !ok || cur.Method != MethodOIDC || cur.Subject != l.Subject || u.Subject != l.Subject:
+			s.page(w, http.StatusForbidden, "Couldn't confirm", "That was a different account than the one signed in here.")
+			return
+		case u.AuthTime.IsZero() || u.AuthTime.Before(l.Started.Add(-time.Minute)):
+			s.log.Warn("refused confirmation", "user", u.Display(), "authTime", u.AuthTime)
+			s.page(w, http.StatusForbidden, "Couldn't confirm", c.name()+" didn't ask you to sign in again, so this can't confirm it's you. Sign in with a local account to make this change instead.")
+			return
+		}
+		u.Confirmed = s.now().UTC()
+	}
 	if !c.verifiedNow() {
 		c.Verified, c.VerifiedBy, c.VerifiedFor = s.now().UTC(), u.Display(), c.Issuer+" "+c.ClientID
 		if err := s.secrets.Set(secretOIDC, c); err != nil {
@@ -508,7 +538,11 @@ func (s *Service) Callback(w http.ResponseWriter, r *http.Request) {
 		s.page(w, http.StatusInternalServerError, "Couldn't start a session", err.Error())
 		return
 	}
-	s.log.Info("signed in", "user", u.Display(), "method", MethodOIDC)
+	if l.Confirm {
+		s.log.Info("confirmed sign-in", "user", u.Display(), "method", MethodOIDC, "remote", r.RemoteAddr)
+	} else {
+		s.log.Info("signed in", "user", u.Display(), "method", MethodOIDC, "remote", r.RemoteAddr)
+	}
 	http.Redirect(w, r, l.Return, http.StatusFound)
 }
 
@@ -562,10 +596,18 @@ func (s *Service) exchange(ctx context.Context, c OIDCSettings, l login, code st
 		}
 		claims.fill(more)
 	}
-	return User{
+	var when struct {
+		AuthTime int64 `json:"auth_time"`
+	}
+	_ = idt.Claims(&when)
+	u := User{
 		Method: MethodOIDC, Subject: idt.Subject, Username: claims.Username, Name: claims.Name, Email: claims.Email,
 		Groups: claims.Groups, Expires: s.now().Add(s.config().sessionLength()),
-	}, nil
+	}
+	if when.AuthTime > 0 {
+		u.AuthTime = time.Unix(when.AuthTime, 0)
+	}
+	return u, nil
 }
 
 type userClaims struct {

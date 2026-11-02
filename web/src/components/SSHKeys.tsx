@@ -2,17 +2,18 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api } from "../api";
 import type { SSHKey } from "../types";
 import { timeAgo } from "../util";
+import { splitAddresses } from "./APIKeys";
 import { Spinner } from "./common";
 
 /**
- * The public keys that can sign in as an account through the API. Someone
- * adding a key to their own account confirms their password; an admin doesn't.
+ * The public keys that can sign in as an account through the API. Adding one,
+ * or changing where it can be used from, takes confirming it's you.
  */
-export function SSHKeys({ username, needsPassword, onChange }: { username: string; needsPassword: boolean; onChange?: () => void }) {
+export function SSHKeys({ username, onChange }: { username: string; onChange?: () => void }) {
   const [keys, setKeys] = useState<SSHKey[]>();
   const [publicKey, setPublicKey] = useState("");
   const [name, setName] = useState("");
-  const [current, setCurrent] = useState("");
+  const [allowFrom, setAllowFrom] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
 
@@ -39,11 +40,16 @@ export function SSHKeys({ username, needsPassword, onChange }: { username: strin
 
   async function add(e: FormEvent) {
     e.preventDefault();
-    if (await run(() => api.addSSHKey(username, publicKey.trim(), name.trim(), current))) {
+    if (await run(() => api.addSSHKey(username, publicKey.trim(), name.trim(), splitAddresses(allowFrom)))) {
       setPublicKey("");
       setName("");
-      setCurrent("");
+      setAllowFrom("");
     }
+  }
+
+  function editAllowFrom(k: SSHKey) {
+    const next = prompt(`Where can "${k.name}" be used from? Addresses or ranges, separated by commas. Leave empty for anywhere.`, (k.allowFrom ?? []).join(", "));
+    if (next !== null) run(() => api.setSSHKeyAllowFrom(username, k.id, splitAddresses(next)));
   }
 
   function remove(k: SSHKey) {
@@ -67,7 +73,10 @@ export function SSHKeys({ username, needsPassword, onChange }: { username: strin
                 <span className="muted small">
                   {" "}
                   {k.type} · added {timeAgo(k.added)}
-                  {k.lastUsed ? ` · last used ${timeAgo(k.lastUsed)}` : " · not used yet"}
+                  {k.lastUsed ? ` · last used ${timeAgo(k.lastUsed)}` : " · not used yet"} · from{" "}
+                  <button type="button" className="link-button" onClick={() => editAllowFrom(k)} disabled={busy} title="Change where the key can be used from">
+                    {k.allowFrom?.length ? k.allowFrom.join(", ") : "anywhere"}
+                  </button>
                 </span>
               </span>
               <button type="button" className="btn small ghost danger" onClick={() => remove(k)} disabled={busy}>
@@ -87,13 +96,11 @@ export function SSHKeys({ username, needsPassword, onChange }: { username: strin
             <span className="field-label">Name (optional)</span>
             <input value={name} onChange={(e) => setName(e.target.value)} maxLength={100} placeholder="The key's comment" />
           </label>
-          {needsPassword && (
-            <label className="field">
-              <span className="field-label">Your password</span>
-              <input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" required />
-            </label>
-          )}
-          <button className="btn small primary" type="submit" disabled={busy || !publicKey.trim() || (needsPassword && !current)}>
+          <label className="field">
+            <span className="field-label">Allowed from (optional)</span>
+            <input value={allowFrom} onChange={(e) => setAllowFrom(e.target.value)} placeholder="e.g. 10.0.3.115" />
+          </label>
+          <button className="btn small primary" type="submit" disabled={busy || !publicKey.trim()}>
             Add key
           </button>
         </div>
