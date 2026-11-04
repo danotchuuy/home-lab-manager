@@ -23,6 +23,19 @@ the API and UI it needs, who may use it, how to test it, and a task list. They'r
 | 16 | [UI improvements](16-ui-improvements.md) | Low | — |
 | 17 | [Public status page](17-public-status-page.md) | Low | 05 |
 
+## Workflow: one feature at a time
+
+Each feature is built on its own branch, committed, and merged into `main` before work on the next one starts:
+
+1. Start from an up-to-date `main` and create a branch for the feature, named after its file, e.g.
+   `feature/01-notifications`.
+2. Implement the plan on that branch, with tests and the README/API docs, and commit the work there.
+3. Merge the branch into `main` once tests pass, and tick the feature off (or remove its plan) in the same merge.
+4. Only then start the next feature, from the updated `main`.
+
+Don't mix two features on one branch or start a feature while another is unmerged. If a plan turns out to need part of
+another feature, build that part first as its own branch.
+
 ## Conventions every plan follows
 
 These are how the existing code does things, so new features should match:
