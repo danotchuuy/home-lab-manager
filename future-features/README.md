@@ -25,13 +25,28 @@ the API and UI it needs, who may use it, how to test it, and a task list. They'r
 
 ## Workflow: one feature at a time
 
-Each feature is built on its own branch, committed, and merged into `main` before work on the next one starts:
+Each feature is built on its own branch, committed, and merged into `main` through a pull request before work on the
+next one starts:
 
 1. Start from an up-to-date `main` and create a branch for the feature, named after its file, e.g.
    `feature/01-notifications`.
 2. Implement the plan on that branch, with tests and the README/API docs, and commit the work there.
-3. Merge the branch into `main` once tests pass, and tick the feature off (or remove its plan) in the same merge.
-4. Only then start the next feature, from the updated `main`.
+3. Push the branch and open a pull request into `main` with full details (see below).
+4. Merge the pull request once tests pass, and tick the feature off (or remove its plan) in the same pull request. Don't
+   merge feature branches into `main` locally without a pull request.
+5. Only then start the next feature, from the updated `main`.
+
+A feature's pull request description includes:
+
+- **Summary:** what the feature does and a link to its plan file.
+- **Changes:** the packages, endpoints (with their access policy), settings, stored data and UI pages added or changed.
+- **Deviations from the plan:** anything done differently or left out, and why; follow-ups that remain.
+- **Security and permissions:** who can use the feature, what it can reach, and how secrets are kept out of responses,
+  logs and notifications.
+- **Migrations and compatibility:** changes to stored data or settings, and how existing installs carry on.
+- **Testing:** the tests added, the commands run and their results (including opt-in Docker tests, if run), and any
+  manual checks, with screenshots for UI changes.
+- **Docs:** the README sections and API table entries updated.
 
 Don't mix two features on one branch or start a feature while another is unmerged. If a plan turns out to need part of
 another feature, build that part first as its own branch.
