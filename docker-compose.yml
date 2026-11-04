@@ -1,4 +1,4 @@
-git sservices:
+services:
   # The service and its volume keep the short name from before it changed
   # from gsh to hlm, so "docker compose up" carries on with the same
   # container and data.
@@ -17,9 +17,13 @@ git sservices:
     # reach their own macvlan containers, so without this hlm can't reach
     # those servers directly (for RCON, say). Uncomment this and the networks
     # section at the end, and pick a free address on that network, ideally
-    # outside your router's DHCP range. "default" keeps the port above working.
+    # outside your router's DHCP range. gw_priority keeps hlm's default route
+    # on "default", so the port above keeps working (replies would otherwise
+    # leave through br0 and never reach whoever connected through the host);
+    # it needs Docker Engine 28+ and Compose 2.33+.
     # networks:
     #   default:
+    #     gw_priority: 1
     #   br0:
     #     ipv4_address: 192.168.1.5
     environment:

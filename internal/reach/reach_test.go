@@ -1,6 +1,7 @@
 package reach
 
 import (
+	"context"
 	"slices"
 	"testing"
 
@@ -31,5 +32,32 @@ func TestAddresses(t *testing.T) {
 	}
 	if got := Addresses(docker.ContainerJSON{}, 1, "tcp", hosts); len(got) != 0 {
 		t.Errorf("no networks, nothing published = %q", got)
+	}
+}
+
+type fakeDocker struct {
+	info     docker.ContainerJSON
+	networks map[string]docker.Network
+}
+
+func (f fakeDocker) InspectContainer(context.Context, string) (docker.ContainerJSON, error) {
+	return f.info, nil
+}
+func (f fakeDocker) InspectNetwork(_ context.Context, id string) (docker.Network, error) {
+	return f.networks[id], nil
+}
+
+func TestHostGateways(t *testing.T) {
+	var self docker.ContainerJSON
+	self.NetworkSettings.Networks = map[string]docker.EndpointSettings{"br0": {IPAddress: "192.168.11.5"}, "game-server-host_default": {IPAddress: "172.18.0.2"}}
+	d := fakeDocker{info: self, networks: map[string]docker.Network{
+		"br0": {Driver: "macvlan", IPAM: docker.NetworkIPAM{Config: []docker.NetworkIPAMRange{{Subnet: "192.168.11.0/24", Gateway: "192.168.11.1"}}}},
+		"game-server-host_default": {Driver: "bridge", IPAM: docker.NetworkIPAM{Config: []docker.NetworkIPAMRange{
+			{Subnet: "172.18.0.0/16", Gateway: "172.18.0.1"}, {Subnet: "fd00::/64", Gateway: "fd00::1"},
+		}}},
+	}}
+	got, err := HostGateways(context.Background(), d, "self")
+	if err != nil || !slices.Equal(got, []string{"172.18.0.1"}) {
+		t.Errorf("gateways = %q, %v (want only the bridge's IPv4 gateway)", got, err)
 	}
 }

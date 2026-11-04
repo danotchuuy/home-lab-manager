@@ -4,6 +4,7 @@
 package reach
 
 import (
+	"context"
 	"net"
 	"slices"
 	"strconv"
@@ -51,4 +52,44 @@ func Addresses(info docker.ContainerJSON, port int, proto string, hostAddrs []st
 		}
 	}
 	return out
+}
+
+// Docker is what HostGateways needs from the Docker client.
+type Docker interface {
+	InspectContainer(ctx context.Context, id string) (docker.ContainerJSON, error)
+	InspectNetwork(ctx context.Context, id string) (docker.Network, error)
+}
+
+// HostGateways returns the gateways of a container's bridge networks: the
+// addresses at which it reaches the Docker host, and so the ports the host
+// publishes. For hlm in a container, these work where the host's LAN
+// address may not (from a macvlan network, the host can't be reached). The
+// gateways of other networks, such as a macvlan network's router, are left
+// out.
+func HostGateways(ctx context.Context, d Docker, id string) ([]string, error) {
+	info, err := d.InspectContainer(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(info.NetworkSettings.Networks))
+	for n := range info.NetworkSettings.Networks {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	var out []string
+	for _, n := range names {
+		nw, err := d.InspectNetwork(ctx, n)
+		if err != nil {
+			return nil, err
+		}
+		if nw.Driver != "bridge" {
+			continue
+		}
+		for _, c := range nw.IPAM.Config {
+			if ip := net.ParseIP(c.Gateway); ip != nil && ip.To4() != nil && !slices.Contains(out, c.Gateway) {
+				out = append(out, c.Gateway)
+			}
+		}
+	}
+	return out, nil
 }

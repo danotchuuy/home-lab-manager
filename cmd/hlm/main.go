@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	// Time zone names work even where the system has no zone database.
@@ -41,6 +42,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/notify"
 	"github.com/danotchuuy/home-lab-manager/internal/proxy"
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
+	"github.com/danotchuuy/home-lab-manager/internal/reach"
 	"github.com/danotchuuy/home-lab-manager/internal/schedule"
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
 	"github.com/danotchuuy/home-lab-manager/internal/selfupdate"
@@ -350,14 +352,36 @@ func run(log *slog.Logger) error {
 	certs.UseNotifier(notifier)
 	go certs.Run(ctx)
 	// Commands typed into servers' consoles.
-	// Where the Docker host's published ports are, seen from here.
+	// Where the Docker host's published ports are, seen from here. In a
+	// container, that's the gateway of hlm's bridge network first: on a
+	// macvlan network too, hlm can't reach the host's LAN address.
+	var (
+		gatewayMu sync.Mutex
+		gateways  []string
+		gatewayOK bool
+	)
 	hostAddresses := func() []string {
 		if !strings.HasPrefix(dc.Host(), "unix://") {
 			if u, err := url.Parse(dc.Host()); err == nil {
 				return []string{u.Hostname()}
 			}
 		}
-		return []string{"127.0.0.1", host.LANAddress()}
+		self := updater.ContainerID()
+		if self == "" {
+			return []string{"127.0.0.1", host.LANAddress()}
+		}
+		gatewayMu.Lock()
+		if !gatewayOK {
+			gctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			g, err := reach.HostGateways(gctx, dc, self)
+			cancel()
+			if err == nil {
+				gateways, gatewayOK = g, true // networks change only when hlm's container is recreated
+			}
+		}
+		out := slices.Clone(gateways)
+		gatewayMu.Unlock()
+		return append(out, host.LANAddress())
 	}
 	consoles := console.New(console.Options{
 		Secrets: store, Servers: mgr, Docker: dc, HostAddresses: hostAddresses, Log: log,
