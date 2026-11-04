@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/danotchuuy/home-lab-manager/internal/forwarding"
+	"github.com/danotchuuy/home-lab-manager/internal/notify"
 )
 
 // UpstreamState records what the relay was last configured with and, when
@@ -106,15 +107,28 @@ func (s *Service) CheckWAN(ctx context.Context) (UpstreamState, error) {
 	}
 
 	s.log.Info("home address changed; updating the proxy", "from", state.Applied, "to", ip)
+	from := state.Applied
 	if _, applyErr := s.Apply(ctx); applyErr != nil {
 		msg := fmt.Sprintf("The home address changed to %s, but updating the proxy failed: %v", ip, applyErr)
 		s.log.Error("update proxy for new home address", "err", applyErr)
+		s.notify(notify.Event{
+			Kind: notify.KindProxyUpdateFailed, Title: "Updating the proxy for a new home address failed",
+			Message: msg, Link: "/proxy", Fields: map[string]string{"Old address": from, "New address": ip},
+		})
 		if err := s.updateState(func(st *UpstreamState) { st.Error = msg }); err != nil {
 			return state, err
 		}
 		state, _ = s.State()
 		return state, errors.New(msg)
 	}
+	if s.notifier != nil {
+		s.notifier.Clear(notify.DedupeKey(notify.KindProxyUpdateFailed, ""))
+	}
+	s.notify(notify.Event{
+		Kind: notify.KindWANChanged, Title: "Home address changed to " + ip,
+		Message: fmt.Sprintf("The home address changed from %s to %s, and the proxy was updated.", from, ip),
+		Link:    "/proxy", Fields: map[string]string{"Old address": from, "New address": ip},
+	})
 	return s.State()
 }
 
@@ -141,5 +155,14 @@ func (s *Service) RunWANWatcher(ctx context.Context, interval time.Duration) {
 		case <-t.C:
 			check()
 		}
+	}
+}
+
+// UseNotifier sets where home address changes are reported.
+func (s *Service) UseNotifier(n notify.Notifier) { s.notifier = n }
+
+func (s *Service) notify(e notify.Event) {
+	if s.notifier != nil {
+		s.notifier.Notify(e)
 	}
 }

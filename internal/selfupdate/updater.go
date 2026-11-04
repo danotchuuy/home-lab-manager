@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
+	"github.com/danotchuuy/home-lab-manager/internal/notify"
 )
 
 // Install modes.
@@ -95,7 +96,13 @@ type Updater struct {
 	checkErr  string
 	updating  bool
 	result    *Result
+
+	// notifier hears about new releases; see UseNotifier.
+	notifier notify.Notifier
 }
+
+// UseNotifier sets where new releases are reported.
+func (u *Updater) UseNotifier(n notify.Notifier) { u.notifier = n }
 
 // ContainerID is the ID of the container hlm runs in, or "" if it doesn't
 // run in one (on this Docker host or any other).
@@ -233,6 +240,15 @@ func (u *Updater) Run(ctx context.Context, interval time.Duration) {
 		st := u.Check(ctx)
 		if st.Available {
 			u.cfg.Log.Info("a new version of hlm is available", "current", st.Current, "latest", st.Latest.Version)
+			if u.notifier != nil {
+				u.notifier.Notify(notify.Event{
+					Kind:    notify.KindHLMUpdate,
+					Title:   "Home Lab Manager " + st.Latest.Version + " is available",
+					Message: "You're running " + st.Current + ". Update it from the System page.",
+					Link:    "/system",
+					Key:     notify.KindHLMUpdate + "/" + st.Latest.Version,
+				})
+			}
 		}
 		select {
 		case <-ctx.Done():

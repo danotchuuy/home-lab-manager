@@ -3,25 +3,25 @@
 Plans for features hlm doesn't have yet. Each file is one feature: why it's worth doing, how it fits the existing code,
 the API and UI it needs, who may use it, how to test it, and a task list. They're numbered by suggested priority.
 
-| # | Feature | Priority | Depends on |
-| --- | --- | --- | --- |
-| 01 | [Notifications and alerts](01-notifications.md) | High | — |
-| 02 | [Interactive console (stdin and RCON)](02-interactive-console.md) | High | — |
-| 03 | [Scheduled tasks per server](03-scheduled-tasks.md) | High | 02 for in-game commands |
-| 04 | [Auto-update policy](04-auto-update-policy.md) | High | 03 (shared scheduler), 05 (player-aware) |
-| 05 | [Game query: players and status](05-game-query.md) | High | — |
-| 06 | [Audit log](06-audit-log.md) | High | — |
-| 07 | [Private registry credentials](07-registry-credentials.md) | Medium | — |
-| 08 | [Metrics history and Prometheus](08-metrics-history-prometheus.md) | Medium | — |
-| 09 | [Health checks and crash-loop protection](09-health-crash-loop.md) | Medium | 01 for alerts |
-| 10 | [Clone, export and import servers](10-clone-export-import.md) | Medium | — |
-| 11 | [Backup improvements](11-backup-improvements.md) | Medium | 01 for alerts |
-| 12 | [Two-factor sign-in](12-two-factor.md) | Medium | — |
-| 13 | [Docker Compose stacks](13-compose-stacks.md) | Low | — |
-| 14 | [Multiple Docker hosts](14-multi-host.md) | Low | — |
-| 15 | [Image and disk cleanup](15-cleanup.md) | Low | — |
-| 16 | [UI improvements](16-ui-improvements.md) | Low | — |
-| 17 | [Public status page](17-public-status-page.md) | Low | 05 |
+| # | Feature | Priority | Depends on | Status |
+| --- | --- | --- | --- | --- |
+| 01 | [Notifications and alerts](01-notifications.md) | High | — | Done |
+| 02 | [Interactive console (stdin and RCON)](02-interactive-console.md) | High | — | Planned |
+| 03 | [Scheduled tasks per server](03-scheduled-tasks.md) | High | 02 for in-game commands | Planned |
+| 04 | [Auto-update policy](04-auto-update-policy.md) | High | 03 (shared scheduler), 05 (player-aware) | Planned |
+| 05 | [Game query: players and status](05-game-query.md) | High | — | Planned |
+| 06 | [Audit log](06-audit-log.md) | High | — | Planned |
+| 07 | [Private registry credentials](07-registry-credentials.md) | Medium | — | Planned |
+| 08 | [Metrics history and Prometheus](08-metrics-history-prometheus.md) | Medium | — | Planned |
+| 09 | [Health checks and crash-loop protection](09-health-crash-loop.md) | Medium | 01 for alerts | Planned |
+| 10 | [Clone, export and import servers](10-clone-export-import.md) | Medium | — | Planned |
+| 11 | [Backup improvements](11-backup-improvements.md) | Medium | 01 for alerts | Planned |
+| 12 | [Two-factor sign-in](12-two-factor.md) | Medium | — | Planned |
+| 13 | [Docker Compose stacks](13-compose-stacks.md) | Low | — | Planned |
+| 14 | [Multiple Docker hosts](14-multi-host.md) | Low | — | Planned |
+| 15 | [Image and disk cleanup](15-cleanup.md) | Low | — | Planned |
+| 16 | [UI improvements](16-ui-improvements.md) | Low | — | Planned |
+| 17 | [Public status page](17-public-status-page.md) | Low | 05 | Planned |
 
 ## Workflow: one feature at a time
 

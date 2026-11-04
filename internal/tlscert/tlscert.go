@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/danotchuuy/home-lab-manager/internal/notify"
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
 )
 
@@ -120,6 +121,58 @@ type Service struct {
 	info    stored
 	state   string
 	lastErr string
+
+	// notifier hears about failed renewals; see UseNotifier.
+	notifier notify.Notifier
+}
+
+// UseNotifier sets where failures to get or renew the certificate are
+// reported.
+func (s *Service) UseNotifier(n notify.Notifier) { s.notifier = n }
+
+// notifyFailure reports that getting a certificate for domain failed, and,
+// if the current one is getting close to expiring, that too.
+func (s *Service) notifyFailure(domain string, err error) {
+	if s.notifier == nil {
+		return
+	}
+	s.notifier.Notify(notify.Event{
+		Kind: notify.KindHTTPSRenewFailed, Title: "Getting an HTTPS certificate for " + domain + " failed",
+		Message: err.Error(), Link: "/system#https",
+	})
+	s.mu.Lock()
+	info, has := s.info, s.cert != nil
+	s.mu.Unlock()
+	now := s.opts.Now()
+	if !has || now.Before(warnAt(info)) {
+		return
+	}
+	left := info.NotAfter.Sub(now)
+	when := "has expired"
+	if left > 0 {
+		when = fmt.Sprintf("expires on %s (in %s)", info.NotAfter.Local().Format("2 Jan 2006 15:04"), roundDuration(left))
+	}
+	s.notifier.Notify(notify.Event{
+		Kind:    notify.KindHTTPSExpiring,
+		Title:   "hlm's HTTPS certificate " + when,
+		Message: "The certificate for " + info.Domain + " " + when + ", and renewing it keeps failing: " + err.Error(),
+		Link:    "/system#https",
+		Key:     notify.KindHTTPSExpiring + "/" + info.NotAfter.UTC().Format(time.RFC3339),
+	})
+}
+
+// warnAt is when a certificate that hasn't been renewed is worth warning
+// about: halfway from when it should have been renewed to when it expires.
+func warnAt(st stored) time.Time {
+	r := renewAt(st)
+	return r.Add(st.NotAfter.Sub(r) / 2)
+}
+
+func roundDuration(d time.Duration) string {
+	if d >= 48*time.Hour {
+		return fmt.Sprintf("%d days", int(d.Hours()/24))
+	}
+	return d.Round(time.Hour).String()
 }
 
 // New makes a Service and loads the saved certificate, if any.
@@ -315,7 +368,11 @@ func (s *Service) maintain(ctx context.Context) time.Duration {
 	if err != nil {
 		s.opts.Log.Warn("couldn't get an HTTPS certificate", "domain", set.Domain, "err", err)
 		s.setState("error", err.Error())
+		s.notifyFailure(set.Domain, err)
 		return retryAfter
+	}
+	if s.notifier != nil {
+		s.notifier.Clear(notify.DedupeKey(notify.KindHTTPSRenewFailed, ""))
 	}
 	if err := s.opts.Secrets.Set(secretCert, st); err != nil {
 		s.setState("error", "save the certificate: "+err.Error())

@@ -31,6 +31,7 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 
+	"github.com/danotchuuy/home-lab-manager/internal/notify"
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
 )
@@ -115,6 +116,8 @@ type Service struct {
 
 	limiter limiter
 	tickets tickets
+	// notifier hears about locked sign-ins; see UseNotifier.
+	notifier notify.Notifier
 	// boot is made each time hlm starts, so SSH challenges from before a
 	// restart, whose use isn't remembered, don't work after it.
 	boot string

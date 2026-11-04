@@ -20,6 +20,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/deploy"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
+	"github.com/danotchuuy/home-lab-manager/internal/notify"
 )
 
 // ErrNotManaged is returned for containers that exist but were not created
@@ -54,6 +55,8 @@ type Manager struct {
 	// self; see UseSelf.
 	selfID string
 	self   ConnectionKind
+	// notifier gets crashes, updates and the like; see UseNotifier.
+	notifier notify.Notifier
 }
 
 // IPChecker asks the LAN's router whether ip is free. It returns a
@@ -435,8 +438,27 @@ func (m *Manager) recreateJob(ctx context.Context, kind, id string, req *deploy.
 	if err != nil {
 		return Server{}, err
 	}
-	defer func() { finish(err) }()
+	defer func() {
+		finish(err)
+		if kind == "update" {
+			m.notifyUpdated(job, err)
+		}
+	}()
 	return m.recreate(ctx, info.ID, req, unconfine, emit)
+}
+
+// notifyUpdated reports how a server's update went.
+func (m *Manager) notifyUpdated(job Job, err error) {
+	e := notify.Event{
+		Kind: notify.KindServerUpdated, Title: job.Server + " was updated",
+		Message: fmt.Sprintf("%s now runs the latest %s image.", job.Server, job.Image),
+		Server:  job.Server, Link: "/servers/" + job.Server, Fields: map[string]string{"Image": job.Image},
+	}
+	if err != nil {
+		e.Kind, e.Title = notify.KindServerUpdateFail, "Updating "+job.Server+" failed"
+		e.Message = err.Error()
+	}
+	m.notify(e)
 }
 
 func (m *Manager) recreate(ctx context.Context, id string, req *deploy.Request, unconfine bool, emit func(Event)) (Server, error) {

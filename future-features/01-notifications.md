@@ -2,6 +2,23 @@
 
 **Priority:** High · **Depends on:** nothing · **Unblocks:** 04, 09, 11
 
+> **Status: done** (branch `feature/01-notifications`). See the README's [Notifications](../README.md#notifications)
+> section for how it works. Where the result differs from this plan:
+>
+> - `server.restart_loop` is left to [09](09-health-crash-loop.md); each crash is reported, with repeats held back
+>   for 15 minutes.
+> - Crashes are told apart from deliberate stops by Docker's own `kill` event before the `die`, so stops by anyone
+>   (hlm, `docker stop`, backups, Docker shutting down) count, without hlm tracking its own stops.
+> - `tunnel.down` comes from the WireGuard and cloudflared containers exiting on their own, not from tunnel checks.
+> - `https.expiring` is sent halfway between when the certificate should have been renewed and when it expires (15
+>   days left for a 90-day certificate), so short-lived certificates don't warn all the time.
+> - Instead of a `server.recovered` event, recovering (a backup succeeding, a health check passing, the disk freeing
+>   up) clears the held-back repeat, so the next failure is sent at once.
+> - API: the settings, event kinds and targets come from one `GET /api/notifications`, and the test endpoint is
+>   `POST /api/notifications/test` with the target in the body, so an unsaved form can be tested.
+> - Not done yet: member-owned targets, a digest mode, the bell on the server Settings tab, Slack/Telegram/Pushover/
+>   Matrix senders. Events held for quiet hours are kept in memory only.
+
 ## Why
 
 hlm does a lot unattended: scheduled backups, update checks, certificate renewals, WAN-address checks, tunnel

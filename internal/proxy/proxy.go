@@ -21,6 +21,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/deploy"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/forwarding"
+	"github.com/danotchuuy/home-lab-manager/internal/notify"
 	"github.com/danotchuuy/home-lab-manager/internal/remote"
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
 )
@@ -106,6 +107,9 @@ type Service struct {
 	applyMu sync.Mutex // one Apply at a time, so the recorded state matches the relay
 	checkMu sync.Mutex // one WAN check at a time
 	wgMu    sync.Mutex // one WireGuard setup or removal at a time
+
+	// notifier hears about home address changes; see UseNotifier.
+	notifier notify.Notifier
 }
 
 // New creates the service.

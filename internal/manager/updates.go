@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
+	"github.com/danotchuuy/home-lab-manager/internal/notify"
 )
 
 // Update states.
@@ -160,6 +162,9 @@ func (m *Manager) CheckUpdates(ctx context.Context) error {
 			}
 		}
 		t.set(srv.ID, st)
+		if st.State == UpdateAvailable && srv.Name != "" {
+			m.notifyUpdateAvailable(srv)
+		}
 	}
 
 	t.mu.Lock()
@@ -278,4 +283,18 @@ func (m *Manager) UpdateAll(ctx context.Context, keep func(Server) bool, emit fu
 	}
 	emit(Event{Stage: "summary", Message: fmt.Sprintf("Updated %d servers", len(todo))})
 	return nil
+}
+
+// notifyUpdateAvailable reports a server's update, once for each image the
+// server runs.
+func (m *Manager) notifyUpdateAvailable(srv Server) {
+	m.notify(notify.Event{
+		Kind:    notify.KindUpdateAvailable,
+		Title:   "Update available for " + srv.Name,
+		Message: fmt.Sprintf("A newer %s image is available for %s.", srv.Image, srv.Name),
+		Server:  srv.Name,
+		Link:    "/servers/" + srv.Name,
+		Key:     notify.KindUpdateAvailable + "/" + srv.Name + "/" + cmp.Or(srv.imageID, srv.Image),
+		Fields:  map[string]string{"Image": srv.Image},
+	})
 }

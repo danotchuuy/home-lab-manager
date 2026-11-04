@@ -190,6 +190,16 @@ func (m *Manager) Busy() string {
 	return ""
 }
 
+// running reports whether a job for server is in progress.
+func (t *jobTracker) running(server string) bool {
+	for _, j := range t.list() {
+		if j.Server == server && j.Finished == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // Jobs returns running and recently finished installs and updates.
 func (m *Manager) Jobs() []Job {
 	return m.jobs.list()

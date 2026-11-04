@@ -192,6 +192,7 @@ func (s *Service) startConfig(trigger string) error {
 		if err := s.updateConfigPlan(func(p *ConfigPlan) { p.Last = &run }); err != nil {
 			s.log.Warn("record configuration backup result", "err", err)
 		}
+		s.notifyBackup("", run)
 	}()
 	return nil
 }

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"regexp"
 	"slices"
@@ -20,6 +21,7 @@ import (
 
 	"golang.org/x/crypto/argon2"
 
+	"github.com/danotchuuy/home-lab-manager/internal/notify"
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
 )
 
@@ -408,6 +410,16 @@ func (s *Service) LocalLogin(w http.ResponseWriter, r *http.Request) (User, erro
 	if !passwordMatches(hash, in.Password) || !ok {
 		wait := s.limiter.fail(key, s.now())
 		s.log.Warn("refused local sign-in", "user", in.Username, "remote", r.RemoteAddr)
+		if wait > 0 && s.notifier != nil {
+			s.notifier.Notify(notify.Event{
+				Kind:  notify.KindLockedOut,
+				Title: "Sign-in locked for " + key,
+				Message: fmt.Sprintf("After repeated wrong passwords for %s, sign-in for it is refused for %s. The last attempt came from %s.",
+					key, roundUp(wait), clientIP(r)),
+				Link: "/system#sign-in",
+				Key:  notify.DedupeKey(notify.KindLockedOut, key),
+			})
+		}
 		return User{}, &LoginError{ErrBadLogin, wait}
 	}
 	s.limiter.succeed(key)
@@ -487,4 +499,15 @@ func (l *limiter) succeed(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.byID, key)
+}
+
+// UseNotifier sets where locked sign-ins are reported.
+func (s *Service) UseNotifier(n notify.Notifier) { s.notifier = n }
+
+// clientIP is the address a request came from, without the port.
+func clientIP(r *http.Request) string {
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
 }

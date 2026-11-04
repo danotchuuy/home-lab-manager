@@ -12,6 +12,7 @@ package backup
 
 import (
 	"archive/tar"
+	"cmp"
 	"compress/gzip"
 	"context"
 	"errors"
@@ -20,12 +21,14 @@ import (
 	"log/slog"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/files"
+	"github.com/danotchuuy/home-lab-manager/internal/notify"
 	"github.com/danotchuuy/home-lab-manager/internal/s3"
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
 )
@@ -133,6 +136,72 @@ type Service struct {
 	mu      sync.Mutex
 	running map[string]*Progress // by server name, or configRunName
 	config  *ConfigSource        // see UseConfig
+	// notifier gets backups' and restores' results; see UseNotifier.
+	notifier notify.Notifier
+}
+
+// UseNotifier sets where results are reported.
+func (s *Service) UseNotifier(n notify.Notifier) { s.notifier = n }
+
+// notifyBackup reports a backup's result. A failure is reported as a repeat
+// only after a while, but the first failure after a success straight away.
+// what is the server's name, or "" for hlm's configuration.
+func (s *Service) notifyBackup(server string, run Run) {
+	if s.notifier == nil {
+		return
+	}
+	failKey := notify.DedupeKey(notify.KindBackupFailed, cmp.Or(server, configRunName))
+	what, link := server, "/servers/"+server+"?tab=backups"
+	if server == "" {
+		what, link = "hlm's configuration", "/system#config-backup"
+	}
+	fields := map[string]string{"Trigger": run.Trigger}
+	if run.Error != "" {
+		s.notifier.Notify(notify.Event{
+			Kind: notify.KindBackupFailed, Title: "Backup of " + what + " failed", Message: run.Error,
+			Server: server, Link: link, Key: failKey, Fields: fields,
+		})
+		return
+	}
+	s.notifier.Clear(failKey)
+	fields["Size"] = humanBytes(run.Size)
+	fields["Files"] = strconv.Itoa(run.Files)
+	msg := "Saved as " + run.Key + "."
+	if len(run.Warnings) > 0 {
+		msg += "\n\nWarnings:\n- " + strings.Join(run.Warnings[:min(len(run.Warnings), 10)], "\n- ")
+	}
+	s.notifier.Notify(notify.Event{
+		Kind: notify.KindBackupSucceeded, Title: "Backed up " + what, Message: msg, Server: server, Link: link, Fields: fields,
+	})
+}
+
+// notifyRestore reports a restore's result.
+func (s *Service) notifyRestore(server string, run Run) {
+	if s.notifier == nil {
+		return
+	}
+	e := notify.Event{
+		Kind: notify.KindRestoreFinished, Title: "Restored " + server, Server: server,
+		Link: "/servers/" + server + "?tab=backups", Fields: map[string]string{"Files": strconv.Itoa(run.Files)},
+		Message: "Restored " + strconv.Itoa(run.Files) + " files.",
+	}
+	if run.Error != "" {
+		e.Kind, e.Title, e.Message = notify.KindRestoreFailed, "Restoring "+server+" failed", run.Error
+	}
+	s.notifier.Notify(e)
+}
+
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return strconv.FormatInt(n, 10) + " B"
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return strconv.FormatFloat(float64(n)/float64(div), 'f', 1, 64) + " " + string("KMGTPE"[exp]) + "iB"
 }
 
 // New creates the service.
@@ -493,6 +562,7 @@ func (s *Service) start(name, trigger string) error {
 		if err := s.updatePlan(name, func(p *Plan) { p.Last = &run }); err != nil {
 			s.log.Warn("record backup result", "server", name, "err", err)
 		}
+		s.notifyBackup(name, run)
 	}()
 	return nil
 }
@@ -665,6 +735,7 @@ func (s *Service) Restore(ctx context.Context, id, key string, backupFirst bool)
 		if err := s.updatePlan(name, func(p *Plan) { p.LastRestore = &run }); err != nil {
 			s.log.Warn("record restore result", "server", name, "err", err)
 		}
+		s.notifyRestore(name, run)
 	}()
 	return nil
 }
