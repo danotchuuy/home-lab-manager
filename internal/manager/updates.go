@@ -298,3 +298,25 @@ func (m *Manager) notifyUpdateAvailable(srv Server) {
 		Fields:  map[string]string{"Image": srv.Image},
 	})
 }
+
+// CheckUpdate checks one server's image against its registry, and records
+// the result like CheckUpdates does.
+func (m *Manager) CheckUpdate(ctx context.Context, id string) (UpdateStatus, error) {
+	srv, err := m.Get(ctx, id)
+	if err != nil {
+		return UpdateStatus{}, err
+	}
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	localID, st := m.checkImage(cctx, srv.Image)
+	st.CheckedAt = time.Now()
+	if st.State == UpdateCurrent && localID != "" && srv.imageID != "" && localID != srv.imageID {
+		st = UpdateStatus{
+			State:     UpdateAvailable,
+			Reason:    "a newer image has already been downloaded; update to recreate the server with it",
+			CheckedAt: st.CheckedAt,
+		}
+	}
+	m.updates.set(srv.ID, st)
+	return st, nil
+}

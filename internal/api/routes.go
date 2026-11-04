@@ -152,6 +152,16 @@ func (s *server) routes() []route {
 		{"PUT /api/servers/{id}/console", serverRole(rbac.Manager), s.saveConsole},
 		{"POST /api/servers/{id}/console/test", serverRole(rbac.Manager), s.testConsole},
 		{"POST /api/servers/{id}/console/command", serverRole(rbac.Operator), s.consoleCommand},
+		// Tasks run unattended, so changing them takes what changing the
+		// backup plan does.
+		{"GET /api/servers/{id}/tasks", serverRole(rbac.Viewer), s.listTasks},
+		{"POST /api/servers/{id}/tasks", serverRole(rbac.Manager), s.saveTask},
+		{"PUT /api/servers/{id}/tasks/{task}", serverRole(rbac.Manager), s.saveTask},
+		{"DELETE /api/servers/{id}/tasks/{task}", serverRole(rbac.Manager), s.deleteTask},
+		{"POST /api/servers/{id}/tasks/{task}/run", serverRole(rbac.Operator), s.runTask},
+		{"GET /api/schedule/upcoming", signedIn, s.upcomingTasks},
+		{"GET /api/system/timezone", signedIn, s.timezone},
+		{"PUT /api/system/timezone", admin, s.setTimezone},
 		{"GET /api/servers/{id}/stats", serverRole(rbac.Viewer), s.serverStats},
 		{"GET /api/servers/{id}/files", serverRole(rbac.Operator), s.listFiles},
 		{"GET /api/servers/{id}/files/content", serverRole(rbac.Operator), s.readFile},

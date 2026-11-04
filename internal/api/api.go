@@ -39,6 +39,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
 	"github.com/danotchuuy/home-lab-manager/internal/remote"
 	"github.com/danotchuuy/home-lab-manager/internal/s3"
+	"github.com/danotchuuy/home-lab-manager/internal/schedule"
 	"github.com/danotchuuy/home-lab-manager/internal/selfupdate"
 	"github.com/danotchuuy/home-lab-manager/internal/tlscert"
 	"github.com/danotchuuy/home-lab-manager/internal/unifi"
@@ -63,7 +64,9 @@ type Options struct {
 	// Notify sends alerts to notification targets.
 	Notify *notify.Service
 	// Console sends servers commands.
-	Console     *console.Service
+	Console *console.Service
+	// Schedule runs servers' scheduled tasks.
+	Schedule    *schedule.Service
 	Version     string
 	AppdataRoot string
 	// Token, when set, must be sent as a bearer token (or ?token= for
@@ -409,6 +412,11 @@ func (s *server) removeServer(w http.ResponseWriter, r *http.Request) {
 	// A new server with this name shouldn't get its access.
 	if err := s.Groups.ForgetServer(srv.Name); err != nil {
 		s.Log.Warn("take deleted server out of its groups", "server", srv.Name, "err", err)
+	}
+	if s.Schedule != nil {
+		if err := s.Schedule.ForgetServer(srv.Name); err != nil {
+			s.Log.Warn("forget deleted server's tasks", "server", srv.Name, "err", err)
+		}
 	}
 	if s.Console != nil {
 		if err := s.Console.ForgetServer(srv.Name); err != nil {

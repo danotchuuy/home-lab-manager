@@ -536,35 +536,74 @@ func (s *Service) Start(ctx context.Context, id string) error {
 }
 
 func (s *Service) start(name, trigger string) error {
-	if _, _, err := s.client(); err != nil {
+	plan, prog, err := s.begin(name, trigger)
+	if err != nil {
 		return err
+	}
+	go s.finish(name, plan, prog)
+	return nil
+}
+
+// begin checks a server's backup can run and claims it.
+func (s *Service) begin(name, trigger string) (Plan, *Progress, error) {
+	if _, _, err := s.client(); err != nil {
+		return Plan{}, nil, err
 	}
 	plans, err := s.plans()
 	if err != nil {
-		return err
+		return Plan{}, nil, err
 	}
 	plan := plans[name]
 	if len(plan.Folders) == 0 {
-		return errors.New("choose the folders to back up first")
+		return Plan{}, nil, errors.New("choose the folders to back up first")
 	}
 	prog, err := s.claim(name, "backup", trigger)
 	if err != nil {
-		return err
+		return Plan{}, nil, err
 	}
-	go func() {
-		run := s.run(context.Background(), name, plan, prog)
-		s.release(name)
-		if run.Error != "" {
-			s.log.Warn("backup failed", "server", name, "err", run.Error)
-		} else {
-			s.log.Info("backup finished", "server", name, "key", run.Key, "files", run.Files, "size", run.Size)
-		}
-		if err := s.updatePlan(name, func(p *Plan) { p.Last = &run }); err != nil {
-			s.log.Warn("record backup result", "server", name, "err", err)
-		}
-		s.notifyBackup(name, run)
-	}()
-	return nil
+	return plan, prog, nil
+}
+
+// finish runs a claimed backup, records and reports its result.
+func (s *Service) finish(name string, plan Plan, prog *Progress) Run {
+	run := s.run(context.Background(), name, plan, prog)
+	s.release(name)
+	if run.Error != "" {
+		s.log.Warn("backup failed", "server", name, "err", run.Error)
+	} else {
+		s.log.Info("backup finished", "server", name, "key", run.Key, "files", run.Files, "size", run.Size)
+	}
+	if err := s.updatePlan(name, func(p *Plan) { p.Last = &run }); err != nil {
+		s.log.Warn("record backup result", "server", name, "err", err)
+	}
+	s.notifyBackup(name, run)
+	return run
+}
+
+// BackupNow backs up a server (by name or ID) and waits for it to finish.
+// The backup isn't cut short if ctx ends.
+func (s *Service) BackupNow(ctx context.Context, id, trigger string) (Run, error) {
+	_, name, err := s.serverName(ctx, id)
+	if err != nil {
+		return Run{}, err
+	}
+	plan, prog, err := s.begin(name, trigger)
+	if err != nil {
+		return Run{}, err
+	}
+	run := s.finish(name, plan, prog)
+	if run.Error != "" {
+		return run, errors.New(run.Error)
+	}
+	return run, nil
+}
+
+// Busy reports whether a backup or restore of the server called name is
+// running.
+func (s *Service) Busy(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.running[name] != nil
 }
 
 // claim marks a backup or restore of a server as running; only one runs
