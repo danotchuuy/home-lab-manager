@@ -205,7 +205,11 @@ func (m *Manager) checkImage(ctx context.Context, ref string) (string, UpdateSta
 		if errors.As(err, &apiErr) {
 			err = errors.New(apiErr.Message)
 		}
-		return img.ID, UpdateStatus{State: UpdateError, Reason: "registry lookup failed: " + err.Error()}
+		reason := "registry lookup failed: " + err.Error()
+		if docker.IsAuthError(err) {
+			reason += ". " + LoginHint
+		}
+		return img.ID, UpdateStatus{State: UpdateError, Reason: reason}
 	}
 	for _, d := range img.RepoDigests {
 		if _, digest, ok := strings.Cut(d, "@"); ok && digest == remote {

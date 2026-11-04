@@ -34,6 +34,8 @@ type Client struct {
 	host    string
 	mu      sync.Mutex
 	version string // negotiated API version; empty until the first successful ping
+	// credentials finds the registry login for an image; see SetCredentials.
+	credentials func(ctx context.Context, ref string) (RegistryAuth, bool)
 }
 
 // DefaultHost is the local Docker socket, used when no host is configured.
@@ -231,6 +233,11 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 
 // doRaw is do with a body of any content type.
 func (c *Client) doRaw(ctx context.Context, method, path string, query url.Values, r io.Reader, contentType string) (*http.Response, error) {
+	return c.doHeaders(ctx, method, path, query, r, contentType, nil)
+}
+
+// doHeaders is doRaw with extra request headers.
+func (c *Client) doHeaders(ctx context.Context, method, path string, query url.Values, r io.Reader, contentType string, header http.Header) (*http.Response, error) {
 	version := c.negotiate(ctx)
 	u := c.base + "/v" + version + path
 	if len(query) > 0 {
@@ -239,6 +246,9 @@ func (c *Client) doRaw(ctx context.Context, method, path string, query url.Value
 	req, err := http.NewRequestWithContext(ctx, method, u, r)
 	if err != nil {
 		return nil, err
+	}
+	for k, v := range header {
+		req.Header[k] = v
 	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)

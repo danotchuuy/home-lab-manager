@@ -688,10 +688,17 @@ func (m *Manager) pull(ctx context.Context, image string, emit func(Event)) erro
 		emit(Event{Stage: "pull", Progress: &p})
 	})
 	if err != nil {
+		if docker.IsAuthError(err) {
+			return fmt.Errorf("pull %s: %w. %s", image, err, LoginHint)
+		}
 		return fmt.Errorf("pull %s: %w", image, err)
 	}
 	return nil
 }
+
+// LoginHint follows errors from registries that refused hlm for want of a
+// login.
+const LoginHint = "This image needs a registry login: an admin can add one under System → Registries."
 
 func (m *Manager) startNew(ctx context.Context, id string, emit func(Event)) (Server, error) {
 	emit(Event{Stage: "start", Message: "Starting container"})

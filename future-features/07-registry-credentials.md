@@ -2,6 +2,19 @@
 
 **Priority:** Medium · **Depends on:** nothing
 
+> **Status: done** (branch `feature/07-registry-credentials`). See the README's
+> [Private registries](../README.md#private-registries). Where the result differs from this plan:
+>
+> - `PullImage` keeps its signature: the Docker client is given a lookup (`SetCredentials`) and adds `X-Registry-Auth`
+>   to every pull and registry lookup itself, so the WireGuard and Cloudflare Tunnel containers, deleted-server cleanup
+>   and hlm's own updates are covered without passing logins around.
+> - Confined installs mark their context (`registry.Confined`), and the lookup then only returns logins allowed for
+>   deployers.
+> - The "needs a registry login" message is added to the error by the server (pulls and update checks), so it shows
+>   wherever the error does: install, import, update and the update status.
+> - Test signs in with `POST /auth`, and with an image given looks it up (`/distribution`) rather than listing tags.
+> - Not done: importing logins from `~/.docker/config.json`.
+
 ## Why
 
 The README says: *"Only public images are supported for now: hlm doesn't send registry credentials."* That rules out

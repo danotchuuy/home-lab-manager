@@ -1513,3 +1513,17 @@ export interface AuditSettings {
   mirror: boolean;
   defaultRetention: number;
 }
+
+/** GET /api/registries: a private registry's login, without its password. */
+export interface RegistryLogin {
+  host: string;
+  username: string;
+  /** Confined installs (deployer keys, members who deploy) may use it. */
+  deployers: boolean;
+}
+
+/** POST/PUT /api/registries, and the test. A blank password keeps (or tests) the saved one. */
+export interface RegistryForm extends RegistryLogin {
+  password: string;
+  image?: string;
+}
