@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/danotchuuy/home-lab-manager/internal/auth"
+	"github.com/danotchuuy/home-lab-manager/internal/autoupdate"
 	"github.com/danotchuuy/home-lab-manager/internal/backup"
 	"github.com/danotchuuy/home-lab-manager/internal/catalog"
 	"github.com/danotchuuy/home-lab-manager/internal/cftunnel"
@@ -66,9 +67,14 @@ type Options struct {
 	// Console sends servers commands.
 	Console *console.Service
 	// Schedule runs servers' scheduled tasks.
-	Schedule    *schedule.Service
-	Version     string
-	AppdataRoot string
+	Schedule *schedule.Service
+	// AutoUpdate applies updates automatically.
+	AutoUpdate *autoupdate.Service
+	// UpdateCheckEnv is HLM_UPDATE_CHECK, which overrides the setting for
+	// how often updates are checked for, if set.
+	UpdateCheckEnv string
+	Version        string
+	AppdataRoot    string
 	// Token, when set, must be sent as a bearer token (or ?token= for
 	// EventSource requests) on every API call, unless the caller is signed
 	// in through Auth.
@@ -412,6 +418,11 @@ func (s *server) removeServer(w http.ResponseWriter, r *http.Request) {
 	// A new server with this name shouldn't get its access.
 	if err := s.Groups.ForgetServer(srv.Name); err != nil {
 		s.Log.Warn("take deleted server out of its groups", "server", srv.Name, "err", err)
+	}
+	if s.AutoUpdate != nil {
+		if err := s.AutoUpdate.ForgetServer(srv.Name); err != nil {
+			s.Log.Warn("forget deleted server's update policy", "server", srv.Name, "err", err)
+		}
 	}
 	if s.Schedule != nil {
 		if err := s.Schedule.ForgetServer(srv.Name); err != nil {

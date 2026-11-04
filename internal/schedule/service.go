@@ -384,6 +384,13 @@ func (s *Service) busy(server string) string {
 	return ""
 }
 
+// Running reports whether one of the server's tasks is running.
+func (s *Service) Running(server string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.running[server] != nil
+}
+
 // RunNow starts a task straight away.
 func (s *Service) RunNow(server, id string) error {
 	st, err := s.load()

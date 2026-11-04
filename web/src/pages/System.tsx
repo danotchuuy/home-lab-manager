@@ -9,6 +9,7 @@ import { LinodeSettings } from "../components/LinodeSettings";
 import { MyAccount } from "../components/MyAccount";
 import { NotificationSettings } from "../components/NotificationSettings";
 import { TimeSettings } from "../components/TimeSettings";
+import { SystemUpdateSettings } from "../components/UpdatePolicy";
 import { ServerGroups } from "../components/ServerGroups";
 import { APIKeys } from "../components/APIKeys";
 import { SignInSettings } from "../components/SignInSettings";
@@ -32,6 +33,11 @@ export function SystemPage() {
   const admin = useAdmin();
   // Bumped when backup storage is saved or removed, so configuration backups reload.
   const [storageVersion, setStorageVersion] = useState(0);
+  // hlm's time zone, which update windows are in.
+  const [timezone, setTimezone] = useState("");
+  useEffect(() => {
+    api.timezone().then((t) => setTimezone(t.effective), () => {});
+  }, []);
   const [info, setInfo] = useState<SystemInfo>();
   const [error, setError] = useState<string>();
   const [checking, setChecking] = useState(false);
@@ -266,6 +272,11 @@ export function SystemPage() {
       <section className="card" id="config-backup">
         <h2>Backups of hlm&apos;s configuration</h2>
         <ConfigBackups storageVersion={storageVersion} />
+      </section>
+
+      <section className="card" id="updates">
+        <h2>Automatic updates</h2>
+        <SystemUpdateSettings timezone={timezone} />
       </section>
 
       <section className="card" id="time">

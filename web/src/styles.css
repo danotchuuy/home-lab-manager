@@ -2946,3 +2946,32 @@ progress {
   display: inline-block;
   min-width: 9rem;
 }
+
+/* Automatic updates */
+
+.update-policy {
+  margin-top: 1rem;
+}
+
+.update-policy h2 {
+  font-size: 1.05rem;
+}
+
+.update-policy .config-form,
+.system-updates .config-form {
+  gap: 0.6rem;
+  margin: 0.5rem 0;
+}
+
+.system-updates h3 {
+  font-size: 0.95rem;
+  margin: 1rem 0 0.35rem;
+}
+
+.system-updates h3:first-child {
+  margin-top: 0;
+}
+
+.radio input[type="time"] {
+  width: auto;
+}

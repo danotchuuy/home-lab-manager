@@ -3,6 +3,20 @@
 **Priority:** High · **Depends on:** [03](03-scheduled-tasks.md) (runner and time windows), [05](05-game-query.md)
 (player check, optional), [01](01-notifications.md) (notify-only mode)
 
+> **Status: done** (branch `feature/04-auto-update-policy`). See the README's
+> [Automatic updates](../README.md#automatic-updates). Where the result differs from this plan:
+>
+> - Two modes, not three: **manual** and **automatic**. "Notify" is already covered by 01: the
+>   `server.update_available` notification is sent once per image to targets that choose it, so a policy mode for it
+>   would duplicate that.
+> - "Only when empty" is left for [05](05-game-query.md), which provides player counts.
+> - After a failed automatic update, the next try waits a day rather than "never for this digest": the update tracker
+>   doesn't keep remote digests, and a day is long enough not to loop on a broken image while still catching a fixed
+>   one. The registry is checked again just before each update.
+> - The policy lives on the server's Settings tab (with the Update button), and the System section is called
+>   "Automatic updates".
+> - hlm's own automatic update also waits while any server has an automatic update ready, so servers go first.
+
 ## Why
 
 `manager.RunUpdateChecker` finds updates every 12 hours, but applying them is always a click. Many game images publish
