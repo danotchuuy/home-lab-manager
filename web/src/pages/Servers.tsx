@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { can, useAdmin } from "../access";
 import { api } from "../api";
 import { AppIcon, CONNECTION_GLYPH, Spinner, StateBadge } from "../components/common";
+import { GameStatusBadge } from "../components/GameStatus";
 import { InstallCard, JobStatus } from "../components/JobProgress";
 import { ResourceSummary } from "../components/Resources";
 import { UpdateProgress } from "../components/UpdateProgress";
@@ -11,6 +12,7 @@ import type {
   AutoUpdates,
   Connection,
   DeployEvent,
+  GameSummary,
   Job,
   Server,
   Stats,
@@ -41,6 +43,7 @@ export function ServersPage() {
   const [nextTasks, setNextTasks] = useState<Record<string, UpcomingTask>>({});
   const [timezone, setTimezone] = useState("");
   const [auto, setAuto] = useState<AutoUpdates>();
+  const [games, setGames] = useState<Record<string, GameSummary>>({});
 
   const load = useCallback(async () => {
     try {
@@ -53,6 +56,7 @@ export function ServersPage() {
       setServers(list);
       setUpdateInfo(info);
       api.autoUpdates().then(setAuto, () => {});
+      api.gameStatuses().then(setGames, () => {});
       // Scheduled tasks are extra; the list still works without them.
       api.upcomingTasks().then((up) => {
         const next: Record<string, UpcomingTask> = {};
@@ -339,6 +343,7 @@ export function ServersPage() {
               </Link>
               <div className="server-side">
                 <StateBadge state={s.state} />
+                <GameStatusBadge s={games[s.name]} />
                 <span className="muted small">{s.status}</span>
                 <label className="switch" title={`Restart policy: ${s.restartPolicy}`}>
                   <input
@@ -521,6 +526,8 @@ function UpdateBadge({ update: u, auto, state }: { update?: UpdateStatus; auto?:
           ? ` · auto ${timeUntil(state.next)}`
           : state?.state === "failed"
             ? " · auto-update failed"
+            : state?.state === "players"
+              ? " · auto once players leave"
             : state
               ? ` · auto: ${state.state}`
               : " · updating automatically";

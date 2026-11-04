@@ -1,4 +1,4 @@
-services:
+git sservices:
   # The service and its volume keep the short name from before it changed
   # from gsh to hlm, so "docker compose up" carries on with the same
   # container and data.

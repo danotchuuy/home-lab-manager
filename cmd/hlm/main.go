@@ -34,6 +34,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/deploy"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/forwarding"
+	"github.com/danotchuuy/home-lab-manager/internal/gamequery"
 	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
 	"github.com/danotchuuy/home-lab-manager/internal/notify"
@@ -348,31 +349,34 @@ func run(log *slog.Logger) error {
 	certs.UseNotifier(notifier)
 	go certs.Run(ctx)
 	// Commands typed into servers' consoles.
-	consoles := console.New(console.Options{
-		Secrets: store,
-		Servers: mgr,
-		Docker:  dc,
-		HostAddresses: func() []string {
-			// Where the Docker host's published ports are, seen from here.
-			if !strings.HasPrefix(dc.Host(), "unix://") {
-				if u, err := url.Parse(dc.Host()); err == nil {
-					return []string{u.Hostname()}
-				}
+	// Where the Docker host's published ports are, seen from here.
+	hostAddresses := func() []string {
+		if !strings.HasPrefix(dc.Host(), "unix://") {
+			if u, err := url.Parse(dc.Host()); err == nil {
+				return []string{u.Hostname()}
 			}
-			return []string{"127.0.0.1", host.LANAddress()}
-		},
-		Log: log,
+		}
+		return []string{"127.0.0.1", host.LANAddress()}
+	}
+	consoles := console.New(console.Options{
+		Secrets: store, Servers: mgr, Docker: dc, HostAddresses: hostAddresses, Log: log,
 	})
 	go consoles.Run(ctx)
+	// Servers' own status: are they answering, and who's playing.
+	queries := gamequery.New(gamequery.Options{
+		Secrets: store, Servers: mgr, Console: consoles, Notifier: notifier, HostAddresses: hostAddresses, Log: log,
+	})
+	go queries.Run(ctx)
 	// Servers' scheduled tasks, such as a nightly restart.
 	sched = schedule.New(schedule.Options{
-		Secrets: store, Servers: mgr, Backups: backups, Console: consoles, Notifier: notifier, Log: log,
+		Secrets: store, Servers: mgr, Backups: backups, Console: consoles, Notifier: notifier,
+		Players: queries.Players, Log: log,
 	})
 	go sched.Run(ctx)
 	// Updates applied automatically, for servers (and hlm) that want them.
 	autoUpdates := autoupdate.New(autoupdate.Options{
 		Secrets: store, Servers: mgr, Backups: backups, Console: consoles, Tasks: sched, Self: updater,
-		Notifier: notifier, Location: sched.Location, ZoneName: sched.ZoneName, Log: log,
+		Notifier: notifier, Players: queries.Players, Location: sched.Location, ZoneName: sched.ZoneName, Log: log,
 	})
 	go autoUpdates.Run(ctx)
 	checkEvery := autoUpdates.CheckInterval
@@ -400,6 +404,7 @@ func run(log *slog.Logger) error {
 		Console:     consoles,
 		Schedule:    sched,
 		AutoUpdate:  autoUpdates,
+		Query:       queries,
 		// Set when HLM_UPDATE_CHECK overrides the setting.
 		UpdateCheckEnv: updateCheckEnv,
 		Token:          env("HLM_TOKEN", ""),

@@ -326,3 +326,27 @@ func TestSettings(t *testing.T) {
 		t.Errorf("policy of a forgotten server: %+v", st.Policy)
 	}
 }
+
+func TestOnlyWhenEmpty(t *testing.T) {
+	s, f, _ := setup(t)
+	f.servers = []manager.Server{server("valheim", true)}
+	players, known := 3, true
+	s.opts.Players = func(string) (int, bool) { return players, known }
+	s.SetServerPolicy("valheim", Policy{Mode: ModeAuto, OnlyWhenEmpty: true})
+	s.tick(context.Background())
+	st, _ := s.Status("valheim")
+	if len(f.did) != 0 || st.State == nil || st.State.State != StatePlayers || !strings.Contains(st.State.Message, "3 players online") {
+		t.Fatalf("with players on: did %q, state %+v", f.did, st.State)
+	}
+	players = 0
+	s.tick(context.Background())
+	if !slices.Contains(f.did, "update valheim") {
+		t.Errorf("once empty: did %q", f.did)
+	}
+	// Unknown counts don't hold it up.
+	f.did, players, known = nil, 5, false
+	s.tick(context.Background())
+	if !slices.Contains(f.did, "update valheim") {
+		t.Errorf("unknown count: did %q", f.did)
+	}
+}

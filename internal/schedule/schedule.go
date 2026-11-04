@@ -30,9 +30,18 @@ const (
 	StepBackup  = "backup"  // the server's backup plan, waiting for it
 	StepCommand = "command" // through the server's console
 	StepWait    = "wait"
+	// StepIfPlayers carries on only if players are (or aren't) online;
+	// otherwise the task stops, skipped.
+	StepIfPlayers = "if_players"
 )
 
-var stepKinds = []string{StepStart, StepStop, StepRestart, StepUpdate, StepBackup, StepCommand, StepWait}
+var stepKinds = []string{StepStart, StepStop, StepRestart, StepUpdate, StepBackup, StepCommand, StepWait, StepIfPlayers}
+
+// Conditions of an if_players step.
+const (
+	PlayersNone = "none" // carry on only if nobody's online
+	PlayersSome = "some" // carry on only if someone is
+)
 
 // Limits.
 const (
@@ -68,6 +77,8 @@ type Step struct {
 	Command string `json:"command,omitempty"`
 	// Seconds is how long to wait, for wait steps.
 	Seconds int `json:"seconds,omitempty"`
+	// Players is the condition of an if_players step: none or some.
+	Players string `json:"players,omitempty"`
 	// ContinueOnError carries on with the next step if this one fails;
 	// otherwise the task stops.
 	ContinueOnError bool `json:"continueOnError,omitempty"`
@@ -254,6 +265,12 @@ func (t Task) check() (Task, error) {
 			if len(clean.Command) > maxCommand {
 				return t, fmt.Errorf("step %d: the command can be at most %d characters", i+1, maxCommand)
 			}
+		case StepIfPlayers:
+			if st.Players != PlayersNone && st.Players != PlayersSome {
+				return t, fmt.Errorf("step %d: choose whether players have to be online or not", i+1)
+			}
+			clean.Players = st.Players
+			clean.ContinueOnError = false
 		case StepWait:
 			if st.Seconds < 1 || st.Seconds > maxWait {
 				return t, fmt.Errorf("step %d: wait between 1 second and an hour", i+1)

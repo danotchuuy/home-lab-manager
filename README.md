@@ -259,6 +259,9 @@ you change it).
   says when it's due.
 - **Warn players first:** a console command, such as `say Updating in 5 minutes`, sent through the server's
   [console](#sending-commands-to-a-server) if it's set up and the server is running, then a wait of up to 30 minutes.
+- **Wait while players are online:** holds the update until nobody's playing, going by the server's
+  [player count](#is-the-game-up-players-and-status). If the count isn't known (the server doesn't answer a status
+  query), this doesn't hold it up.
 - **Back up first** (on by default): runs the server's [backup plan](#backups-to-s3-seaweedfs-minio-), if it has one,
   and waits for it. If the backup fails, the update isn't applied.
 
@@ -318,6 +321,47 @@ its own, so a multi-line XML comment or YAML text block can be colored as if it 
 Many games only read their settings at startup and some rewrite them on shutdown, so stop the server, edit, then start
 it again.
 
+## Is the game up? Players and status
+
+A running container doesn't mean players can join: SteamCMD servers spend minutes downloading the game, and a game can
+hang while its container keeps running. So hlm asks each running server how it's doing, in its game's own protocol:
+
+| How | Games |
+| --- | --- |
+| **Steam server query** (A2S, UDP) | Most Steam games: Valheim, Enshrouded, ARK, Rust, Counter-Strike 2, 7 Days to Die, V Rising, Conan Exiles… |
+| **Minecraft Java server list ping** (TCP) | Minecraft Java, modded or not |
+| **Minecraft Bedrock ping** (UDP) | Minecraft Bedrock |
+| **Player list through the [console](#sending-commands-to-a-server)** | Palworld (`ShowPlayers`), Minecraft (`list`), ARK (`ListPlayers`): needs the console set up with RCON or a command run in the container |
+| **TCP port check** | Anything else: only whether the port is open, no players |
+
+**Finding a way:** hlm finds one by itself. It tries the game's usual way, then ports the template calls "query", the
+game's usual Steam query port, and each UDP port and the one after it, then the console. It looks again every couple of
+minutes until something answers. A server's status card has **Query settings** for managers to choose the protocol and
+port instead, **Test** them first, or turn querying **off**.
+
+The server list and the server's page show:
+
+- **Online**: the game answers. Also shown are players (`3 / 10`), the server's name, map and version, and whether
+  it's password protected. Operators and above also see players' names.
+- **Starting**: the container is running, but the game isn't answering yet.
+- **Not responding**: it answered before and has stopped (three queries in a row failed), or it hasn't answered after
+  30 minutes with a chosen protocol.
+- **Status unknown**: no way to ask it was found after 30 minutes. It may use a protocol hlm doesn't know; choose one,
+  or turn querying off.
+
+A sparkline shows the most players online in each 5-minute step of the last day (kept while the server runs; it starts
+over when the server or hlm restarts).
+
+Running servers are asked every 30 seconds (every 15 while starting or failing, and every minute through the console),
+from hlm: straight at the container on its networks, or through ports published on the Docker host. Servers with their
+own LAN address on a macvlan network need [hlm connected to that network](#sending-commands-to-a-server) too.
+
+**Alerts:** [`server.online`](#notifications) says a server hlm saw start is ready for players, handy after a long
+download. `server.not_responding` says a running server stopped answering or never came up.
+
+**Player counts drive automation:** a [scheduled task](#scheduled-tasks) step can carry on only if nobody (or someone)
+is playing, and [automatic updates](#automatic-updates) can wait while players are online.
+
 ## Sending commands to a server
 
 Under a server's **Console** output there's a command line. Commands go to the server in one of three ways, chosen in
@@ -373,6 +417,7 @@ and a list of steps, run in order:
 | **Back up** | Runs the server's [backup plan](#backups-to-s3-seaweedfs-minio-) and waits for it to finish. |
 | **Send a console command** | Through the server's [console](#sending-commands-to-a-server), which has to be set up. |
 | **Wait** | 1 second to an hour, e.g. between a warning and the restart. |
+| **Only carry on if…** | …nobody's playing, or someone is, from the server's [player count](#is-the-game-up-players-and-status). If not (or the count isn't known), the rest of the task is skipped. |
 
 A step that fails stops the task, unless it's marked **carry on if it fails** (handy for warnings, which shouldn't stop
 a restart if the console is down). **Skip the task when the server is stopped** (on by default) keeps a nightly restart
@@ -927,6 +972,8 @@ Each target chooses its **events** (warnings and errors by default):
 | --- | --- | --- |
 | `server.crashed` | error | A server exits with an error, or runs out of memory, without anyone stopping it. The message includes its last lines of output. |
 | `server.unhealthy` | warning | A server's Docker health check starts failing. |
+| `server.online` | info | A server hlm saw start answers its game's [status query](#is-the-game-up-players-and-status): it's ready for players. |
+| `server.not_responding` | warning | A running server stopped answering its status query, or never started answering. |
 | `server.update_available` | info | A newer image is found for a server (once per image the server runs). |
 | `server.updated`, `server.update_failed` | info, error | An update finishes or fails. |
 | `hlm.update_available` | info | A new version of hlm is out (once per version). |
@@ -1001,7 +1048,7 @@ own **Settings** tab.
 
 | Role in a group | Can |
 | --- | --- |
-| **Viewer** | See the server, its stats, its port and backup status and its scheduled tasks, but not its settings, logs, files or tasks' console commands, which can hold passwords |
+| **Viewer** | See the server, its stats, its game status and player count, its port and backup status and its scheduled tasks, but not its settings, logs, files or tasks' console commands, which can hold passwords |
 | **Operator** | Also start, stop, restart and update it, [send it console commands](#sending-commands-to-a-server), run its scheduled tasks, read its logs, settings and files, and take and download backups. Settings that look like secrets (names with `TOKEN`, `SECRET`, `PASS`, `PWD`, `KEY`, `CREDENTIAL`, `AUTH` or `PRIVATE`, items the template masks, extra parameters and post arguments) are left out |
 | **Manager** | Also change its ports and variables, edit files, set up its console, change its scheduled tasks and how it's updated, set start on boot and port forwarding, change the backup plan, and restore and delete backups |
 
@@ -1360,6 +1407,10 @@ when the `HLM_*` one isn't set.
 | `GET /api/jobs`                                | Installs and updates in progress, plus those that finished in the last minute.    |
 | `GET /api/updates`                             | When updates were last checked and how many are available.                        |
 | `GET/PUT /api/servers/{id}/update-policy`      | A server's [automatic updates](#automatic-updates): `{mode, windowStart?, windowEnd?, warn?, warnMinutes?, backup}` (`mode` is `auto`, `manual`, or empty to follow the default), plus what it follows, the update's state and the last result. `PUT` takes a manager; the warning is only shown to operators. |
+| `GET /api/query`                               | Each running server you can see: its [game status](#is-the-game-up-players-and-status) and player count. |
+| `GET /api/servers/{id}/query`                  | A server's game status: the last answer (players' names only for operators), how it's queried, errors, and a day of player counts. |
+| `PUT /api/servers/{id}/query/settings`         | `{protocol, port?}` (`protocol` is empty to find a way, or `a2s`, `minecraft`, `bedrock`, `rcon`, `tcp`, `off`); a manager. |
+| `POST /api/servers/{id}/query/test`            | Queries with the given settings without saving them; with an empty protocol, says what it found (a manager). |
 | `GET /api/updates/auto`                        | Which of the servers you can see update automatically, and what their updates are waiting for. |
 | `GET/PUT /api/system/update-policy`            | The default policy, `checkHours`, and hlm's own (`self: {auto, windowStart?, windowEnd?}`); admins only. |
 | `POST /api/updates/check`                      | Check every server for image updates now.                                         |

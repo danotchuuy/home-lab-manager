@@ -32,6 +32,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/files"
 	"github.com/danotchuuy/home-lab-manager/internal/forwarding"
+	"github.com/danotchuuy/home-lab-manager/internal/gamequery"
 	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
 	"github.com/danotchuuy/home-lab-manager/internal/linode"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
@@ -70,6 +71,8 @@ type Options struct {
 	Schedule *schedule.Service
 	// AutoUpdate applies updates automatically.
 	AutoUpdate *autoupdate.Service
+	// Query asks servers how they're doing, in their games' own protocols.
+	Query *gamequery.Service
 	// UpdateCheckEnv is HLM_UPDATE_CHECK, which overrides the setting for
 	// how often updates are checked for, if set.
 	UpdateCheckEnv string
@@ -418,6 +421,11 @@ func (s *server) removeServer(w http.ResponseWriter, r *http.Request) {
 	// A new server with this name shouldn't get its access.
 	if err := s.Groups.ForgetServer(srv.Name); err != nil {
 		s.Log.Warn("take deleted server out of its groups", "server", srv.Name, "err", err)
+	}
+	if s.Query != nil {
+		if err := s.Query.ForgetServer(srv.Name); err != nil {
+			s.Log.Warn("forget deleted server's query settings", "server", srv.Name, "err", err)
+		}
 	}
 	if s.AutoUpdate != nil {
 		if err := s.AutoUpdate.ForgetServer(srv.Name); err != nil {

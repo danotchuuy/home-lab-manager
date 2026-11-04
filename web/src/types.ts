@@ -1258,7 +1258,7 @@ export interface TaskWhen {
   cron?: string;
 }
 
-export type StepKind = "start" | "stop" | "restart" | "update" | "backup" | "command" | "wait";
+export type StepKind = "start" | "stop" | "restart" | "update" | "backup" | "command" | "wait" | "if_players";
 
 export interface TaskStep {
   kind: StepKind;
@@ -1266,6 +1266,8 @@ export interface TaskStep {
   command?: string;
   /** wait: seconds. */
   seconds?: number;
+  /** if_players: carry on only if nobody ("none") or someone ("some") is playing. */
+  players?: "none" | "some";
   continueOnError?: boolean;
 }
 
@@ -1346,10 +1348,12 @@ export interface UpdatePolicy {
   warnMinutes?: number;
   /** Back up first, if the server has a backup plan. */
   backup: boolean;
+  /** Wait while players are online (when the server's status query counts them). */
+  onlyWhenEmpty?: boolean;
 }
 
 export interface AutoUpdateState {
-  state: "waiting" | "busy" | "queued" | "updating" | "failed";
+  state: "waiting" | "busy" | "queued" | "updating" | "failed" | "players";
   message?: string;
   next?: string;
 }
@@ -1396,4 +1400,56 @@ export interface AutoUpdates {
   default: UpdateMode;
   servers: Record<string, UpdateMode>;
   states: Record<string, AutoUpdateState>;
+}
+
+export type QueryProtocol = "" | "a2s" | "minecraft" | "bedrock" | "rcon" | "tcp" | "off";
+
+/** How a server is asked for its status; empty finds a way. */
+export interface QuerySettings {
+  protocol: QueryProtocol;
+  /** The container port to query. */
+  port?: number;
+}
+
+/** What a server said to its game's status query. */
+export interface QueryResult {
+  protocol: QueryProtocol;
+  address?: string;
+  name?: string;
+  map?: string;
+  game?: string;
+  version?: string;
+  players: number;
+  maxPlayers?: number;
+  /** Only for operators and above. */
+  playerNames?: string[];
+  password?: boolean;
+  /** Nanoseconds. */
+  latency: number;
+  /** False when the protocol doesn't count players (a TCP check). */
+  hasPlayers: boolean;
+}
+
+export type GameStatusKind = "online" | "starting" | "not_responding" | "unknown" | "off" | "stopped";
+
+/** GET /api/servers/{id}/query */
+export interface GameStatus {
+  status: GameStatusKind;
+  settings: QuerySettings;
+  /** How it's being asked: chosen, or found. */
+  method?: QuerySettings;
+  result?: QueryResult;
+  error?: string;
+  checked?: string;
+  since?: string;
+  /** The most players in each 5-minute step of the last day. */
+  history?: { t: string; players: number }[];
+}
+
+/** GET /api/query, by server name. */
+export interface GameSummary {
+  status: GameStatusKind;
+  players: number;
+  maxPlayers?: number;
+  hasPlayers: boolean;
 }

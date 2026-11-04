@@ -434,3 +434,40 @@ func TestViewsAndForgetting(t *testing.T) {
 		t.Errorf("tasks of a forgotten server: %+v", st.Tasks)
 	}
 }
+
+func TestIfPlayers(t *testing.T) {
+	s, w, _ := newTest(t)
+	players, known := 0, true
+	s.opts.Players = func(string) (int, bool) { return players, known }
+	task, err := s.Save("valheim", Task{Name: "restart when empty", Enabled: true, When: When{Kind: WhenDaily, Time: "04:00"},
+		Steps: []Step{{Kind: StepIfPlayers, Players: PlayersNone, ContinueOnError: true}, {Kind: StepRestart}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Steps[0].ContinueOnError {
+		t.Error("a condition kept continueOnError")
+	}
+	run := func() Run {
+		s.RunNow("valheim", task.ID)
+		s.wg.Wait()
+		st, _ := s.Tasks("valheim", true)
+		return st.Tasks[0].Runs[0]
+	}
+	if r := run(); r.Result != ResultOK || !slices.Equal(w.did, []string{"restart valheim"}) || r.Steps[0].Message != "0 online" {
+		t.Errorf("nobody on: %+v, did %q", r, w.did)
+	}
+	w.did, players = nil, 2
+	if r := run(); r.Result != ResultSkipped || len(w.did) != 0 || r.Error != "2 players were online" {
+		t.Errorf("2 on: %+v, did %q", r, w.did)
+	}
+	w.did, known = nil, false
+	if r := run(); r.Result != ResultSkipped || len(w.did) != 0 || !strings.Contains(r.Error, "isn't known") {
+		t.Errorf("unknown: %+v, did %q", r, w.did)
+	}
+	if len(w.events) != 0 {
+		t.Errorf("skipped runs were reported as failures: %+v", w.events)
+	}
+	if _, err := s.Save("valheim", Task{Name: "x", When: When{Kind: WhenDaily, Time: "04:00"}, Steps: []Step{{Kind: StepIfPlayers}}}); err == nil {
+		t.Error("a condition without players accepted")
+	}
+}
