@@ -6,7 +6,7 @@ the API and UI it needs, who may use it, how to test it, and a task list. They'r
 | # | Feature | Priority | Depends on | Status |
 | --- | --- | --- | --- | --- |
 | 01 | [Notifications and alerts](01-notifications.md) | High | — | Done |
-| 02 | [Interactive console (stdin and RCON)](02-interactive-console.md) | High | — | Planned |
+| 02 | [Interactive console (stdin and RCON)](02-interactive-console.md) | High | — | Done |
 | 03 | [Scheduled tasks per server](03-scheduled-tasks.md) | High | 02 for in-game commands | Planned |
 | 04 | [Auto-update policy](04-auto-update-policy.md) | High | 03 (shared scheduler), 05 (player-aware) | Planned |
 | 05 | [Game query: players and status](05-game-query.md) | High | — | Planned |

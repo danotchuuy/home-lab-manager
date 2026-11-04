@@ -2,6 +2,23 @@
 
 **Priority:** High · **Depends on:** nothing · **Unblocks:** in-game commands in 03, graceful updates in 04
 
+> **Status: done** (branch `feature/02-interactive-console`). See the README's
+> [Sending commands to a server](../README.md#sending-commands-to-a-server). Where the result differs from this plan:
+>
+> - No "Enable console input" toggle: hlm already creates every server with stdin open (`deploy/spec.go`), so it would
+>   never be needed. Only `--interactive=false` in a server's Docker options closes it, and the console says so.
+> - Because every server's stdin is open, detection only suggests stdin for games known to read it (Terraria), not for
+>   every container. RCON's port also falls back to the game's usual one, since images such as itzg/minecraft-server
+>   don't declare it.
+> - Commands are written to stdin with a short attach per command, not a long-lived shared attach, so there's nothing
+>   to reconnect when the container restarts.
+> - RCON sends the end-of-reply marker only after a full-size reply packet: Minecraft drops clients that send two
+>   packets in one go, which the usual "send the marker with the command" trick does.
+> - The console settings open from the Console tab, next to where they're used, rather than on the Settings tab.
+> - Built-in quick commands live in `internal/console`, chosen by image name, not in the catalog.
+> - Commands are logged with `slog` (who, server, mode, command) until the audit log (06) exists.
+> - Not done: telnet consoles (7 Days to Die), Rust's WebRCON, and showing replies to viewers.
+
 ## Why
 
 The **Console** tab only shows output. Running game servers means typing commands: `save`, `say`, `kick`, `whitelist

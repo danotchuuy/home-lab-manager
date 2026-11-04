@@ -252,13 +252,18 @@ func (c *Client) doRaw(ctx context.Context, method, path string, query url.Value
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	return nil, &APIError{Status: resp.StatusCode, Message: apiMessage(data)}
+}
+
+// apiMessage is the message in an error response from the daemon.
+func apiMessage(data []byte) string {
 	var msg struct {
 		Message string `json:"message"`
 	}
 	if json.Unmarshal(data, &msg) != nil || msg.Message == "" {
 		msg.Message = strings.TrimSpace(string(data))
 	}
-	return nil, &APIError{Status: resp.StatusCode, Message: msg.Message}
+	return msg.Message
 }
 
 // doJSON sends a request and decodes a JSON response into out (if non-nil).

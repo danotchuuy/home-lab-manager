@@ -4,6 +4,7 @@ import { can, useAdmin } from "../access";
 import { api, ApiError } from "../api";
 import { AppIcon, Spinner, StateBadge } from "../components/common";
 import { ConfigForm } from "../components/ConfigForm";
+import { ConsoleInputBar } from "../components/Console";
 import { DeployProgress } from "../components/DeployProgress";
 import { FileBrowser } from "../components/FileBrowser";
 import { LogViewer } from "../components/LogViewer";
@@ -201,7 +202,15 @@ export function ServerDetailPage() {
         </div>
       )}
 
-      {tab === "logs" && <LogViewer serverId={server.name} running={running} />}
+      {tab === "logs" && (
+        <LogViewer
+          serverId={server.name}
+          running={running}
+          footer={(append) => (
+            <ConsoleInputBar server={server.name} running={running} canManage={manager} append={append} />
+          )}
+        />
+      )}
 
       {tab === "files" && <FileBrowser server={server.name} running={running} canEdit={manager} />}
 

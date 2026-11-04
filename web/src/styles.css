@@ -2750,3 +2750,69 @@ progress {
   flex-direction: column;
   gap: 0.45rem;
 }
+
+/* Console commands */
+
+.console-command {
+  color: #7dd3fc;
+  font-weight: 600;
+}
+
+.console-reply {
+  color: #d1fae5;
+}
+
+.console-error {
+  color: #fca5a5;
+}
+
+.console-input {
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  padding: 0.5rem 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.console-form {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.console-form input {
+  flex: 1;
+  min-width: 0;
+  font: 0.85rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.console-prompt {
+  font: 600 0.9rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--muted);
+}
+
+.quick-commands {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.chip {
+  border: 1px solid var(--border);
+  background: var(--bg, transparent);
+  color: inherit;
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  font: 0.78rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--accent);
+}
+
+.console-settings {
+  border-top: 1px dashed var(--border);
+  padding-top: 0.75rem;
+}

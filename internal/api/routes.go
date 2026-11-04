@@ -147,6 +147,11 @@ func (s *server) routes() []route {
 		{"GET /api/servers/{id}/config", serverRole(rbac.Operator), s.getServerConfig},
 		{"PUT /api/servers/{id}/config", serverRole(rbac.Manager), s.reconfigureServer},
 		{"GET /api/servers/{id}/logs", serverRole(rbac.Operator), s.serverLogs},
+		// Console commands can do whatever the game's admins can.
+		{"GET /api/servers/{id}/console", serverRole(rbac.Operator), s.consoleStatus},
+		{"PUT /api/servers/{id}/console", serverRole(rbac.Manager), s.saveConsole},
+		{"POST /api/servers/{id}/console/test", serverRole(rbac.Manager), s.testConsole},
+		{"POST /api/servers/{id}/console/command", serverRole(rbac.Operator), s.consoleCommand},
 		{"GET /api/servers/{id}/stats", serverRole(rbac.Viewer), s.serverStats},
 		{"GET /api/servers/{id}/files", serverRole(rbac.Operator), s.listFiles},
 		{"GET /api/servers/{id}/files/content", serverRole(rbac.Operator), s.readFile},
