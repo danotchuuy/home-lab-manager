@@ -12,6 +12,16 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080"
+    # Optional: also join a macvlan (or ipvlan) network that game servers get
+    # their own LAN addresses on, such as Unraid's br0. Docker hosts can't
+    # reach their own macvlan containers, so without this hlm can't reach
+    # those servers directly (for RCON, say). Uncomment this and the networks
+    # section at the end, and pick a free address on that network, ideally
+    # outside your router's DHCP range. "default" keeps the port above working.
+    # networks:
+    #   default: {}
+    #   br0:
+    #     ipv4_address: 192.168.1.5
     environment:
       # Game server data folders are bind-mounted by the Docker daemon, so this
       # must be a path on the machine running the game servers, not inside this
@@ -50,3 +60,8 @@ services:
 
 volumes:
   gsh-data:
+
+# For the macvlan network above: it already exists, made outside this file.
+# networks:
+#   br0:
+#     external: true

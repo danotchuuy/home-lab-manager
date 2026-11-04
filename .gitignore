@@ -41,3 +41,4 @@ web/dist/
 
 # Local credentials
 .keys
+.hlm-key
