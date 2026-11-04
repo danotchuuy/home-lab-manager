@@ -305,6 +305,10 @@ Under a server's **Console** output there's a command line. Commands go to the s
     container exposes or publishes, or the game's usual one.
   - **Address:** hlm connects straight to the container on its networks, or else to the port published on the Docker
     host, and remembers what worked. If it can't reach the server, enter the address by hand.
+  - **Servers with their own LAN address** (a macvlan or ipvlan network, such as Unraid's `br0`): a Docker host can't
+    reach its own macvlan containers, so hlm, running on that host, fails with "no route to host". Connect hlm to
+    that network too, with a free address on it (see the commented `networks` lines in `docker-compose.yml`), or use a
+    command run in the container instead.
   - **Connection:** it's kept open between commands and closed after 5 idle minutes.
 - **A command run in the container:** a command line run in the container for each command, with `{command}` replaced
   by what you type (or added at the end), such as `rcon-cli {command}`. It isn't run by a shell. Images like
