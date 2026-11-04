@@ -19,7 +19,7 @@ services:
     # section at the end, and pick a free address on that network, ideally
     # outside your router's DHCP range. "default" keeps the port above working.
     # networks:
-    #   default: {}
+    #   default:
     #   br0:
     #     ipv4_address: 192.168.1.5
     environment:
