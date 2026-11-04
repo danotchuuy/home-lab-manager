@@ -461,8 +461,11 @@ func (s *Service) Login(w http.ResponseWriter, r *http.Request) {
 		}
 		l.Confirm, l.Subject, l.Started = true, cur.Subject, s.now()
 		// Ask the provider to check who it is again, rather than reuse its
-		// own session. Whether it did is checked from auth_time.
-		opts = append(opts, oauth2.SetAuthURLParam("prompt", "login"), oauth2.SetAuthURLParam("max_age", "0"))
+		// own session. Whether it did is checked from auth_time. Don't send
+		// max_age=0 as well: Authelia treats it as never satisfied, so after
+		// the user signs in again it still wants a sign-in and shows "Failed
+		// to confirm your identity" instead of coming back here.
+		opts = append(opts, oauth2.SetAuthURLParam("prompt", "login"))
 	}
 	v, err := s.sign("login", l)
 	if err != nil {

@@ -75,6 +75,12 @@ func newProvider(t *testing.T) *provider {
 			http.Error(w, "bad request", 400)
 			return
 		}
+		// Like Authelia 4.39, max_age=0 can never be met: the user is asked
+		// to sign in again and again, and the sign-in never comes back.
+		if q.Get("max_age") == "0" {
+			http.Error(w, "Failed to confirm your identity", http.StatusForbidden)
+			return
+		}
 		code := "code-" + q.Get("state")
 		p.mu.Lock()
 		p.prompt, p.maxAge = q.Get("prompt"), q.Get("max_age")
@@ -749,7 +755,7 @@ func TestConfirmWithSingleSignOn(t *testing.T) {
 	if code, body := do(t, b, "GET", e.hlm.URL+"/auth/login?confirm=1", nil, ""); code != 403 || !strings.Contains(body, "ask you to sign in again") {
 		t.Errorf("stale sign-in = %d %s", code, body)
 	}
-	if e.prov.prompt != "login" || e.prov.maxAge != "0" {
+	if e.prov.prompt != "login" || e.prov.maxAge != "" {
 		t.Errorf("asked for prompt=%q max_age=%q", e.prov.prompt, e.prov.maxAge)
 	}
 	if code, _ := makeKey(); code != 403 {
