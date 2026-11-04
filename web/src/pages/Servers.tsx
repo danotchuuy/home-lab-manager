@@ -6,7 +6,18 @@ import { AppIcon, CONNECTION_GLYPH, Spinner, StateBadge } from "../components/co
 import { InstallCard, JobStatus } from "../components/JobProgress";
 import { ResourceSummary } from "../components/Resources";
 import { UpdateProgress } from "../components/UpdateProgress";
-import type { Connection, DeployEvent, Job, Server, Stats, UpcomingTask, UpdateCheckInfo, UpdateStatus } from "../types";
+import type {
+  AutoUpdateState,
+  AutoUpdates,
+  Connection,
+  DeployEvent,
+  Job,
+  Server,
+  Stats,
+  UpcomingTask,
+  UpdateCheckInfo,
+  UpdateStatus,
+} from "../types";
 import { usePoll } from "../usePoll";
 import { formatInZone, formatNetwork, formatPorts, timeAgo, timeUntil, webUILink } from "../util";
 
@@ -29,6 +40,7 @@ export function ServersPage() {
   // Each server's next scheduled task, and the time zone it's in.
   const [nextTasks, setNextTasks] = useState<Record<string, UpcomingTask>>({});
   const [timezone, setTimezone] = useState("");
+  const [auto, setAuto] = useState<AutoUpdates>();
 
   const load = useCallback(async () => {
     try {
@@ -40,6 +52,7 @@ export function ServersPage() {
       ]);
       setServers(list);
       setUpdateInfo(info);
+      api.autoUpdates().then(setAuto, () => {});
       // Scheduled tasks are extra; the list still works without them.
       api.upcomingTasks().then((up) => {
         const next: Record<string, UpcomingTask> = {};
@@ -298,7 +311,12 @@ export function ServersPage() {
                 <AppIcon src={s.icon} />
                 <div>
                   <div className="server-name">
-                    {s.name} <UpdateBadge update={s.update} />{" "}
+                    {s.name}{" "}
+                    <UpdateBadge
+                      update={s.update}
+                      auto={(auto?.servers[s.name] || auto?.default) === "auto"}
+                      state={auto?.states[s.name]}
+                    />{" "}
                     <NextTaskBadge task={nextTasks[s.name]} timezone={timezone} />
                   </div>
                   <div className="muted small">
@@ -491,16 +509,27 @@ function NextTaskBadge({ task, timezone }: { task?: UpcomingTask; timezone: stri
   );
 }
 
-function UpdateBadge({ update: u }: { update?: UpdateStatus }) {
+function UpdateBadge({ update: u, auto, state }: { update?: UpdateStatus; auto?: boolean; state?: AutoUpdateState }) {
   if (!u) return null;
   const checked = `Checked ${timeAgo(u.checkedAt)}`;
   switch (u.state) {
-    case "available":
+    case "available": {
+      // Updates applied automatically say when.
+      const how = !auto
+        ? ""
+        : state?.state === "waiting" && state.next
+          ? ` · auto ${timeUntil(state.next)}`
+          : state?.state === "failed"
+            ? " · auto-update failed"
+            : state
+              ? ` · auto: ${state.state}`
+              : " · updating automatically";
       return (
-        <span className="badge update-available" title={`${u.reason ?? ""}\n${checked}`}>
-          Update available
+        <span className="badge update-available" title={`${u.reason ?? ""}\n${checked}${state?.message ? `\n${state.message}` : ""}`}>
+          Update available{how}
         </span>
       );
+    }
     case "current":
       return (
         <span className="badge update-current" title={checked}>

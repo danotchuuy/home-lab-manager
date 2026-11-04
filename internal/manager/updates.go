@@ -215,30 +215,29 @@ func (m *Manager) checkImage(ctx context.Context, ref string) (string, UpdateSta
 	return img.ID, UpdateStatus{State: UpdateAvailable, Reason: "a newer image is available in the registry"}
 }
 
-// RunUpdateChecker checks for updates every interval until ctx is done,
-// starting shortly after startup.
-func (m *Manager) RunUpdateChecker(ctx context.Context, interval time.Duration) {
-	check := func() {
-		if err := m.CheckUpdates(ctx); err != nil && ctx.Err() == nil {
-			m.log.Warn("check for updates", "err", err)
-			return
-		}
-		m.log.Info("checked for updates", "available", m.UpdateInfo().Available)
-	}
-	select {
-	case <-ctx.Done():
-		return
-	case <-time.After(30 * time.Second):
-		check()
-	}
-	t := time.NewTicker(interval)
-	defer t.Stop()
+// RunUpdateChecker checks for updates every interval() until ctx is done,
+// starting shortly after startup. The interval is asked for again after
+// each check, so a new setting applies from the next one; 0 pauses checking.
+func (m *Manager) RunUpdateChecker(ctx context.Context, interval func() time.Duration) {
+	wait := 30 * time.Second
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
-			check()
+		case <-time.After(wait):
+		}
+		if interval() <= 0 {
+			wait = time.Minute // checking is off; look at the setting again soon
+			continue
+		}
+		if err := m.CheckUpdates(ctx); err != nil && ctx.Err() == nil {
+			m.log.Warn("check for updates", "err", err)
+		} else {
+			m.log.Info("checked for updates", "available", m.UpdateInfo().Available)
+		}
+		wait = interval()
+		if wait <= 0 {
+			wait = time.Minute
 		}
 	}
 }

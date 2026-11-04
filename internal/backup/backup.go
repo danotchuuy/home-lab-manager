@@ -598,6 +598,16 @@ func (s *Service) BackupNow(ctx context.Context, id, trigger string) (Run, error
 	return run, nil
 }
 
+// HasPlan reports whether backups are set up and the server called name
+// has folders chosen to back up.
+func (s *Service) HasPlan(name string) bool {
+	if !s.Configured() {
+		return false
+	}
+	plans, err := s.plans()
+	return err == nil && len(plans[name].Folders) > 0
+}
+
 // Busy reports whether a backup or restore of the server called name is
 // running.
 func (s *Service) Busy(name string) bool {

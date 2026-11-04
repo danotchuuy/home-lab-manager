@@ -1332,3 +1332,68 @@ export interface TimezoneInfo {
   system: string;
   effective: string;
 }
+
+/** How a server's updates are applied: "" follows the default. */
+export type UpdateMode = "" | "manual" | "auto";
+
+export interface UpdatePolicy {
+  mode: UpdateMode;
+  /** When an update may start ("03:00"–"06:00", hlm's time zone); empty is any time. */
+  windowStart?: string;
+  windowEnd?: string;
+  /** A console command sent warnMinutes before updating. */
+  warn?: string;
+  warnMinutes?: number;
+  /** Back up first, if the server has a backup plan. */
+  backup: boolean;
+}
+
+export interface AutoUpdateState {
+  state: "waiting" | "busy" | "queued" | "updating" | "failed";
+  message?: string;
+  next?: string;
+}
+
+export interface AutoUpdateResult {
+  started: string;
+  finished: string;
+  ok: boolean;
+  error?: string;
+  steps?: string[];
+}
+
+/** GET /api/servers/{id}/update-policy */
+export interface ServerUpdatePolicy {
+  /** The server's own policy; mode "" when it follows the default. */
+  policy: UpdatePolicy;
+  effective: UpdatePolicy;
+  default: UpdatePolicy;
+  state?: AutoUpdateState;
+  last?: AutoUpdateResult;
+  timezone: string;
+}
+
+export interface SelfUpdatePolicy {
+  auto: boolean;
+  windowStart?: string;
+  windowEnd?: string;
+}
+
+/** GET /api/system/update-policy */
+export interface SystemUpdatePolicy {
+  default: UpdatePolicy;
+  /** 0 means defaultCheckHours. */
+  checkHours: number;
+  defaultCheckHours: number;
+  /** HLM_UPDATE_CHECK, which overrides checkHours, if set. */
+  checkEnv?: string;
+  self: SelfUpdatePolicy;
+  selfLast?: AutoUpdateResult;
+}
+
+/** GET /api/updates/auto */
+export interface AutoUpdates {
+  default: UpdateMode;
+  servers: Record<string, UpdateMode>;
+  states: Record<string, AutoUpdateState>;
+}

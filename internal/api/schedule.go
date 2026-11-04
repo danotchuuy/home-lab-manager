@@ -12,8 +12,8 @@ import (
 
 // --- Scheduled tasks ---
 
-// taskServer resolves the {id} in a task route to the server's name.
-func (s *server) taskServer(w http.ResponseWriter, r *http.Request) (string, bool) {
+// namedServer resolves the {id} in a server route to the server's name.
+func (s *server) namedServer(w http.ResponseWriter, r *http.Request) (string, bool) {
 	srv, err := s.Manager.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeManagerError(w, err)
@@ -34,7 +34,7 @@ func writeScheduleError(w http.ResponseWriter, err error) {
 }
 
 func (s *server) listTasks(w http.ResponseWriter, r *http.Request) {
-	name, ok := s.taskServer(w, r)
+	name, ok := s.namedServer(w, r)
 	if !ok {
 		return
 	}
@@ -48,7 +48,7 @@ func (s *server) listTasks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) saveTask(w http.ResponseWriter, r *http.Request) {
-	name, ok := s.taskServer(w, r)
+	name, ok := s.namedServer(w, r)
 	if !ok {
 		return
 	}
@@ -72,7 +72,7 @@ func (s *server) saveTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) deleteTask(w http.ResponseWriter, r *http.Request) {
-	name, ok := s.taskServer(w, r)
+	name, ok := s.namedServer(w, r)
 	if !ok {
 		return
 	}
@@ -84,7 +84,7 @@ func (s *server) deleteTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) runTask(w http.ResponseWriter, r *http.Request) {
-	name, ok := s.taskServer(w, r)
+	name, ok := s.namedServer(w, r)
 	if !ok {
 		return
 	}

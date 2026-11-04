@@ -14,6 +14,7 @@ import { ServerBackups } from "../components/ServerBackups";
 import { ServerGroupPicker } from "../components/ServerGroups";
 import { ServerHostnames } from "../components/ServerHostnames";
 import { ServerSchedule } from "../components/ServerSchedule";
+import { ServerUpdatePolicyCard } from "../components/UpdatePolicy";
 import { StatTiles } from "../components/Resources";
 import type { App, DeployEvent, DeployRequest, Server, Stats } from "../types";
 import { usePoll } from "../usePoll";
@@ -251,6 +252,7 @@ export function ServerDetailPage() {
               Update image
             </button>
           </div>
+          <ServerUpdatePolicyCard server={server.name} canManage={manager} />
           <hr />
           <h2>Configuration</h2>
           <p className="muted small">Saving recreates the container. The old one is restored if the new one fails to start.</p>

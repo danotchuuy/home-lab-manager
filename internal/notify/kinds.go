@@ -30,6 +30,7 @@ const (
 	KindHTTPSRenewFailed  = "https.renew_failed"
 	KindHTTPSExpiring     = "https.expiring"
 	KindHLMUpdate         = "hlm.update_available"
+	KindHLMUpdateFailed   = "hlm.update_failed"
 	KindDiskLow           = "disk.low"
 	KindLockedOut         = "auth.locked_out"
 	KindTaskFailed        = "task.failed"
@@ -51,6 +52,7 @@ var Kinds = []Kind{
 	{KindServerUpdated, "Updates", Info, "A server was updated", 0},
 	{KindServerUpdateFail, "Updates", Error, "Updating a server failed", 0},
 	{KindHLMUpdate, "Updates", Info, "A new version of hlm is available", sentOnce},
+	{KindHLMUpdateFailed, "Updates", Error, "hlm couldn't update itself automatically", 0},
 	{KindBackupFailed, "Backups", Error, "A backup (of a server or of hlm's configuration) failed", 6 * time.Hour},
 	{KindBackupSucceeded, "Backups", Info, "A backup finished", 0},
 	{KindRestoreFinished, "Backups", Info, "A restore finished", 0},

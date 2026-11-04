@@ -113,7 +113,8 @@ When a new release is out, a banner says so, and **Update** installs it:
   new version's tag.
 
 Game servers keep running throughout, and hlm won't update itself while a server is being installed or updated. hlm
-checks for new releases every 12 hours (`HLM_UPDATE_CHECK`). Development builds (`go run`, or builds without a
+checks for new releases every 12 hours (`HLM_UPDATE_CHECK`), and can install them by itself
+([automatic updates](#automatic-updates)). Development builds (`go run`, or builds without a
 version) can't update themselves.
 
 ### Publishing a release
@@ -227,8 +228,9 @@ host is in use.
 
 The server list shows each server's update status. **Check for updates** asks each image's registry for the current
 digest of its tag and compares it with the local image (each image is checked once, however many servers use it).
-hlm also checks every 12 hours (`HLM_UPDATE_CHECK`; `0` turns it off). A server is also marked as having an update when a
-newer image was already downloaded, e.g. with `docker pull`, but the server still runs the old one.
+hlm also checks every 12 hours, or as often as **System → Automatic updates** says (`HLM_UPDATE_CHECK`, if set, wins;
+`0` turns checking off). A server is also marked as having an update when a newer image was already downloaded, e.g.
+with `docker pull`, but the server still runs the old one.
 
 **Update** (one server) and **Update all** pull the new image and recreate the servers one at a time with the same
 settings. They keep going if you close the page, and a failure doesn't stop the remaining updates. Running servers are
@@ -245,6 +247,35 @@ and a **Details** tab with the container's settings (for WireGuard, also the tun
 From there, **Manage** goes to the Proxy or Tunnel page. hlm's own container can be restarted (the page reconnects when
 hlm is back) but not stopped, since that would take hlm down with it. Its **Update** goes to the System page, where hlm
 updates itself.
+
+### Automatic updates
+
+Updates can be applied without anyone clicking **Update**. Each server's **Settings** tab has an **Automatic updates**
+section; **System → Automatic updates** sets the default for servers that don't choose (waiting for **Update**, unless
+you change it).
+
+- **When:** as soon as an update is found, or only starting within a window, such as 03:00 to 06:00 in
+  [hlm's time zone](#scheduled-tasks). A window can run past midnight. Outside it, the update waits, and the server list
+  says when it's due.
+- **Warn players first:** a console command, such as `say Updating in 5 minutes`, sent through the server's
+  [console](#sending-commands-to-a-server) if it's set up and the server is running, then a wait of up to 30 minutes.
+- **Back up first** (on by default): runs the server's [backup plan](#backups-to-s3-seaweedfs-minio-), if it has one,
+  and waits for it. If the backup fails, the update isn't applied.
+
+The update itself is the same as clicking **Update**: if the new container doesn't start, the old one is put back. Just
+before applying an update, hlm checks the registry again, in case it was applied by hand in the meantime.
+
+- **One at a time:** only one update runs at a time, and others queue. A server that's being installed, updated,
+  reconfigured, backed up or restored, or running a scheduled task, is updated once it's free.
+- **Failures:** after a failed automatic update, hlm waits a day before trying that server again (update it by hand
+  sooner if you like). The Settings tab shows the last automatic update and how it went. The usual
+  [notifications](#notifications) are sent (`server.updated`, `server.update_failed`, and `backup.failed` for a
+  backup that stopped the update).
+- **hlm itself:** **System → Automatic updates** can also install new versions of hlm automatically, optionally only
+  within a window. It never does so while a server is being installed or updated, or while servers have updates to
+  apply first. If it fails, hlm waits a day before trying again and sends `hlm.update_failed`.
+- **Notifications instead:** to be told about updates rather than have them applied, leave servers on manual and send
+  `server.update_available` to a notification target.
 
 **Start on boot** sets the container's restart policy without recreating it: `always` when on, `no` when off. The
 setting is kept across updates and edits.
@@ -899,6 +930,7 @@ Each target chooses its **events** (warnings and errors by default):
 | `server.update_available` | info | A newer image is found for a server (once per image the server runs). |
 | `server.updated`, `server.update_failed` | info, error | An update finishes or fails. |
 | `hlm.update_available` | info | A new version of hlm is out (once per version). |
+| `hlm.update_failed` | error | hlm couldn't [update itself automatically](#automatic-updates). |
 | `backup.failed`, `backup.succeeded` | error, info | A server's or hlm's configuration backup fails or finishes. |
 | `restore.finished`, `restore.failed` | info, error | A restore finishes or fails. |
 | `tunnel.down` | error | The WireGuard or Cloudflare Tunnel container stops on its own. |
@@ -971,7 +1003,7 @@ own **Settings** tab.
 | --- | --- |
 | **Viewer** | See the server, its stats, its port and backup status and its scheduled tasks, but not its settings, logs, files or tasks' console commands, which can hold passwords |
 | **Operator** | Also start, stop, restart and update it, [send it console commands](#sending-commands-to-a-server), run its scheduled tasks, read its logs, settings and files, and take and download backups. Settings that look like secrets (names with `TOKEN`, `SECRET`, `PASS`, `PWD`, `KEY`, `CREDENTIAL`, `AUTH` or `PRIVATE`, items the template masks, extra parameters and post arguments) are left out |
-| **Manager** | Also change its ports and variables, edit files, set up its console, change its scheduled tasks, set start on boot and port forwarding, change the backup plan, and restore and delete backups |
+| **Manager** | Also change its ports and variables, edit files, set up its console, change its scheduled tasks and how it's updated, set start on boot and port forwarding, change the backup plan, and restore and delete backups |
 
 Some things always take an admin, because they amount to control of the host or of other servers: deleting servers,
 installing them (except for [deployer keys](#deployer-keys)), importing templates, and changing a server's paths, devices, network, extra items or Docker options.
@@ -1177,7 +1209,7 @@ accounts; single sign-on users don't have one in hlm, so they use API keys.
 | `HLM_FEED_REFRESH` | `6h`                          | How often to refresh the feed.                             |
 | `HLM_HOST_PROC`    | `/proc`                       | The Docker host's procfs, for the Host page.               |
 | `HLM_HOST_ROOT`    | (none)                        | Where the host's root filesystem is mounted, when hlm runs in a container. |
-| `HLM_UPDATE_CHECK` | `12h`                         | How often to check servers and hlm itself for updates; `0` disables. |
+| `HLM_UPDATE_CHECK` | `12h`                         | How often to check servers and hlm itself for updates; `0` disables. When set, it wins over the setting under System → Automatic updates. |
 | `HLM_WAN_CHECK`    | `5m`                          | How often to look up the home address from UniFi for the proxy; `0` disables. |
 | `HLM_LINODE_API`   | `https://api.linode.com/v4`   | Linode API address (only changed for testing).            |
 | `HLM_WIREGUARD_IMAGE` | `lscr.io/linuxserver/wireguard:latest` | Image for this host's end of the proxy's WireGuard tunnel. |
@@ -1327,6 +1359,9 @@ when the `HLM_*` one isn't set.
 | `POST /api/host/storage/deleted/{id}/forget`   | Stop tracking a deleted server's folder or volume `{path, volume}`, or all of them without a `path`. |
 | `GET /api/jobs`                                | Installs and updates in progress, plus those that finished in the last minute.    |
 | `GET /api/updates`                             | When updates were last checked and how many are available.                        |
+| `GET/PUT /api/servers/{id}/update-policy`      | A server's [automatic updates](#automatic-updates): `{mode, windowStart?, windowEnd?, warn?, warnMinutes?, backup}` (`mode` is `auto`, `manual`, or empty to follow the default), plus what it follows, the update's state and the last result. `PUT` takes a manager; the warning is only shown to operators. |
+| `GET /api/updates/auto`                        | Which of the servers you can see update automatically, and what their updates are waiting for. |
+| `GET/PUT /api/system/update-policy`            | The default policy, `checkHours`, and hlm's own (`self: {auto, windowStart?, windowEnd?}`); admins only. |
 | `POST /api/updates/check`                      | Check every server for image updates now.                                         |
 | `POST /api/updates/apply`                      | Update every server that has an update. Streams NDJSON; events carry `target`.    |
 | `GET /api/connections`                        | The containers hlm runs for connections (`hlm-wireguard`, `hlm-cloudflared`), with their update status. Their usage is in `GET /api/stats`. |

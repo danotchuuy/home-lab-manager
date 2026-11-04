@@ -1,5 +1,6 @@
 import type {
   Account,
+  AutoUpdates,
   APIKeyInfo,
   KeyRole,
   HTTPSStatus,
@@ -73,6 +74,10 @@ import type {
   Server,
   ServerGroup,
   ServerTasks,
+  ServerUpdatePolicy,
+  SystemUpdatePolicy,
+  UpdatePolicy,
+  SelfUpdatePolicy,
   TimezoneInfo,
   UpcomingTask,
   Stats,
@@ -539,6 +544,13 @@ export const api = {
     json<void>(`/api/servers/${encodeURIComponent(id)}/tasks/${encodeURIComponent(task)}`, { method: "DELETE" }),
   runTask: (id: string, task: string) =>
     json<void>(`/api/servers/${encodeURIComponent(id)}/tasks/${encodeURIComponent(task)}/run`, { method: "POST" }),
+  updatePolicy: (id: string) => json<ServerUpdatePolicy>(`/api/servers/${encodeURIComponent(id)}/update-policy`),
+  setUpdatePolicy: (id: string, p: UpdatePolicy) =>
+    json<ServerUpdatePolicy>(`/api/servers/${encodeURIComponent(id)}/update-policy`, { method: "PUT", body: JSON.stringify(p) }),
+  autoUpdates: () => json<AutoUpdates>("/api/updates/auto"),
+  systemUpdatePolicy: () => json<SystemUpdatePolicy>("/api/system/update-policy"),
+  setSystemUpdatePolicy: (g: { default: UpdatePolicy; checkHours: number; self: SelfUpdatePolicy }) =>
+    json<SystemUpdatePolicy>("/api/system/update-policy", { method: "PUT", body: JSON.stringify(g) }),
   upcomingTasks: () => json<UpcomingTask[]>("/api/schedule/upcoming"),
   timezone: () => json<TimezoneInfo>("/api/system/timezone"),
   setTimezone: (timezone: string) =>

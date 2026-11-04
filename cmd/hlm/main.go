@@ -3,6 +3,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/danotchuuy/home-lab-manager/internal/api"
 	"github.com/danotchuuy/home-lab-manager/internal/auth"
+	"github.com/danotchuuy/home-lab-manager/internal/autoupdate"
 	"github.com/danotchuuy/home-lab-manager/internal/backup"
 	"github.com/danotchuuy/home-lab-manager/internal/catalog"
 	"github.com/danotchuuy/home-lab-manager/internal/cftunnel"
@@ -104,7 +106,9 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return errors.New("HLM_FEED_REFRESH: " + err.Error())
 	}
-	updateCheck, err := time.ParseDuration(env("HLM_UPDATE_CHECK", "12h"))
+	// HLM_UPDATE_CHECK, when set, wins over the setting on the System page.
+	updateCheckEnv := env("HLM_UPDATE_CHECK", "")
+	updateCheck, err := time.ParseDuration(cmp.Or(updateCheckEnv, "12h"))
 	if err != nil {
 		return errors.New("HLM_UPDATE_CHECK: " + err.Error())
 	}
@@ -325,7 +329,6 @@ func run(log *slog.Logger) error {
 	go mgr.WatchEvents(ctx)
 	if updateCheck > 0 {
 		go updater.Run(ctx, updateCheck)
-		go mgr.RunUpdateChecker(ctx, updateCheck)
 	}
 
 	// HTTPS is optional, set up on the System page; HLM_TLS=off ignores the
@@ -366,6 +369,17 @@ func run(log *slog.Logger) error {
 		Secrets: store, Servers: mgr, Backups: backups, Console: consoles, Notifier: notifier, Log: log,
 	})
 	go sched.Run(ctx)
+	// Updates applied automatically, for servers (and hlm) that want them.
+	autoUpdates := autoupdate.New(autoupdate.Options{
+		Secrets: store, Servers: mgr, Backups: backups, Console: consoles, Tasks: sched, Self: updater,
+		Notifier: notifier, Location: sched.Location, ZoneName: sched.ZoneName, Log: log,
+	})
+	go autoUpdates.Run(ctx)
+	checkEvery := autoUpdates.CheckInterval
+	if updateCheckEnv != "" {
+		checkEvery = func() time.Duration { return updateCheck }
+	}
+	go mgr.RunUpdateChecker(ctx, checkEvery)
 	go notifier.Run(ctx)
 	handler := api.Handler(api.Options{
 		Docker:      dc,
@@ -385,9 +399,12 @@ func run(log *slog.Logger) error {
 		Notify:      notifier,
 		Console:     consoles,
 		Schedule:    sched,
-		Token:       env("HLM_TOKEN", ""),
-		WebDir:      env("HLM_WEB_DIR", ""),
-		Log:         log,
+		AutoUpdate:  autoUpdates,
+		// Set when HLM_UPDATE_CHECK overrides the setting.
+		UpdateCheckEnv: updateCheckEnv,
+		Token:          env("HLM_TOKEN", ""),
+		WebDir:         env("HLM_WEB_DIR", ""),
+		Log:            log,
 	})
 
 	srv := &http.Server{
