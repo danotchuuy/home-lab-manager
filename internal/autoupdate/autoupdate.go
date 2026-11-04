@@ -47,6 +47,9 @@ type Policy struct {
 	// Backup runs the server's backup plan first, if it has one; if the
 	// backup fails, the update waits for the next window.
 	Backup bool `json:"backup"`
+	// OnlyWhenEmpty waits while players are online (when the server's
+	// status query says how many are; if it doesn't, it doesn't wait).
+	OnlyWhenEmpty bool `json:"onlyWhenEmpty,omitempty"`
 }
 
 // SelfPolicy says whether hlm updates itself, and when.
@@ -134,6 +137,8 @@ type Options struct {
 	Tasks    Tasks
 	Self     Self
 	Notifier notify.Notifier
+	// Players says how many players are on a server, if that's known.
+	Players func(server string) (int, bool)
 	// Location is hlm's time zone, which windows are in, and ZoneName its
 	// name for showing.
 	Location func() *time.Location
@@ -161,6 +166,7 @@ const (
 	StateQueued   = "queued"   // another update is going first
 	StateUpdating = "updating" // being updated now
 	StateFailed   = "failed"   // the last try failed; tried again later
+	StatePlayers  = "players"  // waiting for players to leave
 )
 
 // State is what's happening with a server's automatic update.
@@ -481,6 +487,12 @@ func (s *Service) tick(ctx context.Context) {
 		if why := s.busy(srv.Name); why != "" {
 			s.setState(srv.Name, State{State: StateBusy, Message: "waiting: " + why})
 			continue
+		}
+		if p.OnlyWhenEmpty && s.opts.Players != nil {
+			if n, known := s.opts.Players(srv.Name); known && n > 0 {
+				s.setState(srv.Name, State{State: StatePlayers, Message: fmt.Sprintf("waiting for players to leave (%s online)", plural(n, "player"))})
+				continue
+			}
 		}
 		ready = append(ready, srv)
 	}

@@ -7,6 +7,7 @@ import { ConfigForm } from "../components/ConfigForm";
 import { ConsoleInputBar } from "../components/Console";
 import { DeployProgress } from "../components/DeployProgress";
 import { FileBrowser } from "../components/FileBrowser";
+import { GameStatusCard } from "../components/GameStatus";
 import { LogViewer } from "../components/LogViewer";
 import { PortSettings } from "../components/PortSettings";
 import { PortForwarding } from "../components/PortForwarding";
@@ -174,6 +175,8 @@ export function ServerDetailPage() {
       {error && <div className="alert error">{error}</div>}
 
       {stats && <StatTiles stats={stats} />}
+
+      <GameStatusCard server={server.name} running={running} canManage={manager} />
 
       <div className="tabs">
         {operator && (

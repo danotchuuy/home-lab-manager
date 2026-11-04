@@ -15,6 +15,7 @@ const STEP_LABEL: Record<StepKind, string> = {
   backup: "Back up (the server's backup plan)",
   command: "Send a console command",
   wait: "Wait",
+  if_players: "Only carry on if…",
 };
 
 export function describeWhen(w: TaskWhen): string {
@@ -35,6 +36,8 @@ function describeStep(s: TaskStep): string {
       return s.command ? `Send "${s.command}"` : "Send a console command";
     case "wait":
       return `Wait ${formatSeconds(s.seconds ?? 0)}`;
+    case "if_players":
+      return s.players === "some" ? "Only carry on if someone's playing" : "Only carry on if nobody's playing";
     default:
       return STEP_LABEL[s.kind];
   }
@@ -500,6 +503,12 @@ function TaskEditor({
                   spellCheck={false}
                 />
               )}
+              {s.kind === "if_players" && (
+                <select value={s.players ?? "none"} onChange={(e) => setStep(i, { players: e.target.value as TaskStep["players"] })}>
+                  <option value="none">nobody&apos;s playing</option>
+                  <option value="some">someone&apos;s playing</option>
+                </select>
+              )}
               {s.kind === "wait" && (
                 <span className="inline-input">
                   <input
@@ -513,7 +522,7 @@ function TaskEditor({
                   seconds{s.seconds && s.seconds >= 60 ? ` (${formatSeconds(s.seconds)})` : ""}
                 </span>
               )}
-              {s.kind !== "wait" && (
+              {s.kind !== "wait" && s.kind !== "if_players" && (
                 <label className="radio small">
                   <input
                     type="checkbox"

@@ -29,6 +29,10 @@ import type {
   FileContent,
   FileListing,
   FileMatch,
+  GameStatus,
+  GameSummary,
+  QueryResult,
+  QuerySettings,
   IPCheck,
   ForwardStatus,
   UnifiConfig,
@@ -544,6 +548,16 @@ export const api = {
     json<void>(`/api/servers/${encodeURIComponent(id)}/tasks/${encodeURIComponent(task)}`, { method: "DELETE" }),
   runTask: (id: string, task: string) =>
     json<void>(`/api/servers/${encodeURIComponent(id)}/tasks/${encodeURIComponent(task)}/run`, { method: "POST" }),
+  gameStatuses: () => json<Record<string, GameSummary>>("/api/query"),
+  gameStatus: (id: string) => json<GameStatus>(`/api/servers/${encodeURIComponent(id)}/query`),
+  setQuerySettings: (id: string, set: QuerySettings) =>
+    json<GameStatus>(`/api/servers/${encodeURIComponent(id)}/query/settings`, { method: "PUT", body: JSON.stringify(set) }),
+  /** Queries with these settings without saving them; automatic settings say what was found. */
+  testQuery: (id: string, set: QuerySettings) =>
+    json<{ settings: QuerySettings; result: QueryResult }>(`/api/servers/${encodeURIComponent(id)}/query/test`, {
+      method: "POST",
+      body: JSON.stringify(set),
+    }),
   updatePolicy: (id: string) => json<ServerUpdatePolicy>(`/api/servers/${encodeURIComponent(id)}/update-policy`),
   setUpdatePolicy: (id: string, p: UpdatePolicy) =>
     json<ServerUpdatePolicy>(`/api/servers/${encodeURIComponent(id)}/update-policy`, { method: "PUT", body: JSON.stringify(p) }),

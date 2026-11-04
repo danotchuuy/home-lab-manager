@@ -2,6 +2,22 @@
 
 **Priority:** High · **Depends on:** nothing · **Unblocks:** 03 (conditions), 04 (only when empty), 17 (status page)
 
+> **Status: done** (branch `feature/05-game-query`). See the README's
+> [Is the game up? Players and status](../README.md#is-the-game-up-players-and-status). Where the result differs
+> from this plan:
+>
+> - Detection probes instead of only mapping images: it tries the game's usual way, ports named "query", known Steam
+>   query ports, every UDP port and the one after it, and the console, and keeps the first that answers.
+> - The 24-hour player history is kept in memory (a day of 5-minute steps) until [08](08-metrics-history-prometheus.md)
+>   gives it storage; it starts over when the server or hlm restarts.
+> - `server.online` is only sent for starts hlm saw, so restarting hlm doesn't announce every server.
+> - A server that never answers is "not responding" (with an alert) only when its protocol was chosen; with automatic
+>   detection it becomes "status unknown" after 30 minutes, since it may just use a protocol hlm doesn't know.
+> - The status card sits above the tabs on the server's page, with its query settings, rather than on the Settings tab.
+> - What this unblocked is done here too: a scheduled task step "only carry on if nobody's / someone's playing" (03)
+>   and "wait while players are online" for automatic updates (04).
+> - Not done: GameSpy4/TShock (Terraria), Factorio and Satisfactory's HTTPS API.
+
 ## Why
 
 "Container running" doesn't mean players can join: SteamCMD images spend minutes downloading the game, and servers can

@@ -49,7 +49,9 @@ type Options struct {
 	Backups  Backups
 	Console  Console
 	Notifier notify.Notifier
-	Log      *slog.Logger
+	// Players says how many players are on a server, if that's known.
+	Players func(server string) (int, bool)
+	Log     *slog.Logger
 	// Now and Sleep are for tests.
 	Now   func() time.Time
 	Sleep func(ctx context.Context, d time.Duration) error
@@ -490,6 +492,11 @@ func (s *Service) execute(ctx context.Context, server string, t Task, prog *Prog
 		s.mu.Unlock()
 		res := s.step(ctx, server, step)
 		run.Steps = append(run.Steps, res)
+		if step.Kind == StepIfPlayers && !res.OK {
+			// The condition wasn't met: the rest of the task doesn't run.
+			run.Result, run.Error = ResultSkipped, res.Message
+			return run
+		}
 		if !res.OK && !res.Skipped && (!step.ContinueOnError || ctx.Err() != nil) {
 			run.Result = ResultFailed
 			run.Error = fmt.Sprintf("step %d (%s): %s", i+1, step.Kind, res.Message)
@@ -589,6 +596,20 @@ func (s *Service) step(ctx context.Context, server string, st Step) StepResult {
 		if err := s.opts.Sleep(ctx, time.Duration(st.Seconds)*time.Second); err != nil {
 			return fail(err)
 		}
+	case StepIfPlayers:
+		n, known := 0, false
+		if s.opts.Players != nil {
+			n, known = s.opts.Players(server)
+		}
+		switch {
+		case !known:
+			return skip("the number of players online isn't known (the server isn't answering its status query)")
+		case st.Players == PlayersNone && n > 0:
+			return skip(fmt.Sprintf("%d %s online", n, map[bool]string{true: "player was", false: "players were"}[n == 1]))
+		case st.Players == PlayersSome && n == 0:
+			return skip("nobody was online")
+		}
+		res.Message = fmt.Sprintf("%d online", n)
 	default:
 		return fail(fmt.Errorf("unknown step %q", st.Kind))
 	}

@@ -2975,3 +2975,143 @@ progress {
 .radio input[type="time"] {
   width: auto;
 }
+
+/* Game status */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.badge.game-online,
+.badge.game-starting,
+.badge.game-not_responding,
+.badge.game-unknown {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: var(--surface-2);
+  color: inherit;
+}
+
+.game-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.game-online .game-dot {
+  background: var(--success);
+}
+
+.game-starting .game-dot {
+  background: var(--warn);
+}
+
+.game-not_responding .game-dot {
+  background: var(--danger);
+}
+
+.game-status {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.game-status-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.game-status-main {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.players-now strong {
+  font-size: 1.35rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.player-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.chip.static {
+  cursor: default;
+}
+
+.chip.static:hover {
+  border-color: var(--border);
+}
+
+.sparkline {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.sparkline svg {
+  overflow: visible;
+  cursor: crosshair;
+}
+
+.sparkline svg:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+.spark-base,
+.spark-crosshair {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.spark-line {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.spark-area {
+  fill: var(--muted);
+  opacity: 0.1;
+}
+
+.spark-now {
+  fill: var(--accent);
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+
+.spark-hover {
+  fill: var(--muted);
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+
+.sparkline-readout {
+  min-width: 7.5rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.query-settings {
+  border-top: 1px dashed var(--border);
+  padding-top: 0.6rem;
+}

@@ -8,7 +8,11 @@ import { Spinner } from "./common";
 export function describePolicy(p: UpdatePolicy): string {
   if (p.mode !== "auto") return "Updates wait for someone to click Update.";
   const when = p.windowStart ? `between ${p.windowStart} and ${p.windowEnd}` : "as soon as they're found";
-  const extras = [p.warn ? `warning players ${p.warnMinutes ?? 0} min before` : "", p.backup ? "backing up first" : ""].filter(Boolean);
+  const extras = [
+    p.onlyWhenEmpty ? "once nobody's playing" : "",
+    p.warn ? `warning players ${p.warnMinutes ?? 0} min before` : "",
+    p.backup ? "backing up first" : "",
+  ].filter(Boolean);
   return `Updates are applied automatically ${when}${extras.length ? `, ${extras.join(" and ")}` : ""}.`;
 }
 
@@ -25,6 +29,8 @@ export function describeState(s: AutoUpdateState, tz: string): string {
       return `Updating: ${s.message ?? ""}…`;
     case "failed":
       return `${s.message ?? "The last automatic update failed"}${next}.`;
+    case "players":
+      return `Update ${s.message ?? "waiting for players to leave"}.`;
   }
 }
 
@@ -128,6 +134,10 @@ function PolicyFields({
               </span>
             </label>
           </div>
+          <label className="radio small">
+            <input type="checkbox" checked={!!p.onlyWhenEmpty} onChange={(e) => set({ onlyWhenEmpty: e.target.checked })} />
+            Wait while players are online (when the server&apos;s status shows how many are; otherwise this doesn&apos;t wait)
+          </label>
           <label className="radio small">
             <input type="checkbox" checked={p.backup} onChange={(e) => set({ backup: e.target.checked })} />
             Back up first, if the server has a backup plan (if the backup fails, the update isn&apos;t applied)

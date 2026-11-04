@@ -18,6 +18,7 @@ import (
 
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/rcon"
+	"github.com/danotchuuy/home-lab-manager/internal/reach"
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
 )
 
@@ -406,6 +407,49 @@ func (s *Service) Send(ctx context.Context, id, who, command string) (Result, er
 	return res, err
 }
 
+// Query runs a read-only command, such as a game's player list, for hlm's
+// own use: unlike Send, it isn't logged or rate limited. It fails unless the
+// console is set up to send commands that reply (RCON or exec); commands
+// typed into stdin don't.
+func (s *Service) Query(ctx context.Context, id, command string) (string, error) {
+	info, err := s.opts.Servers.Inspect(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	set, err := s.settings(serverName(info))
+	if err != nil {
+		return "", err
+	}
+	if ok, why := ready(info, set); !ok {
+		return "", errors.New(why)
+	}
+	var out string
+	switch set.Mode {
+	case ModeRCON:
+		out, err = s.sendRCON(ctx, info, set, command)
+	case ModeExec:
+		out, _, err = s.exec(ctx, info, set, command)
+	default:
+		return "", errors.New("the console doesn't send replies back")
+	}
+	return clean(out, passwordOf(info, set)), err
+}
+
+// Replies reports whether a server's console is set up to send commands
+// that reply, and names its game.
+func (s *Service) Replies(ctx context.Context, id string) (game string, ok bool) {
+	info, err := s.opts.Servers.Inspect(ctx, id)
+	if err != nil {
+		return "", false
+	}
+	set, err := s.settings(serverName(info))
+	if err != nil {
+		return "", false
+	}
+	ready, _ := ready(info, set)
+	return gameOf(info.Config.Image), ready && (set.Mode == ModeRCON || set.Mode == ModeExec)
+}
+
 // cleanCommand trims a command and drops control characters other than
 // tabs, which could do anything on a console.
 func cleanCommand(c string) string {
@@ -555,53 +599,7 @@ func (s *Service) rconAddresses(info docker.ContainerJSON, set Settings) ([]stri
 	if port == 0 {
 		return nil, errors.New("couldn't find the RCON port; enter it in the console settings")
 	}
-	p := strconv.Itoa(port)
-	var out []string
-	add := func(host string) {
-		if host == "" {
-			return
-		}
-		a := net.JoinHostPort(host, p)
-		if !slices.Contains(out, a) {
-			out = append(out, a)
-		}
-	}
-	if info.HostConfig.NetworkMode == "host" {
-		for _, h := range s.opts.HostAddresses() {
-			add(h)
-		}
-		return out, nil
-	}
-	// Straight to the container, on each of its networks.
-	nets := make([]string, 0, len(info.NetworkSettings.Networks))
-	for n := range info.NetworkSettings.Networks {
-		nets = append(nets, n)
-	}
-	slices.Sort(nets)
-	for _, n := range nets {
-		add(info.NetworkSettings.Networks[n].IPAddress)
-	}
-	// Or through the port published on the host.
-	for _, b := range info.HostConfig.PortBindings[p+"/tcp"] {
-		if b.HostPort == "" {
-			continue
-		}
-		if b.HostIP != "" && b.HostIP != "0.0.0.0" && b.HostIP != "::" {
-			// Published on one address only.
-			if a := net.JoinHostPort(b.HostIP, b.HostPort); !slices.Contains(out, a) {
-				out = append(out, a)
-			}
-			continue
-		}
-		for _, h := range s.opts.HostAddresses() {
-			if h == "" {
-				continue
-			}
-			if a := net.JoinHostPort(h, b.HostPort); !slices.Contains(out, a) {
-				out = append(out, a)
-			}
-		}
-	}
+	out := reach.Addresses(info, port, "tcp", s.opts.HostAddresses())
 	if len(out) == 0 {
 		return nil, errors.New("the RCON port can't be reached: the container has no address hlm can use, and the port isn't published")
 	}
