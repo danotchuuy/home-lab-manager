@@ -2,6 +2,23 @@
 
 **Priority:** Medium · **Depends on:** nothing · **Used by:** 05 (player history), 17
 
+> **Status: done** (branch `feature/08-metrics-history`). See the README's
+> [Resource history](../README.md#resource-history) and [Prometheus](../README.md#prometheus). Where the result differs
+> from this plan:
+>
+> - **Storage:** rather than rewriting every series' file each minute (around 10 MB a minute at 20 servers), finished
+>   minutes are appended to `metrics/minutes.jsonl` and the whole store is written to `metrics/snapshot.gob` every 6
+>   hours and on shutdown. Buckets keep sum, count and peak, so 15-minute averages are exact.
+> - **Retention of deleted servers:** a group is dropped 30 days after its last sample, which covers deleted servers
+>   without a hook.
+> - **Ranges:** 1 h, 6 h, 24 h, 7 d and 30 d; the Host page keeps its live 5-second view as "Live". CPU charts also draw
+>   each step's peak.
+> - **Auth:** a `metrics` API key role (an API key can only have one role) rather than a scope; it's refused on every
+>   `/api` route. Unauthenticated scraping from listed addresses is a System → Prometheus setting (confirmed admins).
+> - **Metrics:** `hlm_server_restarts_total` is Docker's restart count for the current container (it starts again
+>   when the server is recreated). Host metrics add CPU cores, load and per-interface network totals. Backups now keep
+>   the last *successful* run (`lastOk`), so a failure doesn't hide when the last good backup was.
+
 ## Why
 
 The Host page keeps 30 minutes of history in memory (`hostmetrics.Collector`, 5 s samples), and per-server stats are

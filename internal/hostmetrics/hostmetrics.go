@@ -112,6 +112,16 @@ type Collector struct {
 	prevNet  map[string][2]uint64
 	prevDisk map[string][2]uint64
 	prevAt   time.Time
+	// observers are called with each sample.
+	observers []func(Snapshot)
+}
+
+// Observe calls fn with each new sample (without the history), after it's
+// taken. Call it before Run.
+func (c *Collector) Observe(fn func(Snapshot)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.observers = append(c.observers, fn)
 }
 
 // New creates a collector. If unavailable is non-empty, the host can't be
@@ -143,7 +153,7 @@ func (c *Collector) Run(ctx context.Context) {
 	if c.snap.Reason != "" {
 		return
 	}
-	c.sample()
+	c.sampleAndNotify()
 	t := time.NewTicker(c.cfg.Interval)
 	defer t.Stop()
 	for {
@@ -151,8 +161,22 @@ func (c *Collector) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			c.sample()
+			c.sampleAndNotify()
 		}
+	}
+}
+
+func (c *Collector) sampleAndNotify() {
+	c.sample()
+	c.mu.RLock()
+	s, obs, ok := c.snap, c.observers, len(c.history) > 0 && c.snap.Available
+	c.mu.RUnlock()
+	// The first sample has no rates yet.
+	if !ok {
+		return
+	}
+	for _, fn := range obs {
+		fn(s)
 	}
 }
 

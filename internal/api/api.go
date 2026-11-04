@@ -38,6 +38,8 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
 	"github.com/danotchuuy/home-lab-manager/internal/linode"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
+	"github.com/danotchuuy/home-lab-manager/internal/metrics"
+	"github.com/danotchuuy/home-lab-manager/internal/metricstore"
 	"github.com/danotchuuy/home-lab-manager/internal/notify"
 	"github.com/danotchuuy/home-lab-manager/internal/proxy"
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
@@ -82,6 +84,12 @@ type Options struct {
 	Audit *audit.Log
 	// Registries holds the logins for private image registries.
 	Registries *registry.Store
+	// History keeps a month of host and server resource use.
+	History *metricstore.Store
+	// Sampler has servers' latest samples, for /metrics.
+	Sampler *metrics.Sampler
+	// MetricsConfig is /metrics' settings.
+	MetricsConfig *metrics.Config
 	// UpdateCheckEnv is HLM_UPDATE_CHECK, which overrides the setting for
 	// how often updates are checked for, if set.
 	UpdateCheckEnv string

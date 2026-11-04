@@ -48,7 +48,10 @@ type ContainerJSON struct {
 	Name    string `json:"Name"`
 	Created string `json:"Created"`
 	Image   string `json:"Image"`
-	State   struct {
+	// RestartCount is how many times Docker has restarted the container
+	// under its restart policy since it was started.
+	RestartCount int `json:"RestartCount"`
+	State        struct {
 		Status     string `json:"Status"`
 		Running    bool   `json:"Running"`
 		Restarting bool   `json:"Restarting"`

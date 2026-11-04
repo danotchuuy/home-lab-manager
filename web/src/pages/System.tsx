@@ -11,6 +11,7 @@ import { NotificationSettings } from "../components/NotificationSettings";
 import { TimeSettings } from "../components/TimeSettings";
 import { SystemActivity } from "../components/ActivityLog";
 import { RegistrySettings } from "../components/RegistrySettings";
+import { PrometheusSettings } from "../components/PrometheusSettings";
 import { SystemUpdateSettings } from "../components/UpdatePolicy";
 import { ServerGroups } from "../components/ServerGroups";
 import { APIKeys } from "../components/APIKeys";
@@ -289,6 +290,11 @@ export function SystemPage() {
       <section className="card" id="registries">
         <h2>Registries</h2>
         <RegistrySettings />
+      </section>
+
+      <section className="card" id="prometheus">
+        <h2>Prometheus</h2>
+        <PrometheusSettings />
       </section>
 
       <section className="card" id="time">

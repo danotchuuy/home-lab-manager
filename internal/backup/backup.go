@@ -82,6 +82,8 @@ type Plan struct {
 	// copied halfway through being written, and starts it again afterwards.
 	StopServer bool `json:"stopServer"`
 	Last       *Run `json:"last,omitempty"`
+	// LastOK is the last backup that succeeded.
+	LastOK *Run `json:"lastOk,omitempty"`
 	// LastRestore is the last restore from a backup.
 	LastRestore *Run `json:"lastRestore,omitempty"`
 }
@@ -375,6 +377,9 @@ func (s *Service) plans() (map[string]Plan, error) {
 	return plans, err
 }
 
+// Plans returns every server's backup plan and last results, by name.
+func (s *Service) Plans() (map[string]Plan, error) { return s.plans() }
+
 // updatePlan changes one server's stored plan.
 func (s *Service) updatePlan(name string, fn func(*Plan)) error {
 	s.plansMu.Lock()
@@ -594,7 +599,12 @@ func (s *Service) finish(name string, plan Plan, prog *Progress) Run {
 	} else {
 		s.log.Info("backup finished", "server", name, "key", run.Key, "files", run.Files, "size", run.Size)
 	}
-	if err := s.updatePlan(name, func(p *Plan) { p.Last = &run }); err != nil {
+	if err := s.updatePlan(name, func(p *Plan) {
+		p.Last = &run
+		if run.Error == "" {
+			p.LastOK = &run
+		}
+	}); err != nil {
 		s.log.Warn("record backup result", "server", name, "err", err)
 	}
 	s.notifyBackup(name, run)

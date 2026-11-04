@@ -40,6 +40,9 @@ const (
 	// Deployer is a Member that may also create servers, as long as they're
 	// confined and go in a group it manages. Only API keys can have it.
 	Deployer Role = "deployer"
+	// Metrics may only read /metrics (Prometheus): nothing under /api. Only
+	// API keys can have it.
+	Metrics Role = "metrics"
 	// Viewer sees a server's status, without its settings, logs or files,
 	// which can hold passwords.
 	Viewer Role = "viewer"
@@ -73,6 +76,10 @@ func (r Role) AtLeast(want Role) bool { return r.rank() >= want.rank() && r.rank
 
 // Valid reports whether r can be someone's global role.
 func (r Role) Valid() bool { return r == Admin || r == Member || r == Deployer }
+
+// ForKey reports whether r can be an API key's role: a global role, or
+// Metrics.
+func (r Role) ForKey() bool { return r.Valid() || r == Metrics }
 
 // ForAccount reports whether r can be the global role of an account.
 func (r Role) ForAccount() bool { return r == Admin || r == Member }

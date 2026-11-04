@@ -109,8 +109,8 @@ func (s *Service) CreateAPIKey(name string, days int, role rbac.Role, allowFrom 
 	if role == rbac.None {
 		role = rbac.Member
 	}
-	if !role.Valid() {
-		return "", APIKeyInfo{}, errors.New("a key's role is admin, deployer or member")
+	if !role.ForKey() {
+		return "", APIKeyInfo{}, errors.New("a key's role is admin, deployer, member or metrics")
 	}
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 100 {
