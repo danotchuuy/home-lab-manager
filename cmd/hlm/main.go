@@ -30,6 +30,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/backup"
 	"github.com/danotchuuy/home-lab-manager/internal/catalog"
 	"github.com/danotchuuy/home-lab-manager/internal/cftunnel"
+	"github.com/danotchuuy/home-lab-manager/internal/configfiles"
 	"github.com/danotchuuy/home-lab-manager/internal/console"
 	"github.com/danotchuuy/home-lab-manager/internal/deploy"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
@@ -405,6 +406,7 @@ func run(log *slog.Logger) error {
 		Schedule:    sched,
 		AutoUpdate:  autoUpdates,
 		Query:       queries,
+		ConfigFiles: configfiles.New(store, mgr),
 		// Set when HLM_UPDATE_CHECK overrides the setting.
 		UpdateCheckEnv: updateCheckEnv,
 		Token:          env("HLM_TOKEN", ""),

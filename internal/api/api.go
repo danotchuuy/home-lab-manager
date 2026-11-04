@@ -27,6 +27,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/catalog"
 	"github.com/danotchuuy/home-lab-manager/internal/cftunnel"
 	"github.com/danotchuuy/home-lab-manager/internal/cloudflare"
+	"github.com/danotchuuy/home-lab-manager/internal/configfiles"
 	"github.com/danotchuuy/home-lab-manager/internal/console"
 	"github.com/danotchuuy/home-lab-manager/internal/deploy"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
@@ -73,6 +74,8 @@ type Options struct {
 	AutoUpdate *autoupdate.Service
 	// Query asks servers how they're doing, in their games' own protocols.
 	Query *gamequery.Service
+	// ConfigFiles keeps servers' pinned settings files.
+	ConfigFiles *configfiles.Service
 	// UpdateCheckEnv is HLM_UPDATE_CHECK, which overrides the setting for
 	// how often updates are checked for, if set.
 	UpdateCheckEnv string
@@ -421,6 +424,11 @@ func (s *server) removeServer(w http.ResponseWriter, r *http.Request) {
 	// A new server with this name shouldn't get its access.
 	if err := s.Groups.ForgetServer(srv.Name); err != nil {
 		s.Log.Warn("take deleted server out of its groups", "server", srv.Name, "err", err)
+	}
+	if s.ConfigFiles != nil {
+		if err := s.ConfigFiles.ForgetServer(srv.Name); err != nil {
+			s.Log.Warn("forget deleted server's pinned files", "server", srv.Name, "err", err)
+		}
 	}
 	if s.Query != nil {
 		if err := s.Query.ForgetServer(srv.Name); err != nil {

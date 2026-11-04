@@ -3115,3 +3115,157 @@ progress {
   border-top: 1px dashed var(--border);
   padding-top: 0.6rem;
 }
+
+/* Settings files: pinned files and the form view */
+
+.config-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+.config-bar .field-label {
+  margin-right: 0.25rem;
+}
+
+.chip.suggested {
+  display: inline-flex;
+  gap: 0.5rem;
+  border-style: dashed;
+  cursor: default;
+}
+
+.chip.suggested .link-button {
+  font-size: 0.78rem;
+}
+
+.pin-button.pinned {
+  color: var(--accent);
+}
+
+.view-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.view-toggle button {
+  background: none;
+  border: none;
+  padding: 0.25rem 0.7rem;
+  font: inherit;
+  font-size: 0.82rem;
+  color: inherit;
+  cursor: pointer;
+}
+
+.view-toggle button + button {
+  border-left: 1px solid var(--border);
+}
+
+.view-toggle button.active {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 0.25rem 0;
+}
+
+.settings-form-bar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.settings-form-bar input[type="search"] {
+  max-width: 22rem;
+}
+
+.settings-group h3 {
+  font-size: 0.9rem;
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) minmax(14rem, 1.4fr);
+  gap: 0.15rem 1rem;
+}
+
+.setting-row {
+  display: contents;
+}
+
+.setting-row > * {
+  padding: 0.3rem 0.4rem;
+  border-radius: 4px;
+}
+
+.setting-row.changed > * {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.setting-label {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+
+.setting-label code {
+  overflow-wrap: anywhere;
+}
+
+.setting-input {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.setting-input .inline-input input:not([type="checkbox"]) {
+  flex: 1;
+  min-width: 0;
+}
+
+.setting-input input.invalid {
+  border-color: var(--danger);
+}
+
+.setting-was {
+  overflow-wrap: anywhere;
+}
+
+.config-file-list {
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.config-file-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

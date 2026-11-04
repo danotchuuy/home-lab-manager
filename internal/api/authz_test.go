@@ -103,6 +103,8 @@ var expected = map[string]string{
 	"GET /api/servers/{id}/files":             "operator",
 	"GET /api/servers/{id}/files/content":     "operator",
 	"GET /api/servers/{id}/files/search":      "operator",
+	"GET /api/servers/{id}/config-files":      "operator",
+	"PUT /api/servers/{id}/config-files":      "manager",
 	"POST /api/servers/{id}/backups":          "operator",
 	"GET /api/servers/{id}/backups/download":  "operator",
 

@@ -22,6 +22,7 @@ the API and UI it needs, who may use it, how to test it, and a task list. They'r
 | 15 | [Image and disk cleanup](15-cleanup.md) | Low | — | Planned |
 | 16 | [UI improvements](16-ui-improvements.md) | Low | — | Planned |
 | 17 | [Public status page](17-public-status-page.md) | Low | 05 | Planned |
+| 18 | [Settings files: pinned files and a form editor](18-settings-files.md) | Requested | — | Done |
 
 ## Workflow: one feature at a time
 
