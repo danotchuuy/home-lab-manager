@@ -13,12 +13,13 @@ import { PortForwarding } from "../components/PortForwarding";
 import { ServerBackups } from "../components/ServerBackups";
 import { ServerGroupPicker } from "../components/ServerGroups";
 import { ServerHostnames } from "../components/ServerHostnames";
+import { ServerSchedule } from "../components/ServerSchedule";
 import { StatTiles } from "../components/Resources";
 import type { App, DeployEvent, DeployRequest, Server, Stats } from "../types";
 import { usePoll } from "../usePoll";
 import { formatNetwork, formatPorts, webUILink } from "../util";
 
-type Tab = "logs" | "files" | "backups" | "ports" | "settings";
+type Tab = "logs" | "files" | "backups" | "schedule" | "ports" | "settings";
 
 export function ServerDetailPage() {
   const { name = "" } = useParams();
@@ -38,7 +39,8 @@ export function ServerDetailPage() {
   const operator = !!server && can(server, "operator");
   const manager = !!server && can(server, "manager");
   // Viewers don't get the tabs that show logs, files or settings.
-  const tabs: Tab[] = operator || !server ? ["logs", "files", "backups", "ports", "settings"] : ["backups", "ports"];
+  const tabs: Tab[] =
+    operator || !server ? ["logs", "files", "backups", "schedule", "ports", "settings"] : ["backups", "schedule", "ports"];
   const tab = (tabs.includes(params.get("tab") as Tab) ? params.get("tab") : tabs[0]) as Tab;
   const setTab = (t: Tab) => setParams(t === "logs" ? {} : { tab: t });
   const [busy, setBusy] = useState(false);
@@ -186,6 +188,9 @@ export function ServerDetailPage() {
         <button className={tab === "backups" ? "active" : ""} onClick={() => setTab("backups")}>
           Backups
         </button>
+        <button className={tab === "schedule" ? "active" : ""} onClick={() => setTab("schedule")}>
+          Schedule
+        </button>
         <button className={tab === "ports" ? "active" : ""} onClick={() => setTab("ports")}>
           Port forwarding
         </button>
@@ -215,6 +220,8 @@ export function ServerDetailPage() {
       {tab === "files" && <FileBrowser server={server.name} running={running} canEdit={manager} />}
 
       {tab === "backups" && <ServerBackups server={server.name} running={running} canRun={operator} canManage={manager} />}
+
+      {tab === "schedule" && <ServerSchedule server={server.name} canRun={operator} canManage={manager} />}
 
       {tab === "ports" && (
         <>

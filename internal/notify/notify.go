@@ -138,6 +138,9 @@ type Options struct {
 	// GroupServers returns the servers in a server group, for targets
 	// limited to groups.
 	GroupServers func(groupID string) []string
+	// Location is hlm's time zone, for quiet hours; the default is the
+	// system's.
+	Location func() *time.Location
 	// Now and RetryWait are for tests.
 	Now       func() time.Time
 	RetryWait func(attempt int) time.Duration
@@ -171,6 +174,9 @@ func New(o Options) *Service {
 	}
 	if o.Now == nil {
 		o.Now = time.Now
+	}
+	if o.Location == nil {
+		o.Location = func() *time.Location { return time.Local }
 	}
 	if o.RetryWait == nil {
 		o.RetryWait = func(attempt int) time.Duration { return time.Duration(attempt*attempt) * 5 * time.Second }
@@ -301,7 +307,7 @@ func (s *Service) handle(ctx context.Context, e Event) {
 		if !s.wants(t, e) {
 			continue
 		}
-		if t.quiet(now) && e.Severity != Error {
+		if t.quiet(now.In(s.opts.Location())) && e.Severity != Error {
 			s.mu.Lock()
 			if len(s.held[t.ID]) < queueSize {
 				s.held[t.ID] = append(s.held[t.ID], e)
@@ -402,7 +408,7 @@ func (s *Service) releaseHeld(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	now := s.opts.Now()
+	now := s.opts.Now().In(s.opts.Location())
 	for _, t := range set.Targets {
 		if t.quiet(now) {
 			continue

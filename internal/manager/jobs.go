@@ -200,6 +200,10 @@ func (t *jobTracker) running(server string) bool {
 	return false
 }
 
+// JobRunning reports whether an install, update or reconfigure of the
+// server called name is in progress.
+func (m *Manager) JobRunning(name string) bool { return m.jobs.running(name) }
+
 // Jobs returns running and recently finished installs and updates.
 func (m *Manager) Jobs() []Job {
 	return m.jobs.list()

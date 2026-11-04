@@ -8,6 +8,7 @@ import { ConfigBackups } from "../components/ConfigBackups";
 import { LinodeSettings } from "../components/LinodeSettings";
 import { MyAccount } from "../components/MyAccount";
 import { NotificationSettings } from "../components/NotificationSettings";
+import { TimeSettings } from "../components/TimeSettings";
 import { ServerGroups } from "../components/ServerGroups";
 import { APIKeys } from "../components/APIKeys";
 import { SignInSettings } from "../components/SignInSettings";
@@ -265,6 +266,11 @@ export function SystemPage() {
       <section className="card" id="config-backup">
         <h2>Backups of hlm&apos;s configuration</h2>
         <ConfigBackups storageVersion={storageVersion} />
+      </section>
+
+      <section className="card" id="time">
+        <h2>Time zone and schedule</h2>
+        <TimeSettings />
       </section>
 
       <section className="card" id="notifications">

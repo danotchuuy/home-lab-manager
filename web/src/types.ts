@@ -1246,3 +1246,89 @@ export interface ConsoleResult {
   output: string;
   exitCode?: number;
 }
+
+/** When a scheduled task runs. */
+export interface TaskWhen {
+  kind: "daily" | "every" | "cron";
+  /** daily: "04:00", and weekdays (0 is Sunday; empty is every day). */
+  time?: string;
+  weekdays?: number[];
+  /** every: the interval in minutes. */
+  every?: number;
+  cron?: string;
+}
+
+export type StepKind = "start" | "stop" | "restart" | "update" | "backup" | "command" | "wait";
+
+export interface TaskStep {
+  kind: StepKind;
+  /** command: the console command; hidden from viewers. */
+  command?: string;
+  /** wait: seconds. */
+  seconds?: number;
+  continueOnError?: boolean;
+}
+
+export interface TaskStepResult {
+  kind: StepKind;
+  ok: boolean;
+  skipped?: boolean;
+  message?: string;
+}
+
+export interface TaskRun {
+  trigger: "schedule" | "manual";
+  started: string;
+  finished: string;
+  result: "ok" | "failed" | "skipped" | "missed";
+  error?: string;
+  steps?: TaskStepResult[];
+}
+
+export interface ScheduledTask {
+  id: string;
+  name: string;
+  enabled: boolean;
+  when: TaskWhen;
+  steps: TaskStep[];
+  /** Skip the task when the server is stopped. */
+  onlyIfRunning: boolean;
+  next?: string;
+  runs?: TaskRun[];
+}
+
+/** A task that's running. */
+export interface TaskProgress {
+  taskId: string;
+  taskName: string;
+  trigger: string;
+  started: string;
+  /** Index of the step running. */
+  step: number;
+  steps: number;
+}
+
+/** GET /api/servers/{id}/tasks */
+export interface ServerTasks {
+  tasks: ScheduledTask[];
+  running?: TaskProgress;
+  /** hlm's time zone, which task times are in. */
+  timezone: string;
+}
+
+/** GET /api/schedule/upcoming */
+export interface UpcomingTask {
+  server: string;
+  taskId: string;
+  taskName: string;
+  when: string;
+  next: string;
+}
+
+/** GET /api/system/timezone */
+export interface TimezoneInfo {
+  /** The configured zone; empty uses the system's. */
+  timezone: string;
+  system: string;
+  effective: string;
+}

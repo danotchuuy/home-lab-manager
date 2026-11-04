@@ -70,3 +70,31 @@ export function suggestName(appName: string): string {
       .replace(/^[^a-z0-9]+|-+$/g, "") || "server"
   );
 }
+
+/** Formats a time in a time zone (hlm's, for schedules), like "Thu 5 Nov 04:00". */
+export function formatInZone(iso: string | undefined, timeZone: string, withDate = true): string {
+  if (!iso) return "";
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      timeZone,
+      weekday: withDate ? "short" : undefined,
+      day: withDate ? "numeric" : undefined,
+      month: withDate ? "short" : undefined,
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).format(new Date(iso));
+  } catch {
+    return new Date(iso).toLocaleString();
+  }
+}
+
+/** How long until a time, like "in 6 h" or "in 12 min". */
+export function timeUntil(iso?: string): string {
+  if (!iso) return "";
+  const s = (new Date(iso).getTime() - Date.now()) / 1000;
+  if (s < 60) return "in under a minute";
+  if (s < 3600) return `in ${Math.round(s / 60)} min`;
+  if (s < 48 * 3600) return `in ${Math.round(s / 3600)} h`;
+  return `in ${Math.round(s / 86400)} days`;
+}

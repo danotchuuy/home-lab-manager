@@ -20,6 +20,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	// Time zone names work even where the system has no zone database.
+	_ "time/tzdata"
 
 	"github.com/danotchuuy/home-lab-manager/internal/api"
 	"github.com/danotchuuy/home-lab-manager/internal/auth"
@@ -35,6 +37,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/notify"
 	"github.com/danotchuuy/home-lab-manager/internal/proxy"
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
+	"github.com/danotchuuy/home-lab-manager/internal/schedule"
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
 	"github.com/danotchuuy/home-lab-manager/internal/selfupdate"
 	"github.com/danotchuuy/home-lab-manager/internal/tlscert"
@@ -188,7 +191,14 @@ func run(log *slog.Logger) error {
 	// Alerts about crashes, failed backups, updates and the like. Links in
 	// them point at the HTTPS address, once certs (below) is set up.
 	var certs *tlscert.Service
+	var sched *schedule.Service // set before notifications are sent
 	notifier := notify.New(notify.Options{
+		Location: func() *time.Location {
+			if sched == nil {
+				return time.Local
+			}
+			return sched.Location()
+		},
 		Secrets:   store,
 		StatePath: filepath.Join(dataDir, "notifications.json"),
 		Log:       log,
@@ -334,7 +344,6 @@ func run(log *slog.Logger) error {
 	})
 	certs.UseNotifier(notifier)
 	go certs.Run(ctx)
-	go notifier.Run(ctx)
 	// Commands typed into servers' consoles.
 	consoles := console.New(console.Options{
 		Secrets: store,
@@ -352,6 +361,12 @@ func run(log *slog.Logger) error {
 		Log: log,
 	})
 	go consoles.Run(ctx)
+	// Servers' scheduled tasks, such as a nightly restart.
+	sched = schedule.New(schedule.Options{
+		Secrets: store, Servers: mgr, Backups: backups, Console: consoles, Notifier: notifier, Log: log,
+	})
+	go sched.Run(ctx)
+	go notifier.Run(ctx)
 	handler := api.Handler(api.Options{
 		Docker:      dc,
 		Catalog:     cat,
@@ -369,6 +384,7 @@ func run(log *slog.Logger) error {
 		HTTPS:       certs,
 		Notify:      notifier,
 		Console:     consoles,
+		Schedule:    sched,
 		Token:       env("HLM_TOKEN", ""),
 		WebDir:      env("HLM_WEB_DIR", ""),
 		Log:         log,

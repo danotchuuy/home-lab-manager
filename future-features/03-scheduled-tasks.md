@@ -2,6 +2,21 @@
 
 **Priority:** High · **Depends on:** [02](02-interactive-console.md) for in-game commands · **Unblocks:** [04](04-auto-update-policy.md)
 
+> **Status: done** (branch `feature/03-scheduled-tasks`). See the README's
+> [Scheduled tasks](../README.md#scheduled-tasks). Where the result differs from this plan:
+>
+> - The "only if players online / none online" step is left for [05](05-game-query.md), which provides player counts.
+>   Instead, a task can **skip when the server is stopped** (on by default), so a nightly restart doesn't start a
+>   server someone stopped.
+> - Task runs aren't manager jobs: a running task would block its own Update step, which is a job. The schedule
+>   service tracks running tasks itself (shown on the Schedule tab) and waits for jobs and backups, as planned.
+> - Restarts and stops are told apart from crashes by Docker's kill event (from 01), so nothing else was needed.
+> - Servers can't be renamed (reconfiguring keeps the name), so there's nothing to move.
+> - The time zone setting also drives notifications' quiet hours, and `time/tzdata` is built into the binary, since
+>   release binaries weren't built with it.
+> - Presets: nightly restart with warnings, save every 30 minutes, weekly update, nightly backup, start every evening,
+>   stop every night, using the game's own say/save commands when the console knows the game.
+
 ## Why
 
 Only backups can be scheduled. Game servers commonly need a nightly restart (memory leaks, world cleanup), a warning

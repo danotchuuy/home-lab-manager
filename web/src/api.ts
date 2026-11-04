@@ -69,8 +69,12 @@ import type {
   NotifySettings,
   NotifyTarget,
   NotifyTargetInput,
+  ScheduledTask,
   Server,
   ServerGroup,
+  ServerTasks,
+  TimezoneInfo,
+  UpcomingTask,
   Stats,
   StorageReport,
   SystemInfo,
@@ -521,6 +525,24 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ command }),
     }),
+
+  tasks: (id: string) => json<ServerTasks>(`/api/servers/${encodeURIComponent(id)}/tasks`),
+  /** Adds a task, or changes the one with t.id. */
+  saveTask: (id: string, t: ScheduledTask) =>
+    t.id
+      ? json<ScheduledTask>(`/api/servers/${encodeURIComponent(id)}/tasks/${encodeURIComponent(t.id)}`, {
+          method: "PUT",
+          body: JSON.stringify(t),
+        })
+      : json<ScheduledTask>(`/api/servers/${encodeURIComponent(id)}/tasks`, { method: "POST", body: JSON.stringify(t) }),
+  deleteTask: (id: string, task: string) =>
+    json<void>(`/api/servers/${encodeURIComponent(id)}/tasks/${encodeURIComponent(task)}`, { method: "DELETE" }),
+  runTask: (id: string, task: string) =>
+    json<void>(`/api/servers/${encodeURIComponent(id)}/tasks/${encodeURIComponent(task)}/run`, { method: "POST" }),
+  upcomingTasks: () => json<UpcomingTask[]>("/api/schedule/upcoming"),
+  timezone: () => json<TimezoneInfo>("/api/system/timezone"),
+  setTimezone: (timezone: string) =>
+    json<TimezoneInfo>("/api/system/timezone", { method: "PUT", body: JSON.stringify({ timezone }) }),
 
   /** Path of a stream of log lines, for followEvents. */
   logsUrl: (id: string, tail = 500) => withTail(`/api/servers/${encodeURIComponent(id)}/logs`, tail),

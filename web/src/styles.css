@@ -2816,3 +2816,133 @@ progress {
   border-top: 1px dashed var(--border);
   padding-top: 0.75rem;
 }
+
+/* Scheduled tasks */
+
+.preset-select {
+  width: auto;
+}
+
+.task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.task-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.7rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.task-card.disabled {
+  opacity: 0.65;
+}
+
+.task-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.task-steps {
+  margin: 0;
+  padding-left: 1.4rem;
+}
+
+.task-times {
+  display: flex;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.run-ok {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.run-failed,
+.run-missed {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.run-skipped {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.run-history ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.run-history ol {
+  margin: 0.15rem 0 0.35rem;
+  padding-left: 1.3rem;
+}
+
+.step-editor {
+  margin: 0 0 0.5rem;
+  padding-left: 1.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.step-editor li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.step-editor select {
+  width: auto;
+}
+
+.step-editor .grow {
+  flex: 1;
+  min-width: 12rem;
+}
+
+.step-buttons {
+  display: inline-flex;
+  gap: 0.2rem;
+  margin-left: auto;
+}
+
+.weekday-picker {
+  display: flex;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+}
+
+.badge.next-task {
+  font-weight: 500;
+}
+
+.time-settings h3 {
+  font-size: 0.95rem;
+  margin: 1.1rem 0 0.4rem;
+}
+
+.upcoming-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.upcoming-time {
+  font-variant-numeric: tabular-nums;
+  display: inline-block;
+  min-width: 9rem;
+}

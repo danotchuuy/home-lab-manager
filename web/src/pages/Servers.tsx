@@ -6,9 +6,9 @@ import { AppIcon, CONNECTION_GLYPH, Spinner, StateBadge } from "../components/co
 import { InstallCard, JobStatus } from "../components/JobProgress";
 import { ResourceSummary } from "../components/Resources";
 import { UpdateProgress } from "../components/UpdateProgress";
-import type { Connection, DeployEvent, Job, Server, Stats, UpdateCheckInfo, UpdateStatus } from "../types";
+import type { Connection, DeployEvent, Job, Server, Stats, UpcomingTask, UpdateCheckInfo, UpdateStatus } from "../types";
 import { usePoll } from "../usePoll";
-import { formatNetwork, formatPorts, timeAgo, webUILink } from "../util";
+import { formatInZone, formatNetwork, formatPorts, timeAgo, timeUntil, webUILink } from "../util";
 
 export function ServersPage() {
   const admin = useAdmin();
@@ -26,6 +26,9 @@ export function ServersPage() {
   const [updating, setUpdating] = useState<Record<string, string>>({});
   const [jobs, setJobs] = useState<Job[]>([]);
   const [group, setGroup] = useState("");
+  // Each server's next scheduled task, and the time zone it's in.
+  const [nextTasks, setNextTasks] = useState<Record<string, UpcomingTask>>({});
+  const [timezone, setTimezone] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -37,6 +40,12 @@ export function ServersPage() {
       ]);
       setServers(list);
       setUpdateInfo(info);
+      // Scheduled tasks are extra; the list still works without them.
+      api.upcomingTasks().then((up) => {
+        const next: Record<string, UpcomingTask> = {};
+        for (const u of up) if (!next[u.server]) next[u.server] = u;
+        setNextTasks(next);
+      }, () => {});
       setConnections(conns);
       setError(undefined);
     } catch (e) {
@@ -45,6 +54,10 @@ export function ServersPage() {
   }, [admin]);
 
   usePoll(load, 5000, [load]);
+
+  useEffect(() => {
+    api.timezone().then((t) => setTimezone(t.effective), () => {});
+  }, []);
 
   // Stats take about a second to collect, so poll them on their own loop and
   // wait for each response before scheduling the next.
@@ -285,7 +298,8 @@ export function ServersPage() {
                 <AppIcon src={s.icon} />
                 <div>
                   <div className="server-name">
-                    {s.name} <UpdateBadge update={s.update} />
+                    {s.name} <UpdateBadge update={s.update} />{" "}
+                    <NextTaskBadge task={nextTasks[s.name]} timezone={timezone} />
                   </div>
                   <div className="muted small">
                     {s.app} · <code>{s.image}</code>
@@ -465,6 +479,15 @@ function ConnectionCard({
         </div>
       </div>
     </div>
+  );
+}
+
+function NextTaskBadge({ task, timezone }: { task?: UpcomingTask; timezone: string }) {
+  if (!task) return null;
+  return (
+    <span className="badge next-task" title={`Next scheduled task: ${task.taskName} (${task.when}), ${timeUntil(task.next)}`}>
+      ⏰ {task.taskName} {timezone ? formatInZone(task.next, timezone) : timeUntil(task.next)}
+    </span>
   );
 }
 

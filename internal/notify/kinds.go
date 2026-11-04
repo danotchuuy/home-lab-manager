@@ -32,6 +32,7 @@ const (
 	KindHLMUpdate         = "hlm.update_available"
 	KindDiskLow           = "disk.low"
 	KindLockedOut         = "auth.locked_out"
+	KindTaskFailed        = "task.failed"
 	// KindTest is the test message; targets can't choose it.
 	KindTest = "notify.test"
 )
@@ -45,6 +46,7 @@ const sentOnce = -1
 var Kinds = []Kind{
 	{KindServerCrashed, "Servers", Error, "A server stopped on its own with an error, or ran out of memory", 15 * time.Minute},
 	{KindServerUnhealthy, "Servers", Warning, "A server's health check started failing", time.Hour},
+	{KindTaskFailed, "Servers", Error, "A scheduled task failed, or was missed because hlm wasn't running", time.Hour},
 	{KindUpdateAvailable, "Updates", Info, "A newer image is available for a server", sentOnce},
 	{KindServerUpdated, "Updates", Info, "A server was updated", 0},
 	{KindServerUpdateFail, "Updates", Error, "Updating a server failed", 0},

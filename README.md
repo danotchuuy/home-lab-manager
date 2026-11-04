@@ -325,6 +325,52 @@ container, or checks the container takes input.
 Console commands can do whatever the game's admins can, and some games can run scripts or change files through them,
 so giving someone the **operator** role on a server lets them administer the game.
 
+## Scheduled tasks
+
+A server's **Schedule** tab runs **tasks** at set times: a nightly restart that warns players first, a save every half
+hour, a weekly update, a nightly backup, or starting and stopping the server at set times. Each task has a schedule
+and a list of steps, run in order:
+
+| Step | What it does |
+| --- | --- |
+| **Start / Stop / Restart the server** | Starting a running server, or stopping a stopped one, is skipped. |
+| **Update, if there's an update** | Checks the image's registry, and updates (as **Update** does) only if there's a newer image. |
+| **Back up** | Runs the server's [backup plan](#backups-to-s3-seaweedfs-minio-) and waits for it to finish. |
+| **Send a console command** | Through the server's [console](#sending-commands-to-a-server), which has to be set up. |
+| **Wait** | 1 second to an hour, e.g. between a warning and the restart. |
+
+A step that fails stops the task, unless it's marked **carry on if it fails** (handy for warnings, which shouldn't stop
+a restart if the console is down). **Skip the task when the server is stopped** (on by default) keeps a nightly restart
+from starting a server someone stopped.
+
+**When:**
+- **At a time of day**, on chosen weekdays.
+- **Every so often**: every 5 minutes to a week, counted from when the task was saved.
+- **On a cron schedule**: five fields (minute hour day-of-month month day-of-week), with `*`, ranges, steps, lists and
+  names (`30 4 * * mon-fri`, `0 */6 * * *`), or `@daily` and the like.
+
+Times are in **hlm's time zone**, set under **System → Time zone and schedule** (the system's by default). It also
+applies to notifications' quiet hours. When the clocks go forward, a time that doesn't exist that day runs when they
+did (02:30 runs at 03:00); when they go back, a time that happens twice runs once.
+
+**Add a task** offers ready-made ones (nightly restart with warnings, save every 30 minutes, weekly update, nightly
+backup, start every evening, stop every night). They use the right commands for the game when the console knows which
+it is, e.g. `Broadcast` and `Save` for Palworld, `say` and `save-all` for Minecraft.
+
+- **Run now** runs a task straight away.
+- A server runs one task at a time. A task that comes due while the server is being installed, updated, reconfigured,
+  backed up or restored, or running another task, waits; after 10 minutes it gives up and counts as failed.
+- If hlm wasn't running when a task was due, it isn't run late: it counts as **missed**, unless hlm is back within 15
+  minutes.
+- Each task keeps its last 5 runs, with how each step went. A failed or missed run sends the
+  [`task.failed`](#notifications) notification.
+- Restarts and stops by a task aren't reported as crashes.
+- The server list shows each server's next task, and **System → Time zone and schedule** lists what's coming up on
+  every server.
+
+Tasks are kept by server name, encrypted with the other settings (commands can hold passwords), and deleted with the
+server. Viewers see a server's tasks but not their commands; operators can also run them; managers can change them.
+
 ## Backups to S3 (SeaweedFS, MinIO, …)
 
 A server's **Backups** tab copies folders you choose from its container to S3-compatible storage, such as SeaweedFS,
@@ -856,6 +902,7 @@ Each target chooses its **events** (warnings and errors by default):
 | `https.renew_failed`, `https.expiring` | error, warning | Getting or renewing hlm's certificate fails, and when it's getting close to expiring without being renewed. |
 | `disk.low` | warning | A filesystem on the Docker host gets fuller than the threshold (90% by default), checked every 5 minutes. |
 | `auth.locked_out` | warning | Sign-in for a local account is locked after repeated wrong passwords. |
+| `task.failed` | error | A [scheduled task](#scheduled-tasks) failed, or was missed because hlm wasn't running. |
 
 - **Which servers:** a target can be limited to some servers and [server groups](#roles-and-server-groups). Alerts that
   aren't about a server (a full disk, a new hlm version) always go to it.
@@ -863,7 +910,7 @@ Each target chooses its **events** (warnings and errors by default):
   and tunnels, an hour for health checks and lockouts, 6 hours for failed backups, renewals and proxy updates, a day for
   disk space and expiring certificates. A success clears it, so the next failure after a successful backup is sent
   straight away. Updates, restores and successful backups are always sent.
-- **Quiet hours:** a target can have quiet hours (e.g. 22:00 to 07:00, in hlm's time zone). Errors are still sent; the
+- **Quiet hours:** a target can have quiet hours (e.g. 22:00 to 07:00, in [hlm's time zone](#scheduled-tasks)). Errors are still sent; the
   rest are sent when the quiet hours end. Alerts held this way are lost if hlm restarts first.
 - **What counts as a crash:** hlm follows Docker's events. A container that exits after being stopped, restarted or
   killed (by hlm, `docker stop`, a backup that stops the server, or Docker shutting down) didn't crash, and neither did
@@ -918,9 +965,9 @@ own **Settings** tab.
 
 | Role in a group | Can |
 | --- | --- |
-| **Viewer** | See the server, its stats and its port and backup status, but not its settings, logs or files, which can hold passwords |
-| **Operator** | Also start, stop, restart and update it, [send it console commands](#sending-commands-to-a-server), read its logs, settings and files, and take and download backups. Settings that look like secrets (names with `TOKEN`, `SECRET`, `PASS`, `PWD`, `KEY`, `CREDENTIAL`, `AUTH` or `PRIVATE`, items the template masks, extra parameters and post arguments) are left out |
-| **Manager** | Also change its ports and variables, edit files, set up its console, set start on boot and port forwarding, change the backup plan, and restore and delete backups |
+| **Viewer** | See the server, its stats, its port and backup status and its scheduled tasks, but not its settings, logs, files or tasks' console commands, which can hold passwords |
+| **Operator** | Also start, stop, restart and update it, [send it console commands](#sending-commands-to-a-server), run its scheduled tasks, read its logs, settings and files, and take and download backups. Settings that look like secrets (names with `TOKEN`, `SECRET`, `PASS`, `PWD`, `KEY`, `CREDENTIAL`, `AUTH` or `PRIVATE`, items the template masks, extra parameters and post arguments) are left out |
+| **Manager** | Also change its ports and variables, edit files, set up its console, change its scheduled tasks, set start on boot and port forwarding, change the backup plan, and restore and delete backups |
 
 Some things always take an admin, because they amount to control of the host or of other servers: deleting servers,
 installing them (except for [deployer keys](#deployer-keys)), importing templates, and changing a server's paths, devices, network, extra items or Docker options.
@@ -1190,6 +1237,10 @@ when the `HLM_*` one isn't set.
 | `GET /api/servers/{id}/logs?tail=500`          | Server-sent events, one log line per event.                                       |
 | `GET/PUT /api/servers/{id}/console`            | How the server takes [console commands](#sending-commands-to-a-server): `{mode, host?, port?, password?, passwordVar?, exec?, quickCommands?}` (`mode` is `stdin`, `rcon`, `exec` or empty), plus whether it's ready, what was detected, and quick commands. The password is never returned; `PUT` with it empty keeps it, and with `clearPassword` removes it. `PUT` takes a manager. |
 | `POST /api/servers/{id}/console/test`          | Checks console settings as given, without saving them (a manager).               |
+| `GET/POST /api/servers/{id}/tasks`, `PUT/DELETE /api/servers/{id}/tasks/{task}` | [Scheduled tasks](#scheduled-tasks): `{name, enabled, onlyIfRunning, when: {kind, time?, weekdays?, every?, cron?}, steps: [{kind, command?, seconds?, continueOnError?}]}`. `GET` (viewers; commands only for operators) also gives the running task and the time zone; changes take a manager. |
+| `POST /api/servers/{id}/tasks/{task}/run`      | Runs a task now (an operator); 409 if the server is busy.                          |
+| `GET /api/schedule/upcoming`                   | The next task runs on the servers you can see, soonest first.                      |
+| `GET/PUT /api/system/timezone`                 | hlm's time zone: `{timezone}` (empty for the system's); `PUT` takes an admin.      |
 | `POST /api/servers/{id}/console/command`       | `{command}`: sends it; returns `{mode, output, exitCode?}`. Over stdin, the answer is in the logs instead. |
 | `GET /api/servers/{id}/files?path=`            | List a directory in the server's container, plus its data folders.                |
 | `GET /api/servers/{id}/files/content?path=`    | Read a text file (up to 1 MiB).                                                   |
