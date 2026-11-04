@@ -40,6 +40,8 @@ then start, stop, update and watch the servers.
   CNAME records). See [Web addresses with Cloudflare Tunnel](#web-addresses-with-cloudflare-tunnel).
 - **Backups** (`internal/backup`, `internal/s3`): streams chosen folders from a server's container as a tar.gz to
   S3-compatible storage such as SeaweedFS, on demand or on a schedule, and backs up hlm's own configuration there. See [Backups to S3](#backups-to-s3-seaweedfs-minio-).
+- **Notifications** (`internal/notify`): sends alerts about crashes, failed backups, updates, a full disk and more to
+  Discord, ntfy, Gotify, a webhook or email. See [Notifications](#notifications).
 - **Docker client** (`internal/docker`): a small client for the Docker Engine API that uses only the Go standard library.
   It negotiates the API version with the daemon.
 
@@ -783,6 +785,60 @@ container. It can't see other devices on your LAN, so keep macvlan addresses out
 With macvlan, the Docker host itself can't reach the containers (a Linux kernel limitation); other machines on the LAN
 can. Web UI links for macvlan servers use the server's own IP.
 
+## Notifications
+
+**System → Notifications** sends alerts to places you choose when something needs attention. Add one or more
+**targets**:
+
+| Kind | What it needs |
+| --- | --- |
+| **Discord** | A channel's webhook URL (channel settings → Integrations → Webhooks). |
+| **ntfy** | The server (e.g. `https://ntfy.sh`), a topic, and an access token if the topic is protected. |
+| **Gotify** | The server's address and an application token. |
+| **Webhook** | Any URL, plus optional headers (e.g. `Authorization`). hlm POSTs JSON: `{kind, severity, title, message, server, link, time, fields}`. |
+| **Email** | An SMTP server (STARTTLS on 587, TLS on 465, or none on a trusted network), optional sign-in, From and To. |
+
+Webhook URLs (which carry their token), tokens, header values and passwords are stored encrypted, like the other
+integrations' credentials, and never shown again: leave them empty when editing to keep them. **Send a test** checks a
+target before or after saving it.
+
+Each target chooses its **events** (warnings and errors by default):
+
+| Event | Severity | When |
+| --- | --- | --- |
+| `server.crashed` | error | A server exits with an error, or runs out of memory, without anyone stopping it. The message includes its last lines of output. |
+| `server.unhealthy` | warning | A server's Docker health check starts failing. |
+| `server.update_available` | info | A newer image is found for a server (once per image the server runs). |
+| `server.updated`, `server.update_failed` | info, error | An update finishes or fails. |
+| `hlm.update_available` | info | A new version of hlm is out (once per version). |
+| `backup.failed`, `backup.succeeded` | error, info | A server's or hlm's configuration backup fails or finishes. |
+| `restore.finished`, `restore.failed` | info, error | A restore finishes or fails. |
+| `tunnel.down` | error | The WireGuard or Cloudflare Tunnel container stops on its own. |
+| `wan.changed`, `proxy.update_failed` | info, error | The home address changed and the proxy was updated, or updating it failed. |
+| `https.renew_failed`, `https.expiring` | error, warning | Getting or renewing hlm's certificate fails, and when it's getting close to expiring without being renewed. |
+| `disk.low` | warning | A filesystem on the Docker host gets fuller than the threshold (90% by default), checked every 5 minutes. |
+| `auth.locked_out` | warning | Sign-in for a local account is locked after repeated wrong passwords. |
+
+- **Which servers:** a target can be limited to some servers and [server groups](#roles-and-server-groups). Alerts that
+  aren't about a server (a full disk, a new hlm version) always go to it.
+- **Repeats are held back:** the same alert about the same thing isn't sent again for a while: 15 minutes for crashes
+  and tunnels, an hour for health checks and lockouts, 6 hours for failed backups, renewals and proxy updates, a day for
+  disk space and expiring certificates. A success clears it, so the next failure after a successful backup is sent
+  straight away. Updates, restores and successful backups are always sent.
+- **Quiet hours:** a target can have quiet hours (e.g. 22:00 to 07:00, in hlm's time zone). Errors are still sent; the
+  rest are sent when the quiet hours end. Alerts held this way are lost if hlm restarts first.
+- **What counts as a crash:** hlm follows Docker's events. A container that exits after being stopped, restarted or
+  killed (by hlm, `docker stop`, a backup that stops the server, or Docker shutting down) didn't crash, and neither did
+  one that exited cleanly with code 0. Exits during an install or update aren't reported either; the update reports its
+  own result. hlm only sees what happens while it's running.
+- **Links:** messages link to the page they're about. Set **hlm's address** (how you open it in a browser) for that;
+  when [HTTPS](#https) is on, its address is used by default.
+- **Recent alerts** lists the last 200 events and where each went. It's kept, with what was sent recently, in
+  `<data>/notifications.json`.
+
+Messages leave out passwords and tokens that errors sometimes carry (in URLs and query strings), but a crash report
+includes the server's last lines of output, so send them only to places you'd trust with the server's logs.
+
 ## Sign-in, accounts and API keys
 
 By default anyone who can reach hlm can use it. **System → Sign-in** sets up who may:
@@ -1161,6 +1217,10 @@ when the `HLM_*` one isn't set.
 | `PUT /api/tunnel/routes`                       | Replace the hostnames `{routes: [{hostname, server, port, scheme, noTLSVerify}]}` and publish them if the tunnel is set up. Use `address` (an IP address or host name) instead of `server` for a web server hlm doesn't run. |
 | `POST /api/tunnel/apply`                       | Publish the hostnames now.                                                        |
 | `GET /api/system`                              | hlm's version and update status.                                                  |
+| `GET/PUT /api/notifications`                   | [Notification](#notifications) targets (without secrets), the event kinds, and `PUT {baseUrl, diskPercent}`. |
+| `POST /api/notifications/targets`, `PUT/DELETE /api/notifications/targets/{id}` | Add, change or remove a target: `{kind, name, enabled, events, servers?, groups?, quietStart?, quietEnd?, url?, topic?, token?, headers?, smtpHost?, smtpPort?, security?, username?, password?, from?, to?}`. Secrets left empty keep their saved values. Adding and changing need a [confirmed](#confirming-its-you) session. |
+| `POST /api/notifications/test`                 | Sends a test message to a target as given (with `id`, empty secrets come from the saved target). |
+| `GET /api/notifications/history`               | The last 200 events, newest first, and where each was sent.                        |
 | `POST /api/system/update/check`                | Check GitHub for a newer hlm release.                                             |
 | `POST /api/system/update/apply`                | Install the latest release. Streams NDJSON; hlm restarts afterwards.             |
 | `POST /api/system/update/dismiss`              | Clear the result of the last update.                                              |

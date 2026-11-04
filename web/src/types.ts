@@ -1111,3 +1111,88 @@ export interface HTTPSStatus {
   issuer?: string;
   certFor?: string;
 }
+
+/** How serious a notification is. */
+export type Severity = "info" | "warning" | "error";
+
+/** A kind of event targets can choose (in GET /api/notifications). */
+export interface NotifyKind {
+  name: string;
+  area: string;
+  severity: Severity;
+  description: string;
+}
+
+export type TargetKind = "discord" | "ntfy" | "gotify" | "webhook" | "email";
+
+/** A notification target as sent to the API. Secrets left blank keep their saved values. */
+export interface NotifyTargetInput {
+  id?: string;
+  name: string;
+  kind: TargetKind;
+  enabled: boolean;
+  events: string[];
+  servers?: string[];
+  groups?: string[];
+  quietStart?: string;
+  quietEnd?: string;
+  url?: string;
+  topic?: string;
+  token?: string;
+  headers?: { name: string; value: string }[];
+  smtpHost?: string;
+  smtpPort?: number;
+  security?: "starttls" | "tls" | "none";
+  username?: string;
+  password?: string;
+  from?: string;
+  to?: string[];
+}
+
+/** The result of sending one event to one target. */
+export interface NotifyDelivery {
+  target: string;
+  name: string;
+  ok: boolean;
+  error?: string;
+  /** Waiting for the target's quiet hours to end. */
+  held?: boolean;
+  at: string;
+}
+
+/** A target as the API shows it: without its secrets. */
+export interface NotifyTarget extends NotifyTargetInput {
+  id: string;
+  /** A secret URL's scheme and host. */
+  urlHint?: string;
+  hasUrl: boolean;
+  hasToken: boolean;
+  hasPassword: boolean;
+  last?: NotifyDelivery;
+}
+
+/** GET /api/notifications */
+export interface NotifySettings {
+  targets: NotifyTarget[];
+  baseUrl: string;
+  diskPercent: number;
+  /** The address links use when baseUrl is empty (the HTTPS address). */
+  defaultBaseUrl?: string;
+  kinds: NotifyKind[];
+  /** Events dropped because too many were waiting. */
+  dropped?: number;
+}
+
+/** An event and where it went (GET /api/notifications/history). */
+export interface NotifyRecord {
+  kind: string;
+  severity: Severity;
+  title: string;
+  message?: string;
+  server?: string;
+  link?: string;
+  time: string;
+  /** A repeat of one sent recently, so not sent again. */
+  suppressed?: boolean;
+  deliveries: NotifyDelivery[];
+}

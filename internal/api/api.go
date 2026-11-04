@@ -33,6 +33,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
 	"github.com/danotchuuy/home-lab-manager/internal/linode"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
+	"github.com/danotchuuy/home-lab-manager/internal/notify"
 	"github.com/danotchuuy/home-lab-manager/internal/proxy"
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
 	"github.com/danotchuuy/home-lab-manager/internal/remote"
@@ -57,7 +58,9 @@ type Options struct {
 	Auth       *auth.Service
 	Groups     *rbac.Store
 	// HTTPS serves hlm with a Let's Encrypt certificate, if it's turned on.
-	HTTPS       *tlscert.Service
+	HTTPS *tlscert.Service
+	// Notify sends alerts to notification targets.
+	Notify      *notify.Service
 	Version     string
 	AppdataRoot string
 	// Token, when set, must be sent as a bearer token (or ?token= for
@@ -403,6 +406,11 @@ func (s *server) removeServer(w http.ResponseWriter, r *http.Request) {
 	// A new server with this name shouldn't get its access.
 	if err := s.Groups.ForgetServer(srv.Name); err != nil {
 		s.Log.Warn("take deleted server out of its groups", "server", srv.Name, "err", err)
+	}
+	if s.Notify != nil {
+		if err := s.Notify.ForgetServer(srv.Name); err != nil {
+			s.Log.Warn("take deleted server out of notification targets", "server", srv.Name, "err", err)
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

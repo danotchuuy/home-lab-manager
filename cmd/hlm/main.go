@@ -30,6 +30,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/forwarding"
 	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
+	"github.com/danotchuuy/home-lab-manager/internal/notify"
 	"github.com/danotchuuy/home-lab-manager/internal/proxy"
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
@@ -181,6 +182,36 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("open secrets store: %w", err)
 	}
+	groups := rbac.NewStore(store, log)
+	// Alerts about crashes, failed backups, updates and the like. Links in
+	// them point at the HTTPS address, once certs (below) is set up.
+	var certs *tlscert.Service
+	notifier := notify.New(notify.Options{
+		Secrets:   store,
+		StatePath: filepath.Join(dataDir, "notifications.json"),
+		Log:       log,
+		BaseURL:   func() string { return httpsAddress(certs, listen) },
+		GroupServers: func(id string) []string {
+			list, err := groups.Groups()
+			if err != nil {
+				return nil
+			}
+			for _, g := range list {
+				if g.ID == id {
+					return g.Servers
+				}
+			}
+			return nil
+		},
+	})
+	mgr.UseNotifier(notifier)
+	go host.WatchDisks(ctx, 5*time.Minute, func() int {
+		set, err := notifier.Settings()
+		if err != nil {
+			return notify.DefaultDiskPercent
+		}
+		return set.DiskThreshold()
+	}, notifier)
 	fwd := forwarding.New(store, mgr, host.LANAddress, log)
 	mgr.UseIPChecker(func(ctx context.Context, ip string, ignore []string) (string, string, error) {
 		if !fwd.Configured() {
@@ -196,6 +227,7 @@ func run(log *slog.Logger) error {
 	relay.UseWANLookup(fwd.WANAddress)
 	relay.UsePorts(fwd.ServerPorts)
 	relay.UseDocker(dc, env("HLM_WIREGUARD_IMAGE", ""))
+	relay.UseNotifier(notifier)
 	go relay.UpgradeWireGuardHome(ctx)
 	if base := env("HLM_LINODE_API", ""); base != "" {
 		relay.UseLinodeAPI(base)
@@ -210,6 +242,7 @@ func run(log *slog.Logger) error {
 		log.Warn("HLM_OIDC=off: ignoring the sign-in settings")
 	}
 	signIn := auth.New(store, oidcOff, log)
+	signIn.UseNotifier(notifier)
 	tunnel := cftunnel.New(store, mgr, dc, env("HLM_CLOUDFLARED_IMAGE", ""), log)
 	if base := env("HLM_CLOUDFLARE_API", ""); base != "" {
 		tunnel.UseAPI(base)
@@ -228,6 +261,7 @@ func run(log *slog.Logger) error {
 	go tunnel.RunSync(ctx, 5*time.Minute)
 	go mgr.RunStorageRefresher(ctx, 10*time.Minute)
 	backups := backup.New(store, mgr, log)
+	backups.UseNotifier(notifier)
 	backups.UseConfig(backup.ConfigSource{
 		DataDir:    dataDir,
 		KeyFromEnv: env("HLM_SECRET_KEY", "") != "",
@@ -274,12 +308,14 @@ func run(log *slog.Logger) error {
 	// hlm's own container, if it runs in one, shows beside the connections.
 	// Set before the update checker starts, which lists them.
 	mgr.UseSelf(updater.ContainerID(), manager.ConnectionKind{Kind: "hlm", Title: "Home Lab Manager", Page: "/system"})
+	updater.UseNotifier(notifier)
+	// After UseConnection and UseSelf, which say which containers are whose.
+	go mgr.WatchEvents(ctx)
 	if updateCheck > 0 {
 		go updater.Run(ctx, updateCheck)
 		go mgr.RunUpdateChecker(ctx, updateCheck)
 	}
 
-	groups := rbac.NewStore(store, log)
 	// HTTPS is optional, set up on the System page; HLM_TLS=off ignores the
 	// setting, to get back in over plain HTTP if it goes wrong.
 	tlsOff := strings.EqualFold(env("HLM_TLS", ""), "off")
@@ -290,11 +326,13 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("HLM_ACME_CA: %w", err)
 	}
-	certs := tlscert.New(tlscert.Options{
+	certs = tlscert.New(tlscert.Options{
 		Secrets: store, DNS: tunnel, Log: log, Off: tlsOff,
 		Directory: env("HLM_ACME_DIRECTORY", ""), HTTPClient: acmeClient, Resolver: env("HLM_ACME_RESOLVER", ""),
 	})
+	certs.UseNotifier(notifier)
 	go certs.Run(ctx)
+	go notifier.Run(ctx)
 	handler := api.Handler(api.Options{
 		Docker:      dc,
 		Catalog:     cat,
@@ -310,6 +348,7 @@ func run(log *slog.Logger) error {
 		AppdataRoot: appdataRoot,
 		Groups:      groups,
 		HTTPS:       certs,
+		Notify:      notifier,
 		Token:       env("HLM_TOKEN", ""),
 		WebDir:      env("HLM_WEB_DIR", ""),
 		Log:         log,
@@ -428,4 +467,17 @@ func acmeHTTPClient(caFile string) (*http.Client, error) {
 	}
 	c.Transport = &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}
 	return c, nil
+}
+
+// httpsAddress is hlm's address when it serves HTTPS, for links in
+// notifications, or "" when it doesn't.
+func httpsAddress(certs *tlscert.Service, listen string) string {
+	if certs == nil || !certs.Active() {
+		return ""
+	}
+	host := certs.Settings().Domain
+	if _, port, err := net.SplitHostPort(listen); err == nil && port != "443" && port != "" {
+		host = net.JoinHostPort(host, port)
+	}
+	return "https://" + host
 }

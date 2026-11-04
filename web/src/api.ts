@@ -62,6 +62,10 @@ import type {
   NetworkRequest,
   UpdateCheckInfo,
   Role,
+  NotifyRecord,
+  NotifySettings,
+  NotifyTarget,
+  NotifyTargetInput,
   Server,
   ServerGroup,
   Stats,
@@ -510,6 +514,20 @@ export const api = {
   saveHTTPS: (s: { enabled: boolean; domain: string; email: string; staging: boolean }) =>
     json<HTTPSStatus>("/api/system/https", { method: "PUT", body: JSON.stringify(s) }),
   renewHTTPS: () => json<HTTPSStatus>("/api/system/https/renew", { method: "POST" }),
+
+  notifications: () => json<NotifySettings>("/api/notifications"),
+  saveNotificationSettings: (baseUrl: string, diskPercent: number) =>
+    json<NotifySettings>("/api/notifications", { method: "PUT", body: JSON.stringify({ baseUrl, diskPercent }) }),
+  notificationHistory: () => json<NotifyRecord[]>("/api/notifications/history"),
+  addNotificationTarget: (t: NotifyTargetInput) =>
+    json<NotifyTarget>("/api/notifications/targets", { method: "POST", body: JSON.stringify(t) }),
+  updateNotificationTarget: (id: string, t: NotifyTargetInput) =>
+    json<NotifyTarget>(`/api/notifications/targets/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(t) }),
+  deleteNotificationTarget: (id: string) =>
+    json<void>(`/api/notifications/targets/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  /** Sends a test message to a target as entered; blank secrets come from the saved target with its id. */
+  testNotificationTarget: (t: NotifyTargetInput) =>
+    json<void>("/api/notifications/test", { method: "POST", body: JSON.stringify(t) }),
 
   /** Confirms it's the signed-in person, for changes that could give lasting access. */
   confirm: (password: string) => json<{ confirmedUntil: string }>("/api/auth/confirm", { method: "POST", body: JSON.stringify({ password }) }),

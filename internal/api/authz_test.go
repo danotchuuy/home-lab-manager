@@ -58,6 +58,8 @@ var expected = map[string]string{
 	// session, so even an admin's API key or token is refused.
 	"PUT /api/auth/config":                   "confirmed",
 	"PUT /api/system/https":                  "confirmed",
+	"POST /api/notifications/targets":        "confirmed",
+	"PUT /api/notifications/targets/{id}":    "confirmed",
 	"POST /api/auth/keys":                    "confirmed",
 	"PUT /api/auth/keys/{id}":                "confirmed",
 	"PUT /api/auth/oidc":                     "confirmed",
