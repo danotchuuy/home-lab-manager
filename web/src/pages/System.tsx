@@ -10,6 +10,7 @@ import { MyAccount } from "../components/MyAccount";
 import { NotificationSettings } from "../components/NotificationSettings";
 import { TimeSettings } from "../components/TimeSettings";
 import { SystemActivity } from "../components/ActivityLog";
+import { RegistrySettings } from "../components/RegistrySettings";
 import { SystemUpdateSettings } from "../components/UpdatePolicy";
 import { ServerGroups } from "../components/ServerGroups";
 import { APIKeys } from "../components/APIKeys";
@@ -283,6 +284,11 @@ export function SystemPage() {
       <section className="card" id="updates">
         <h2>Automatic updates</h2>
         <SystemUpdateSettings timezone={timezone} />
+      </section>
+
+      <section className="card" id="registries">
+        <h2>Registries</h2>
+        <RegistrySettings />
       </section>
 
       <section className="card" id="time">

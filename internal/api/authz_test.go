@@ -100,6 +100,8 @@ var expected = map[string]string{
 	"GET /api/updates/auto":                   "signedIn",
 	"GET /api/system/timezone":                "signedIn",
 	"PUT /api/system/audit":                   "confirmed",
+	"POST /api/registries":                    "confirmed",
+	"PUT /api/registries/{host}":              "confirmed",
 	"GET /api/servers/{id}/activity":          "manager",
 	"GET /api/auth/activity":                  "signedIn",
 	"GET /api/servers/{id}/config":            "operator",

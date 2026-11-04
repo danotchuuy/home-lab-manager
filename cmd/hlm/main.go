@@ -44,6 +44,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/proxy"
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
 	"github.com/danotchuuy/home-lab-manager/internal/reach"
+	"github.com/danotchuuy/home-lab-manager/internal/registry"
 	"github.com/danotchuuy/home-lab-manager/internal/schedule"
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
 	"github.com/danotchuuy/home-lab-manager/internal/selfupdate"
@@ -197,6 +198,9 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("open secrets store: %w", err)
 	}
 	groups := rbac.NewStore(store, log)
+	// Pulls and update checks sign in to private registries with these.
+	registries := registry.New(store)
+	dc.SetCredentials(registries.For)
 	// Alerts about crashes, failed backups, updates and the like. Links in
 	// them point at the HTTPS address, once certs (below) is set up.
 	var certs *tlscert.Service
@@ -441,6 +445,7 @@ func run(log *slog.Logger) error {
 		Query:       queries,
 		ConfigFiles: configfiles.New(store, mgr),
 		Audit:       auditLog,
+		Registries:  registries,
 		// Set when HLM_UPDATE_CHECK overrides the setting.
 		UpdateCheckEnv: updateCheckEnv,
 		Token:          env("HLM_TOKEN", ""),

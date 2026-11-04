@@ -27,7 +27,7 @@ type PullProgress struct {
 func (c *Client) PullImage(ctx context.Context, ref string, progress func(PullProgress)) error {
 	name, tag := SplitImageRef(ref)
 	q := url.Values{"fromImage": {name}, "tag": {tag}}
-	resp, err := c.do(ctx, http.MethodPost, "/images/create", q, nil)
+	resp, err := c.doHeaders(ctx, http.MethodPost, "/images/create", q, nil, "", c.authHeader(ctx, ref))
 	if err != nil {
 		return err
 	}
@@ -79,15 +79,29 @@ func (c *Client) InspectImage(ctx context.Context, ref string) (Image, error) {
 }
 
 // RemoteDigest asks the daemon to look up ref in its registry and returns the
-// digest of the manifest (or multi-platform index) the tag points to. No
-// registry credentials are sent, so this only works for public images.
+// digest of the manifest (or multi-platform index) the tag points to, using
+// the registry login SetCredentials finds for it, if any.
 func (c *Client) RemoteDigest(ctx context.Context, ref string) (string, error) {
+	return c.remoteDigest(ctx, ref, c.authHeader(ctx, ref))
+}
+
+// RemoteDigestAs is RemoteDigest with the given login, to test it.
+func (c *Client) RemoteDigestAs(ctx context.Context, ref string, a RegistryAuth) (string, error) {
+	return c.remoteDigest(ctx, ref, http.Header{"X-Registry-Auth": {a.Encode()}})
+}
+
+func (c *Client) remoteDigest(ctx context.Context, ref string, header http.Header) (string, error) {
 	var out struct {
 		Descriptor struct {
 			Digest string `json:"digest"`
 		} `json:"Descriptor"`
 	}
-	if err := c.doJSON(ctx, http.MethodGet, "/distribution/"+escapeRef(ref)+"/json", nil, nil, &out); err != nil {
+	resp, err := c.doHeaders(ctx, http.MethodGet, "/distribution/"+escapeRef(ref)+"/json", nil, nil, "", header)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return "", err
 	}
 	if out.Descriptor.Digest == "" {

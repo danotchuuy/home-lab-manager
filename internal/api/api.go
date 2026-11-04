@@ -41,6 +41,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/notify"
 	"github.com/danotchuuy/home-lab-manager/internal/proxy"
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
+	"github.com/danotchuuy/home-lab-manager/internal/registry"
 	"github.com/danotchuuy/home-lab-manager/internal/remote"
 	"github.com/danotchuuy/home-lab-manager/internal/s3"
 	"github.com/danotchuuy/home-lab-manager/internal/schedule"
@@ -79,6 +80,8 @@ type Options struct {
 	ConfigFiles *configfiles.Service
 	// Audit records who changed what.
 	Audit *audit.Log
+	// Registries holds the logins for private image registries.
+	Registries *registry.Store
 	// UpdateCheckEnv is HLM_UPDATE_CHECK, which overrides the setting for
 	// how often updates are checked for, if set.
 	UpdateCheckEnv string
@@ -515,7 +518,8 @@ func (s *server) installServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.stream(w, r, func(ctx context.Context, emit func(manager.Event)) error {
-		if _, err := s.Manager.InstallConfined(ctx, req, emit); err != nil {
+		// Only registry logins an admin allowed for deployers are used.
+		if _, err := s.Manager.InstallConfined(registry.Confined(ctx), req, emit); err != nil {
 			return err
 		}
 		if err := s.Groups.AddServer(group, req.Name); err != nil {

@@ -283,8 +283,32 @@ before applying an update, hlm checks the registry again, in case it was applied
 **Start on boot** sets the container's restart policy without recreating it: `always` when on, `no` when off. The
 setting is kept across updates and edits.
 
-Only public images are supported for now: hlm doesn't send registry credentials, so images that need a `docker login`
-can't be pulled or checked for updates.
+Images from private registries need a login: see [Private registries](#private-registries).
+
+### Private registries
+
+**System → Registries** keeps logins for registries that need a `docker login`: a private Docker Hub repository, GHCR
+(`ghcr.io`), or your own registry (`registry.lan:5000`, Gitea, Harbor, `registry:2`). Add the registry's host, a
+username and a password or access token; a read-only token is enough (on Docker Hub an access token with "Read-only",
+on GitHub a classic token with `read:packages`). **Test** signs in through Docker, and with an image filled in also
+looks that image up, to show the login can see it.
+
+hlm then uses the login whenever it pulls or looks up an image on that registry: installs, updates and update checks,
+**Add a Docker image**, the WireGuard and Cloudflare Tunnel containers, and hlm's own updates. An image's registry is the
+first part of its name when that has a dot or a port (`ghcr.io/team/app`, `registry.lan:5000/app`) or is `localhost`;
+anything else, like `itzg/minecraft-server`, is on Docker Hub (`docker.io`; `index.docker.io` means the same). A Docker
+Hub login also raises Docker Hub's pull limit, which an "Update all" on a big install can run into.
+
+When a registry refuses hlm, the error says the image needs a login.
+
+- Passwords are kept in the encrypted secrets store (so they're in configuration backups), and only ever sent to the
+  Docker daemon, for the image's own registry. They're never shown again or written to the activity log; leave the
+  password blank when changing a login to keep it.
+- Anyone who can update a server pulls its image with the saved login. That's by design (the image is already on the
+  host), but it means an operator can pull newer versions of a private image.
+- [Deployer keys](#deployer-keys) (and other confined installs) only use logins with **Allow deployer keys…** ticked.
+- Adding or changing a login needs an admin who has recently confirmed it's them, like other sign-in settings; it can't
+  be done with an API key.
 
 ## Editing server files
 
@@ -911,8 +935,8 @@ reference such as `itzg/minecraft-server:latest`, and hlm pulls it and builds a 
 Variables left at the image's default aren't set on the container, so a newer version of the image can change its own
 defaults; only the ones you change are passed. These templates are listed under the **Custom** category, saved in
 `<data>/templates.json`, and work like any other: installs, settings changes and updates. **Read the image again**
-refreshes a template; **Delete template** removes it (servers made from it keep running). Images that need
-`docker login` can't be pulled.
+refreshes a template; **Delete template** removes it (servers made from it keep running). Images from private
+registries need a login under **System → Registries** first (see [Private registries](#private-registries)).
 
 ## Additional settings
 
@@ -1215,6 +1239,8 @@ more, the install fails and says what, and an admin has to create the server.
   relaxed security profiles, and hlm's own labels.
 - **Network:** only `bridge` or `none`, so no host networking, LAN addresses or networks shared with other containers.
 - **Ports:** host ports 1024 and up.
+- **Private images:** only with registry logins an admin allowed for deployer keys (see
+  [Private registries](#private-registries)).
 
 These stay in force whenever the server is recreated, including by an update after its template has changed, and for
 the key's own settings changes. An admin can lift them on a server by giving it something a confined server can't have.
@@ -1394,6 +1420,10 @@ when the `HLM_*` one isn't set.
 | `GET/PUT /api/system/audit`                    | `{retentionMonths, mirror}`; `PUT` needs a [confirmed](#confirming-its-you) session. |
 | `GET /api/servers/{id}/activity`               | A server's entries (a manager).                                                   |
 | `GET /api/auth/activity`                       | Your own recent sign-ins.                                                         |
+| `GET /api/registries`                          | [Registry logins](#private-registries): `[{host, username, deployers}]`, never passwords. Admins only. |
+| `POST /api/registries`                         | `{host, username, password, deployers}`: adds one; needs a [confirmed](#confirming-its-you) session. |
+| `PUT/DELETE /api/registries/{host}`            | Changes (a blank password keeps the saved one; confirmed) or removes one (an admin). |
+| `POST /api/registries/test`                    | `{host, username, password, image?}`: signs in through Docker (a blank password tests the saved one) and looks up `image`; `{status, digest?}`, or 400 with the registry's answer. |
 | `POST /api/servers/{id}/console/command`       | `{command}`: sends it; returns `{mode, output, exitCode?}`. Over stdin, the answer is in the logs instead. |
 | `GET /api/servers/{id}/files?path=`            | List a directory in the server's container, plus its data folders.                |
 | `GET /api/servers/{id}/files/content?path=`    | Read a text file (up to 1 MiB).                                                   |

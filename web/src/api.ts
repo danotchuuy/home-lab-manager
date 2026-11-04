@@ -3,6 +3,8 @@ import type {
   AuditFilter,
   AuditPage,
   AuditSettings,
+  RegistryForm,
+  RegistryLogin,
   AutoUpdates,
   APIKeyInfo,
   KeyRole,
@@ -574,6 +576,13 @@ export const api = {
   auditSettings: () => json<AuditSettings>("/api/system/audit"),
   setAuditSettings: (retentionMonths: number, mirror: boolean) =>
     json<AuditSettings>("/api/system/audit", { method: "PUT", body: JSON.stringify({ retentionMonths, mirror }) }),
+  registries: () => json<RegistryLogin[]>("/api/registries"),
+  addRegistry: (f: RegistryForm) => json<RegistryLogin>("/api/registries", { method: "POST", body: JSON.stringify(f) }),
+  updateRegistry: (host: string, f: RegistryForm) =>
+    json<RegistryLogin>(`/api/registries/${encodeURIComponent(host)}`, { method: "PUT", body: JSON.stringify(f) }),
+  deleteRegistry: (host: string) => json<void>(`/api/registries/${encodeURIComponent(host)}`, { method: "DELETE" }),
+  testRegistry: (f: RegistryForm) =>
+    json<{ status: string; digest?: string }>("/api/registries/test", { method: "POST", body: JSON.stringify(f) }),
   gameStatuses: () => json<Record<string, GameSummary>>("/api/query"),
   gameStatus: (id: string) => json<GameStatus>(`/api/servers/${encodeURIComponent(id)}/query`),
   setQuerySettings: (id: string, set: QuerySettings) =>
