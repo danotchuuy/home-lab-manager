@@ -356,3 +356,22 @@ func TestHangAfterSettingsChange(t *testing.T) {
 		t.Errorf("after coming back: %+v", st)
 	}
 }
+
+// A server reachable only through its published port: once found there, it's
+// asked there first, not after its container address times out again.
+func TestPrefersWorkingAddress(t *testing.T) {
+	r := newRig(t)
+	c := ctr("mc", "itzg/minecraft-server", "172.17.0.9", r.now.Add(time.Second))
+	c.HostConfig.PortBindings["25565/tcp"] = []docker.PortBinding{{HostPort: "25565"}}
+	r.w.servers["mc"] = c
+	r.w.answering["minecraft 127.0.0.1:25565"] = Result{HasPlayers: true}
+	r.step(5 * time.Second)
+	if st := r.s.Status("mc", true); st.Status != StatusOnline || st.Result.Address != "127.0.0.1:25565" {
+		t.Fatalf("%+v", st)
+	}
+	r.w.asked = nil
+	r.step(pollOnline)
+	if !slices.Equal(r.w.asked, []string{"minecraft 127.0.0.1:25565"}) {
+		t.Errorf("asked %q, want only the address that worked", r.w.asked)
+	}
+}

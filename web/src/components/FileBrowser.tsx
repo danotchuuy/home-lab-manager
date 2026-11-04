@@ -1,12 +1,14 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api";
-import type { FileContent, FileEntry, FileListing, FileMatch, FileMount } from "../types";
+import type { ConfigFiles, FileContent, FileEntry, FileListing, FileMatch, FileMount } from "../types";
 import { detectIndent, fromEditor, indent, newline, offsetOfLine, outdent, toEditor, usesCRLF, type Edit } from "../editing";
 import { MAX_COLOR_SIZE, syntaxOf, tokenize, type Syntax } from "../highlight";
 import { formatBytes, timeAgo } from "../util";
 import { formatOf, validate, type Problem } from "../validate";
 import { Spinner } from "./common";
+import { SettingsForm } from "./SettingsForm";
+import { FORM_FILE, parseSettings } from "../settingsform";
 
 /** The largest file the editor opens; the backend enforces the same limit. */
 export const MAX_EDIT_SIZE = 1024 * 1024;
@@ -53,6 +55,29 @@ function savedWrap(): boolean {
   } catch {
     return false;
   }
+}
+
+const VIEW_KEY = "hlm.files.view";
+
+/** Whether settings files open as a form (the default) or as text. */
+function savedView(): "form" | "text" {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "text" ? "text" : "form";
+  } catch {
+    return "form";
+  }
+}
+
+function saveView(v: "form" | "text") {
+  try {
+    localStorage.setItem(VIEW_KEY, v);
+  } catch {
+    // Storage may be unavailable; the choice just won't persist.
+  }
+}
+
+function baseName(p: string): string {
+  return p.slice(p.lastIndexOf("/") + 1);
 }
 
 function saveWrap(on: boolean) {
@@ -197,6 +222,21 @@ export function FileBrowser({ server, running, canEdit }: { server: string; runn
   const [search, setSearch] = useState<{ dir: string; q: string; matches?: FileMatch[]; truncated?: boolean; error?: string }>();
   const dirParam = params.get("dir");
   const fileParam = params.get("file");
+  // The server's pinned settings files, and its game's usual ones hlm found.
+  const [configs, setConfigs] = useState<ConfigFiles>();
+  useEffect(() => {
+    api.configFiles(server).then(setConfigs, () => {});
+  }, [server]);
+  const isPinned = (p: string) => !!configs?.pinned.some((f) => f.path === p);
+  async function togglePin(p: string) {
+    if (!configs) return;
+    const next = isPinned(p) ? configs.pinned.filter((f) => f.path !== p) : [...configs.pinned, { path: p }];
+    try {
+      setConfigs(await api.setConfigFiles(server, next));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
 
   const setLocation = useCallback(
     (next: { dir?: string; file?: string | null }) => {
@@ -272,6 +312,8 @@ export function FileBrowser({ server, running, canEdit }: { server: string; runn
         server={server}
         path={fileParam}
         running={running}
+        pinned={isPinned(fileParam)}
+        onPin={canEdit && configs ? () => togglePin(fileParam) : undefined}
         onClose={() => setLocation({ file: null, dir: parent(fileParam) })}
       />
     );
@@ -281,6 +323,28 @@ export function FileBrowser({ server, running, canEdit }: { server: string; runn
 
   return (
     <div className="file-browser card">
+      {configs && (configs.pinned.length > 0 || configs.suggested.length > 0) && (
+        <div className="config-bar">
+          <span className="field-label">Config files</span>
+          {configs.pinned.map((f) => (
+            <button key={f.path} className="chip" title={f.path} onClick={() => setLocation({ file: f.path })}>
+              ★ {f.label || baseName(f.path)}
+            </button>
+          ))}
+          {configs.suggested.map((f) => (
+            <span key={f.path} className="chip suggested" title={`${f.path}\nThe usual settings file of this game`}>
+              <button className="link-button" onClick={() => setLocation({ file: f.path })}>
+                {baseName(f.path)}
+              </button>
+              {canEdit && (
+                <button className="link-button" onClick={() => togglePin(f.path)} title="Pin it, for one-click opening">
+                  Pin
+                </button>
+              )}
+            </span>
+          ))}
+        </div>
+      )}
       {listing && (
         <LocationPicker
           mounts={listing.mounts}
@@ -426,7 +490,24 @@ export function FileBrowser({ server, running, canEdit }: { server: string; runn
   );
 }
 
-function FileEditor({ server, path, running, canEdit, onClose }: { server: string; path: string; running: boolean; canEdit: boolean; onClose: () => void }) {
+function FileEditor({
+  server,
+  path,
+  running,
+  canEdit,
+  pinned,
+  onPin,
+  onClose,
+}: {
+  server: string;
+  path: string;
+  running: boolean;
+  canEdit: boolean;
+  pinned: boolean;
+  /** Pins or unpins the file; missing when the caller can't. */
+  onPin?: () => void;
+  onClose: () => void;
+}) {
   const [file, setFile] = useState<FileContent>();
   const [text, setText] = useState("");
   const [error, setError] = useState<string>();
@@ -438,6 +519,11 @@ function FileEditor({ server, path, running, canEdit, onClose }: { server: strin
   const mirrorRef = useRef<HTMLDivElement>(null);
   const colorsRef = useRef<HTMLDivElement>(null);
   const [wrap, setWrapState] = useState(savedWrap);
+  const [view, setViewState] = useState(savedView);
+  const setView = (v: "form" | "text") => {
+    setViewState(v);
+    saveView(v);
+  };
   const setWrap = (on: boolean) => {
     setWrapState(on);
     saveWrap(on);
@@ -460,6 +546,12 @@ function FileEditor({ server, path, running, canEdit, onClose }: { server: strin
   }, [open]);
 
   const original = useMemo(() => toEditor(file?.content ?? ""), [file?.content]);
+  // Settings files can be edited as a form, if the file as opened reads as one.
+  const formAvailable = useMemo(
+    () => !!file && !file.binary && FORM_FILE.test(path) && parseSettings(original) !== undefined,
+    [file, path, original],
+  );
+  const asForm = formAvailable && view === "form";
   const crlf = useMemo(() => usesCRLF(file?.content ?? ""), [file?.content]);
   const dirty = !!file && text !== original;
   // The size as saved: CRLF makes the file larger than the text shown here.
@@ -573,10 +665,31 @@ function FileEditor({ server, path, running, canEdit, onClose }: { server: strin
           ← Back
         </button>
         <code className="editor-path">{path}</code>
+        {onPin ? (
+          <button
+            className={`btn small ghost pin-button${pinned ? " pinned" : ""}`}
+            onClick={onPin}
+            title={pinned ? "Unpin: stop showing it under Config files" : "Pin it under Config files, for one-click opening"}
+          >
+            {pinned ? "★ Pinned" : "☆ Pin"}
+          </button>
+        ) : (
+          pinned && <span className="badge">★ pinned</span>
+        )}
         {dirty && <span className="badge update-available">unsaved</span>}
         {saved && !dirty && <span className="badge state-running">saved</span>}
         <div className="spacer" />
-        {file && !file.binary && (
+        {formAvailable && (
+          <div className="view-toggle" role="group" aria-label="View">
+            <button className={asForm ? "active" : ""} onClick={() => setView("form")}>
+              Form
+            </button>
+            <button className={!asForm ? "active" : ""} onClick={() => setView("text")}>
+              Text
+            </button>
+          </div>
+        )}
+        {file && !file.binary && !asForm && (
           <label className="radio small editor-wrap" title="Alt+Z">
             <input type="checkbox" checked={wrap} onChange={(e) => setWrap(e.target.checked)} /> Word wrap
           </label>
@@ -617,7 +730,20 @@ function FileEditor({ server, path, running, canEdit, onClose }: { server: strin
       {file?.binary && <div className="alert info">This is a binary file, so it can't be edited here.</div>}
       {file?.readOnly && <div className="alert info">This file is on a read-only mount.</div>}
 
-      {file && !file.binary && (
+      {file && !file.binary && asForm && (
+        <div
+          onKeyDown={(e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+              e.preventDefault();
+              if (dirty && !saving && !tooLarge) save();
+            }
+          }}
+        >
+          <SettingsForm text={text} original={original} readOnly={readOnly} onChange={setText} />
+        </div>
+      )}
+
+      {file && !file.binary && !asForm && (
         <div className="editor-body">
           <div className="editor-gutter" ref={gutterRef} aria-hidden="true">
             {Array.from({ length: lines }, (_, i) => (
@@ -673,10 +799,14 @@ function FileEditor({ server, path, running, canEdit, onClose }: { server: strin
               Over the 1 MiB limit by {(size - MAX_EDIT_SIZE).toLocaleString()} bytes, so it can't be saved here.
             </span>
           )}
-          <span>
-            {lines} lines · {unit === "\t" ? "tabs" : `${unit.length} spaces`} · {crlf ? "CRLF" : "LF"}
-            {syntaxOf(path) && !syntax && " · too large for colors"} · Ctrl+S to save · Alt+Z to wrap
-          </span>
+          {asForm ? (
+            <span>Only the values you change are rewritten · Ctrl+S to save</span>
+          ) : (
+            <span>
+              {lines} lines · {unit === "\t" ? "tabs" : `${unit.length} spaces`} · {crlf ? "CRLF" : "LF"}
+              {syntaxOf(path) && !syntax && " · too large for colors"} · Ctrl+S to save · Alt+Z to wrap
+            </span>
+          )}
         </div>
       )}
     </div>

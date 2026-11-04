@@ -176,6 +176,8 @@ func (s *server) routes() []route {
 		{"GET /api/servers/{id}/files/content", serverRole(rbac.Operator), s.readFile},
 		{"PUT /api/servers/{id}/files/content", serverRole(rbac.Manager), s.writeFile},
 		{"GET /api/servers/{id}/files/search", serverRole(rbac.Operator), s.searchFiles},
+		{"GET /api/servers/{id}/config-files", serverRole(rbac.Operator), s.configFiles},
+		{"PUT /api/servers/{id}/config-files", serverRole(rbac.Manager), s.setConfigFiles},
 		{"GET /api/integrations/backup", admin, s.backupSettings},
 		{"PUT /api/integrations/backup", admin, s.saveBackupSettings},
 		{"POST /api/integrations/backup/test", admin, s.testBackupSettings},

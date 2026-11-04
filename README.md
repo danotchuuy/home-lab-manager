@@ -294,6 +294,26 @@ source shown) or the container's root. The choice is remembered per server; othe
 **Find config files** lists the settings-like files (`.json`, `.ini`, `.cfg`, `.properties`, `.yml`, `.xml`, …) anywhere
 under the current folder, or searches by name.
 
+**Pinned settings files.** A server's settings files can be pinned, so they open in one click. They're listed under
+**Config files** at the top of the Files tab and under **Game settings files** on the Settings tab. Managers pin a file
+with **☆ Pin** in the editor; operators can open pinned files. For games it knows, hlm also suggests the usual file,
+found in the server's data folders, ready to pin: Palworld's `PalWorldSettings.ini` (the one under
+`Saved/Config`, not the defaults), Minecraft's `server.properties`, ARK's `GameUserSettings.ini` and `Game.ini`,
+Enshrouded's `enshrouded_server.json`, V Rising's server settings, 7 Days to Die's `serverconfig.xml`, and more.
+
+**The settings form.** INI-style settings files (`.ini`, `.cfg`, `.conf`, `.properties`, `.env`, …) open as a form: a
+field per setting, with readable names ("Exp rate" for `ExpRate`), switches for True/False, number fields, hidden
+password fields with **Show**, and suggestions for settings with a fixed set of values. It also reads Unreal Engine's
+one-line settings, such as Palworld's `OptionSettings=(Difficulty=None,ExpRate=1.000000,…)`, as a field each.
+
+- **Filter** finds settings by name or value, and **Only changed** lists what you've changed, each with what it was and
+  **undo**.
+- Only the values you change are rewritten. Comments, order, spacing, line endings, quoting and the case of True/False
+  stay as they were, and a value with a comma or quotes in it is quoted so it doesn't break the line.
+- **Form** and **Text** switch between the form and the text editor; your choice is remembered. Saving, reverting and
+  the "this file changed since you opened it" check work the same in both.
+- A file that doesn't read as settings (fewer lines of settings than other lines) opens as text only.
+
 The editor works on raw text and checks `.json`, `.yaml`/`.yml` and `.xml` files as you type. A syntax error shows below
 the text and marks the line, but doesn't stop you saving, since some files are templates or are read by lenient parsers.
 Tab and Shift+Tab indent and outdent the selected lines, or the cursor's line for Shift+Tab, using the file's own
@@ -383,7 +403,12 @@ Under a server's **Console** output there's a command line. Commands go to the s
   - **Servers with their own LAN address** (a macvlan or ipvlan network, such as Unraid's `br0`): a Docker host can't
     reach its own macvlan containers, so hlm, running on that host, fails with "no route to host". Connect hlm to
     that network too, with a free address on it (see the commented `networks` lines in `docker-compose.yml`), or use a
-    command run in the container instead.
+    command run in the container instead. Keep `gw_priority: 1` on hlm's `default` network, as there: without it,
+    hlm's default route moves to the macvlan network, and its published port (e.g. `http://<host>:8080`) stops
+    answering, since replies leave the wrong way.
+  - **Published ports:** a server hlm can't reach directly is reached through its ports published on the Docker host.
+    When hlm runs in a container, it uses its bridge network's gateway for that (the host, as seen from the container),
+    which works even when hlm is also on a macvlan network, from which the host's own LAN address can't be reached.
   - **Connection:** it's kept open between commands and closed after 5 idle minutes.
 - **A command run in the container:** a command line run in the container for each command, with `{command}` replaced
   by what you type (or added at the end), such as `rcon-cli {command}`. It isn't run by a shell. Images like
@@ -1342,6 +1367,7 @@ when the `HLM_*` one isn't set.
 | `GET\|PUT\|DELETE /api/integrations/backup`     | Bucket settings, including `caCert` (PEM) for a private CA (the secret key is never returned; empty keeps the saved one). |
 | `POST /api/integrations/backup/test`           | Check bucket settings: list, write and delete a test file.                        |
 | `GET /api/servers/{id}/files/search?path=&q=`  | Find files by name, or config files when `q` is empty.                            |
+| `GET/PUT /api/servers/{id}/config-files`       | The server's [pinned settings files](#editing-server-files) and the usual ones of its game that hlm found (`{pinned, suggested}`); `PUT {pinned: [{path, label?}]}` takes a manager. |
 | `GET /api/servers/{id}/stats`                  | CPU, memory, network and disk usage.                                              |
 | `POST /api/networks`                           | Create a network: `{name, driver: bridge\|macvlan\|ipvlan, parent?, subnet, gateway?, ipRange?}`. |
 | `DELETE /api/networks/{name}`                  | Delete a network created in hlm that no container uses.                           |

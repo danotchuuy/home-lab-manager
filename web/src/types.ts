@@ -1453,3 +1453,18 @@ export interface GameSummary {
   maxPlayers?: number;
   hasPlayers: boolean;
 }
+
+/** A server's settings file, pinned or suggested. */
+export interface ConfigFile {
+  /** Absolute path in the container. */
+  path: string;
+  /** Empty uses the file name. */
+  label?: string;
+}
+
+/** GET /api/servers/{id}/config-files */
+export interface ConfigFiles {
+  pinned: ConfigFile[];
+  /** The game's usual settings files, found in its data folders, that aren't pinned. */
+  suggested: ConfigFile[];
+}

@@ -22,7 +22,7 @@ api:
 test:
 	go vet ./...
 	go test ./...
-	cd web && npm run typecheck
+	cd web && npm run typecheck && npm test
 
 run: build
 	./bin/hlm

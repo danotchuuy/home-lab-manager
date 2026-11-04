@@ -374,13 +374,17 @@ func (s *Service) poll(ctx context.Context, name string) {
 		sv.status, sv.since = StatusStarting, s.opts.Now()
 	}
 	set, method, last, detected := sv.settings, sv.method, sv.last, sv.detected
+	prefer := ""
+	if sv.result != nil {
+		prefer = sv.result.Address
+	}
 	s.mu.Unlock()
 
 	now := s.opts.Now()
 	var res Result
 	if set.Protocol != ProtoAuto {
 		method = &Settings{Protocol: set.Protocol, Port: set.Port}
-		res, err = s.query(ctx, info, *method)
+		res, err = s.query(ctx, info, *method, prefer)
 		s.record(name, info, method, detected, res, err)
 		return
 	}
@@ -390,7 +394,7 @@ func (s *Service) poll(ctx context.Context, name string) {
 		method = last
 	}
 	if method != nil {
-		res, err = s.query(ctx, info, *method)
+		res, err = s.query(ctx, info, *method, prefer)
 	}
 	if (method == nil || err != nil) && (detected.IsZero() || now.Sub(detected) >= redetect) {
 		found, fres, ferr := s.detect(ctx, info)
@@ -407,7 +411,7 @@ func (s *Service) poll(ctx context.Context, name string) {
 var errNoMethod = errors.New("no way to ask this server how it's doing was found; choose one in its query settings")
 
 // query asks a server once, trying each address it might be at.
-func (s *Service) query(ctx context.Context, info docker.ContainerJSON, m Settings) (Result, error) {
+func (s *Service) query(ctx context.Context, info docker.ContainerJSON, m Settings, prefer string) (Result, error) {
 	if m.Protocol == ProtoRCON {
 		return s.queryConsole(ctx, info)
 	}
@@ -420,6 +424,11 @@ func (s *Service) query(ctx context.Context, info docker.ContainerJSON, m Settin
 		proto = "tcp"
 	}
 	addrs := reach.Addresses(info, m.Port, proto, s.opts.HostAddresses())
+	// The address that answered last time goes first, so one that can't be
+	// reached (another bridge network, say) isn't waited for every time.
+	if i := slices.Index(addrs, prefer); i > 0 {
+		addrs = append([]string{prefer}, slices.Delete(addrs, i, i+1)...)
+	}
 	if len(addrs) == 0 {
 		return Result{}, errors.New("hlm can't reach this server: it has no address on a network hlm can use, and the port isn't published")
 	}
@@ -497,7 +506,7 @@ func (s *Service) detect(ctx context.Context, info docker.ContainerJSON) (*Setti
 			return nil, Result{}, ctx.Err()
 		}
 		m := Settings{Protocol: c.Protocol, Port: c.Port}
-		res, err := s.query(ctx, info, m)
+		res, err := s.query(ctx, info, m, "")
 		if err == nil {
 			return &m, res, nil
 		}
@@ -643,6 +652,6 @@ func (s *Service) Test(ctx context.Context, name string, set Settings) (Settings
 		}
 		return set, res, err
 	}
-	res, err := s.query(ctx, info, set)
+	res, err := s.query(ctx, info, set, "")
 	return set, res, err
 }

@@ -19,6 +19,8 @@ import type {
   BackupSettings,
   BackupSettingsInput,
   CategoryCount,
+  ConfigFile,
+  ConfigFiles,
   ConsoleInput,
   ConsoleResult,
   ConsoleStatus,
@@ -548,6 +550,9 @@ export const api = {
     json<void>(`/api/servers/${encodeURIComponent(id)}/tasks/${encodeURIComponent(task)}`, { method: "DELETE" }),
   runTask: (id: string, task: string) =>
     json<void>(`/api/servers/${encodeURIComponent(id)}/tasks/${encodeURIComponent(task)}/run`, { method: "POST" }),
+  configFiles: (id: string) => json<ConfigFiles>(`/api/servers/${encodeURIComponent(id)}/config-files`),
+  setConfigFiles: (id: string, pinned: ConfigFile[]) =>
+    json<ConfigFiles>(`/api/servers/${encodeURIComponent(id)}/config-files`, { method: "PUT", body: JSON.stringify({ pinned }) }),
   gameStatuses: () => json<Record<string, GameSummary>>("/api/query"),
   gameStatus: (id: string) => json<GameStatus>(`/api/servers/${encodeURIComponent(id)}/query`),
   setQuerySettings: (id: string, set: QuerySettings) =>
