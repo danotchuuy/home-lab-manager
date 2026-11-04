@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { can, useAdmin } from "../access";
 import { api, ApiError } from "../api";
 import { AppIcon, Spinner, StateBadge } from "../components/common";
+import { ServerActivity } from "../components/ActivityLog";
 import { ConfigFilesCard } from "../components/ConfigFilesCard";
 import { ConfigForm } from "../components/ConfigForm";
 import { ConsoleInputBar } from "../components/Console";
@@ -260,6 +261,12 @@ export function ServerDetailPage() {
           <hr />
           <ConfigFilesCard server={server.name} canManage={manager} />
           <hr />
+          {manager && (
+            <>
+              <ServerActivity server={server.name} />
+              <hr />
+            </>
+          )}
           <h2>Configuration</h2>
           <p className="muted small">Saving recreates the container. The old one is restored if the new one fails to start.</p>
           {configError && <div className="alert error">{configError}</div>}

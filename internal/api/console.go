@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"github.com/danotchuuy/home-lab-manager/internal/console"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
@@ -80,6 +81,7 @@ func (s *server) consoleCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := r.Context().Value(principalKey{}).(rbac.Principal)
+	audit.Add(r.Context(), "command", in.Command)
 	res, err := s.Console.Send(r.Context(), r.PathValue("id"), p.Name, in.Command)
 	if err != nil {
 		writeConsoleError(w, err)

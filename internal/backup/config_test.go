@@ -214,3 +214,25 @@ func TestSeaweedFSConfig(t *testing.T) {
 		t.Errorf("after delete: %d", len(o.Backups))
 	}
 }
+
+func TestConfigArchiveAudit(t *testing.T) {
+	s, dir := configService(t, false)
+	os.MkdirAll(filepath.Join(dir, "audit"), 0o700)
+	os.WriteFile(filepath.Join(dir, "audit", "audit-2026-10.jsonl"), []byte(`{"action":"a"}`+"\n"), 0o600)
+	os.WriteFile(filepath.Join(dir, "audit", "audit-2026-11.jsonl"), []byte(`{"action":"b"}`+"\n"), 0o600)
+	os.WriteFile(filepath.Join(dir, "audit", "notes.txt"), []byte("not part of the log"), 0o600)
+	data, err := s.configArchive(context.Background(), false, &Run{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := untar(t, data)
+	if got["audit/audit-2026-10.jsonl"] != `{"action":"a"}`+"\n" || got["audit/audit-2026-11.jsonl"] != `{"action":"b"}`+"\n" {
+		t.Errorf("audit files: %v", keys(got))
+	}
+	if _, ok := got["audit/notes.txt"]; ok {
+		t.Error("included a file that isn't part of the log")
+	}
+	if !strings.Contains(got["README.txt"], "audit/") {
+		t.Error("README doesn't mention the audit log")
+	}
+}

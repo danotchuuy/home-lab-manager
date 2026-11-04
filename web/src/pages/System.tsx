@@ -9,6 +9,7 @@ import { LinodeSettings } from "../components/LinodeSettings";
 import { MyAccount } from "../components/MyAccount";
 import { NotificationSettings } from "../components/NotificationSettings";
 import { TimeSettings } from "../components/TimeSettings";
+import { SystemActivity } from "../components/ActivityLog";
 import { SystemUpdateSettings } from "../components/UpdatePolicy";
 import { ServerGroups } from "../components/ServerGroups";
 import { APIKeys } from "../components/APIKeys";
@@ -272,6 +273,11 @@ export function SystemPage() {
       <section className="card" id="config-backup">
         <h2>Backups of hlm&apos;s configuration</h2>
         <ConfigBackups storageVersion={storageVersion} />
+      </section>
+
+      <section className="card" id="activity">
+        <h2>Activity</h2>
+        <SystemActivity />
       </section>
 
       <section className="card" id="updates">

@@ -15,6 +15,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"hash"
 	"slices"
 	"strings"
@@ -239,6 +240,8 @@ func (s *Service) SSHLogin(challenge, signature, remote string) (string, time.Ti
 	fail := func(fp string, why string) (string, time.Time, error) {
 		wait := s.limiter.fail(limit, now)
 		s.log.Warn("refused SSH sign-in", "user", c.User, "fingerprint", fp, "remote", remote, "err", why)
+		s.record(audit.Entry{Actor: "ssh:" + c.User, ActorKind: audit.ActorSSH, IP: ip.String(), Action: "auth.ssh_login",
+			Result: audit.ResultDenied, Error: why, Details: map[string]string{"fingerprint": fp}})
 		return "", time.Time{}, &LoginError{ErrBadSSHLogin, wait}
 	}
 	if c.Boot != s.boot || !now.Before(c.Expires) {
@@ -268,6 +271,8 @@ func (s *Service) SSHLogin(challenge, signature, remote string) (string, time.Ti
 	}
 	s.noteSSHKeyUse(a.Username, fp, now)
 	s.log.Info("signed in", "user", a.Username, "method", "ssh", "key", key.Name, "fingerprint", fp, "remote", remote)
+	s.record(audit.Entry{Actor: "ssh:" + a.Username, ActorKind: audit.ActorSSH, IP: ip.String(), Action: "auth.ssh_login",
+		Details: map[string]string{"key": key.Name, "fingerprint": fp}})
 	return SSHTokenPrefix + v, t.Expires, nil
 }
 

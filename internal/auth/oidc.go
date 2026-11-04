@@ -14,6 +14,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"net/http"
 	"net/url"
 	"slices"
@@ -499,22 +500,32 @@ func (s *Service) Callback(w http.ResponseWriter, r *http.Request) {
 		s.page(w, http.StatusBadRequest, "Sign-in failed", "The answer from "+c.name()+" doesn't belong to this sign-in. Try again.")
 		return
 	}
+	action := "auth.login"
+	if l.Confirm {
+		action = "auth.confirm"
+	}
 	if e := q.Get("error"); e != "" {
 		msg := e
 		if d := q.Get("error_description"); d != "" {
 			msg += ": " + d
 		}
+		s.record(audit.Entry{Actor: "sso", ActorKind: audit.ActorSSO, IP: clientIP(r), Action: action,
+			Result: audit.ResultDenied, Error: c.name() + ": " + msg})
 		s.page(w, http.StatusForbidden, c.name()+" didn't sign you in", msg)
 		return
 	}
 	u, err := s.exchange(r.Context(), c, l, q.Get("code"))
 	if err != nil {
 		s.log.Warn("sign-in failed", "err", err)
+		s.record(audit.Entry{Actor: "sso", ActorKind: audit.ActorSSO, IP: clientIP(r), Action: action,
+			Result: audit.ResultError, Error: err.Error()})
 		s.page(w, http.StatusBadGateway, "Sign-in failed", err.Error())
 		return
 	}
 	if !c.allows(u) {
 		s.log.Warn("refused sign-in", "user", u.Display(), "groups", u.Groups)
+		s.record(audit.Entry{Actor: "sso:" + u.Display(), ActorKind: audit.ActorSSO, IP: clientIP(r), Action: action,
+			Result: audit.ResultDenied, Error: "not one of the users or groups allowed in"})
 		s.page(w, http.StatusForbidden, "Not allowed", u.Display()+" signed in, but isn't one of the users or groups allowed into Home Lab Manager.")
 		return
 	}
@@ -522,6 +533,8 @@ func (s *Service) Callback(w http.ResponseWriter, r *http.Request) {
 		cur, ok := s.Session(r)
 		switch {
 		case !ok || cur.Method != MethodOIDC || cur.Subject != l.Subject || u.Subject != l.Subject:
+			s.record(audit.Entry{Actor: "sso:" + u.Display(), ActorKind: audit.ActorSSO, IP: clientIP(r), Action: action,
+				Result: audit.ResultDenied, Error: "a different account than the one signed in"})
 			s.page(w, http.StatusForbidden, "Couldn't confirm", "That was a different account than the one signed in here.")
 			return
 		case u.AuthTime.IsZero() || u.AuthTime.Before(l.Started.Add(-time.Minute)):
@@ -541,6 +554,7 @@ func (s *Service) Callback(w http.ResponseWriter, r *http.Request) {
 		s.page(w, http.StatusInternalServerError, "Couldn't start a session", err.Error())
 		return
 	}
+	s.record(audit.Entry{Actor: "sso:" + u.Display(), ActorKind: audit.ActorSSO, IP: clientIP(r), Action: action})
 	if l.Confirm {
 		s.log.Info("confirmed sign-in", "user", u.Display(), "method", MethodOIDC, "remote", r.RemoteAddr)
 	} else {

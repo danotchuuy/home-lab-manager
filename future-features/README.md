@@ -10,7 +10,7 @@ the API and UI it needs, who may use it, how to test it, and a task list. They'r
 | 03 | [Scheduled tasks per server](03-scheduled-tasks.md) | High | 02 for in-game commands | Done |
 | 04 | [Auto-update policy](04-auto-update-policy.md) | High | 03 (shared scheduler), 05 (player-aware) | Done |
 | 05 | [Game query: players and status](05-game-query.md) | High | — | Done |
-| 06 | [Audit log](06-audit-log.md) | High | — | Planned |
+| 06 | [Audit log](06-audit-log.md) | High | — | Done |
 | 07 | [Private registry credentials](07-registry-credentials.md) | Medium | — | Planned |
 | 08 | [Metrics history and Prometheus](08-metrics-history-prometheus.md) | Medium | — | Planned |
 | 09 | [Health checks and crash-loop protection](09-health-crash-loop.md) | Medium | 01 for alerts | Planned |

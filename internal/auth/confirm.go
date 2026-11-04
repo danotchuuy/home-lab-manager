@@ -7,6 +7,7 @@ package auth
 
 import (
 	"errors"
+	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"net/http"
 	"time"
 )
@@ -38,6 +39,8 @@ func (s *Service) ConfirmPassword(w http.ResponseWriter, r *http.Request, passwo
 	}
 	if err := s.VerifyPassword(u.Username, password); err != nil {
 		s.log.Warn("refused confirmation", "user", u.Username, "remote", r.RemoteAddr)
+		s.record(audit.Entry{Actor: u.Username, ActorKind: audit.ActorLocal, IP: clientIP(r), Action: "auth.confirm",
+			Result: audit.ResultDenied, Error: "wrong password"})
 		return User{}, err
 	}
 	u.Confirmed = s.now().UTC()
@@ -45,5 +48,6 @@ func (s *Service) ConfirmPassword(w http.ResponseWriter, r *http.Request, passwo
 		return User{}, err
 	}
 	s.log.Info("confirmed sign-in", "user", u.Username, "method", MethodLocal, "remote", r.RemoteAddr)
+	s.record(audit.Entry{Actor: u.Username, ActorKind: audit.ActorLocal, IP: clientIP(r), Action: "auth.confirm"})
 	return u, nil
 }

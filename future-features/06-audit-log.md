@@ -2,6 +2,19 @@
 
 **Priority:** High · **Depends on:** nothing
 
+> **Status: done** (branch `feature/06-audit-log`). See the README's [Activity (audit log)](../README.md#activity-audit-log).
+> Where the result differs from this plan:
+>
+> - Action names are made from each route's pattern (`PUT /api/servers/{id}/config` → `servers.config.set`), with
+>   overrides in one map (`auditNames`) rather than a field on every route; that map also lists the reads that are
+>   recorded (backup and configuration downloads, exports) and the routes left to the sign-in service.
+> - Streamed operations (install, update, reconfigure, import) answer 200 before they finish; a failure partway through
+>   is passed to the entry, so it's recorded as failed.
+> - Requests without any credentials are refused before routing and aren't recorded; failed sign-ins are, by the
+>   sign-in service, with the username tried.
+> - Paging uses the time of the last entry as the cursor.
+> - Not done: syslog forwarding (the "also write to hlm's own log" option covers collecting entries elsewhere).
+
 ## Why
 
 hlm now has local accounts, SSO users, groups, API keys, deployer keys and SSH keys. When a server is deleted or a

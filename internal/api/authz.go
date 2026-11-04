@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"github.com/danotchuuy/home-lab-manager/internal/auth"
 	"github.com/danotchuuy/home-lab-manager/internal/deploy"
 	"github.com/danotchuuy/home-lab-manager/internal/forwarding"
@@ -434,6 +435,7 @@ func (s *server) createGroup(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	audit.Add(r.Context(), "name", in.Name)
 	if err := s.checkNewServers(r.Context(), in.Servers, nil); err != nil {
 		writeGroupError(w, err)
 		return
@@ -451,6 +453,7 @@ func (s *server) updateGroup(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	audit.Add(r.Context(), "name", in.Name)
 	id := r.PathValue("id")
 	groups, err := s.Groups.Groups()
 	if err != nil {

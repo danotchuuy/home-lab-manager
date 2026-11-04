@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -193,6 +194,7 @@ func (s *Service) startConfig(trigger string) error {
 			s.log.Warn("record configuration backup result", "err", err)
 		}
 		s.notifyBackup("", run)
+		s.auditScheduled("system.backup.scheduled", "", run)
 	}()
 	return nil
 }
@@ -271,6 +273,20 @@ func (s *Service) configArchive(ctx context.Context, includeKey bool, run *Run) 
 		}
 	}
 
+	// The audit log, a file a month.
+	auditFiles, _ := filepath.Glob(filepath.Join(s.config.DataDir, "audit", "audit-*.jsonl"))
+	sort.Strings(auditFiles)
+	for _, p := range auditFiles {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			run.Warnings = append(run.Warnings, "couldn't read the audit log's "+filepath.Base(p)+": "+err.Error())
+			continue
+		}
+		if err := add("audit/"+filepath.Base(p), 0o600, data); err != nil {
+			return nil, err
+		}
+	}
+
 	if s.config.Servers != nil {
 		servers, err := s.config.Servers(ctx)
 		if err != nil {
@@ -310,6 +326,7 @@ To restore: stop hlm, extract this archive into its data directory
                         backup plans. Encrypted with AES-256-GCM.
   templates.json        Templates made from Docker images.
   deleted-servers.json  Data folders of deleted servers, shown on the Host page.
+  audit/                The audit log of who changed what, a file a month.
   servers.json          Every server's settings. They live in Docker, so they
                         aren't restored by extracting; install each server again
                         from its template with these values. The game data itself

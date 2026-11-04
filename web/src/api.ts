@@ -1,5 +1,8 @@
 import type {
   Account,
+  AuditFilter,
+  AuditPage,
+  AuditSettings,
   AutoUpdates,
   APIKeyInfo,
   KeyRole,
@@ -553,6 +556,24 @@ export const api = {
   configFiles: (id: string) => json<ConfigFiles>(`/api/servers/${encodeURIComponent(id)}/config-files`),
   setConfigFiles: (id: string, pinned: ConfigFile[]) =>
     json<ConfigFiles>(`/api/servers/${encodeURIComponent(id)}/config-files`, { method: "PUT", body: JSON.stringify({ pinned }) }),
+  audit: (f: AuditFilter) => json<AuditPage>(`/api/audit?${auditQuery(f)}`),
+  /** Downloads the matching entries as a file. */
+  exportAudit: async (f: AuditFilter, format: "csv" | "jsonl") => {
+    const res = await request(`/api/audit/export?${auditQuery({ ...f, limit: undefined })}&format=${format}`);
+    const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ?? `hlm-audit.${format}`;
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  },
+  serverActivity: (id: string, before?: string) =>
+    json<AuditPage>(`/api/servers/${encodeURIComponent(id)}/activity${before ? `?before=${encodeURIComponent(before)}` : ""}`),
+  myActivity: () => json<AuditPage>("/api/auth/activity"),
+  auditSettings: () => json<AuditSettings>("/api/system/audit"),
+  setAuditSettings: (retentionMonths: number, mirror: boolean) =>
+    json<AuditSettings>("/api/system/audit", { method: "PUT", body: JSON.stringify({ retentionMonths, mirror }) }),
   gameStatuses: () => json<Record<string, GameSummary>>("/api/query"),
   gameStatus: (id: string) => json<GameStatus>(`/api/servers/${encodeURIComponent(id)}/query`),
   setQuerySettings: (id: string, set: QuerySettings) =>
@@ -603,6 +624,12 @@ export const api = {
   /** Confirms it's the signed-in person, for changes that could give lasting access. */
   confirm: (password: string) => json<{ confirmedUntil: string }>("/api/auth/confirm", { method: "POST", body: JSON.stringify({ password }) }),
 };
+
+function auditQuery(f: AuditFilter): string {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(f)) if (v !== undefined && v !== "") q.set(k, String(v));
+  return q.toString();
+}
 
 /** Adds a backup's key to a download path, for download. */
 function withKey(path: string, key: string): string {

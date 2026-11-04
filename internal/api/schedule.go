@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
 	"github.com/danotchuuy/home-lab-manager/internal/schedule"
 )
@@ -59,6 +60,7 @@ func (s *server) saveTask(w http.ResponseWriter, r *http.Request) {
 	}
 	t.ID = r.PathValue("task") // empty when adding
 	t.Runs, t.Next = nil, nil
+	audit.Add(r.Context(), "task", t.Name)
 	saved, err := s.Schedule.Save(name, t)
 	if err != nil {
 		writeScheduleError(w, err)

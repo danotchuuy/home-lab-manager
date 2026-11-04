@@ -170,6 +170,13 @@ func (s *server) routes() []route {
 		{"GET /api/system/update-policy", admin, s.systemUpdatePolicy},
 		{"PUT /api/system/update-policy", admin, s.setSystemUpdatePolicy},
 		{"GET /api/system/timezone", signedIn, s.timezone},
+		// Who changed what. Shortening how long it's kept deletes history.
+		{"GET /api/audit", admin, s.auditEntries},
+		{"GET /api/audit/export", admin, s.exportAudit},
+		{"GET /api/system/audit", admin, s.auditSettings},
+		{"PUT /api/system/audit", confirmed, s.setAuditSettings},
+		{"GET /api/servers/{id}/activity", serverRole(rbac.Manager), s.serverActivity},
+		{"GET /api/auth/activity", signedIn, s.myActivity},
 		{"PUT /api/system/timezone", admin, s.setTimezone},
 		{"GET /api/servers/{id}/stats", serverRole(rbac.Viewer), s.serverStats},
 		{"GET /api/servers/{id}/files", serverRole(rbac.Operator), s.listFiles},
