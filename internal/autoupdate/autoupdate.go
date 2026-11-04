@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"github.com/danotchuuy/home-lab-manager/internal/backup"
 	"github.com/danotchuuy/home-lab-manager/internal/console"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
@@ -139,6 +140,8 @@ type Options struct {
 	Notifier notify.Notifier
 	// Players says how many players are on a server, if that's known.
 	Players func(server string) (int, bool)
+	// Audit records each automatic update.
+	Audit audit.Recorder
 	// Location is hlm's time zone, which windows are in, and ZoneName its
 	// name for showing.
 	Location func() *time.Location
@@ -549,6 +552,7 @@ func (s *Service) updateServer(ctx context.Context, srv manager.Server, p Policy
 		}); err != nil {
 			s.opts.Log.Warn("record automatic update", "server", name, "err", err)
 		}
+		s.audit("servers.auto_update", name, name, res)
 		s.clearState(name)
 	}
 
@@ -618,8 +622,11 @@ func (s *Service) updateSelf(ctx context.Context, set Settings, now time.Time, l
 	// Record the attempt first: if it works, hlm restarts straight after.
 	res.OK, res.Finished = true, now
 	_ = s.update(func(set *Settings) error { set.Results[SelfKey] = res; return nil })
+	s.audit("system.auto_update", st.Latest.Version, "", res)
 	err := s.opts.Self.Apply(ctx, func(selfupdate.Event) {})
 	if err != nil {
+		res.OK, res.Error = false, err.Error()
+		s.audit("system.auto_update", st.Latest.Version, "", res)
 		res.OK, res.Error, res.Finished = false, err.Error(), s.opts.Now()
 		s.opts.Log.Warn("automatic update of hlm failed", "err", err)
 		_ = s.update(func(set *Settings) error { set.Results[SelfKey] = res; return nil })
@@ -648,4 +655,19 @@ func Visible(states map[string]State, keep func(string) bool) map[string]State {
 		}
 	}
 	return out
+}
+
+func (s *Service) audit(action, target, server string, r Result) {
+	if s.opts.Audit == nil {
+		return
+	}
+	e := audit.Entry{Actor: "hlm", ActorKind: audit.ActorHLM, Action: action, Target: target, Server: server,
+		Result: audit.ResultOK, Error: r.Error}
+	if !r.OK {
+		e.Result = audit.ResultError
+	}
+	if len(r.Steps) > 0 {
+		e.Details = map[string]string{"steps": strings.Join(r.Steps, "; ")}
+	}
+	s.opts.Audit.Record(e)
 }

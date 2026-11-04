@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -303,4 +304,47 @@ func RequestFromLabels(labels map[string]string) (Request, bool) {
 		return Request{}, false
 	}
 	return r, true
+}
+
+// ChangedSettings names what differs between a server's settings and new
+// ones, for the audit log: template items by ID, and the other settings by
+// name. It never includes values.
+func ChangedSettings(old, new Request) []string {
+	var out []string
+	keys := map[string]bool{}
+	for k := range old.Values {
+		keys[k] = true
+	}
+	for k := range new.Values {
+		keys[k] = true
+	}
+	var items []string
+	for k := range keys {
+		ov, oldOK := old.Values[k]
+		nv, newOK := new.Values[k]
+		if ov != nv || oldOK != newOK {
+			items = append(items, k)
+		}
+	}
+	slices.Sort(items)
+	out = append(out, items...)
+	same := func(a, b any) bool {
+		x, _ := json.Marshal(a)
+		y, _ := json.Marshal(b)
+		return string(x) == string(y)
+	}
+	for _, f := range []struct {
+		name string
+		a, b any
+	}{
+		{"tag", old.Tag, new.Tag}, {"disabled", old.Disabled, new.Disabled}, {"network", old.Network, new.Network},
+		{"ipAddress", old.IPAddress, new.IPAddress}, {"extra", old.Extra, new.Extra},
+		{"extraParams", old.ExtraParams, new.ExtraParams}, {"postArgs", old.PostArgs, new.PostArgs},
+		{"privileged", old.Privileged, new.Privileged}, {"restartPolicy", old.RestartPolicy, new.RestartPolicy},
+	} {
+		if !same(f.a, f.b) {
+			out = append(out, f.name)
+		}
+	}
+	return out
 }

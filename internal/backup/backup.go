@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/files"
 	"github.com/danotchuuy/home-lab-manager/internal/notify"
@@ -138,6 +139,26 @@ type Service struct {
 	config  *ConfigSource        // see UseConfig
 	// notifier gets backups' and restores' results; see UseNotifier.
 	notifier notify.Notifier
+	// audit records scheduled backups; see UseAudit.
+	audit audit.Recorder
+}
+
+// UseAudit sets where scheduled backups are recorded (backups people start
+// are recorded with their request).
+func (s *Service) UseAudit(r audit.Recorder) { s.audit = r }
+
+func (s *Service) auditScheduled(action, server string, run Run) {
+	if s.audit == nil || run.Trigger != "schedule" {
+		return
+	}
+	e := audit.Entry{Actor: "hlm", ActorKind: audit.ActorHLM, Action: action, Target: server, Server: server,
+		Result: audit.ResultOK, Error: run.Error}
+	if run.Error != "" {
+		e.Result = audit.ResultError
+	} else {
+		e.Details = map[string]string{"key": run.Key}
+	}
+	s.audit.Record(e)
 }
 
 // UseNotifier sets where results are reported.
@@ -577,6 +598,7 @@ func (s *Service) finish(name string, plan Plan, prog *Progress) Run {
 		s.log.Warn("record backup result", "server", name, "err", err)
 	}
 	s.notifyBackup(name, run)
+	s.auditScheduled("servers.backups.scheduled", name, run)
 	return run
 }
 

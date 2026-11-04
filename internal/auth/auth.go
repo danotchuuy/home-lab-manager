@@ -31,6 +31,7 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 
+	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"github.com/danotchuuy/home-lab-manager/internal/notify"
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
@@ -118,6 +119,8 @@ type Service struct {
 	tickets tickets
 	// notifier hears about locked sign-ins; see UseNotifier.
 	notifier notify.Notifier
+	// audit records sign-ins and sign-outs; see UseAudit.
+	audit audit.Recorder
 	// boot is made each time hlm starts, so SSH challenges from before a
 	// restart, whose use isn't remembered, don't work after it.
 	boot string
@@ -365,6 +368,8 @@ func (s *Service) startSession(w http.ResponseWriter, u User, secure bool) error
 func (s *Service) Logout(w http.ResponseWriter, r *http.Request) {
 	if u, ok := s.Session(r); ok {
 		s.log.Info("signed out", "user", u.Display(), "method", u.Method)
+		actor, kind := auditActor(u)
+		s.record(audit.Entry{Actor: actor, ActorKind: kind, IP: clientIP(r), Action: "auth.logout"})
 	}
 	http.SetCookie(w, &http.Cookie{Name: SessionCookie, Path: "/", MaxAge: -1, HttpOnly: true, Secure: secureRequest(r), SameSite: http.SameSiteLaxMode})
 	w.WriteHeader(http.StatusNoContent)
@@ -390,4 +395,28 @@ func (s *Service) page(w http.ResponseWriter, status int, title, message string)
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = pageTmpl.Execute(w, struct{ Title, Message string }{title, message})
+}
+
+// UseAudit sets where sign-ins and sign-outs are recorded.
+func (s *Service) UseAudit(r audit.Recorder) { s.audit = r }
+
+func (s *Service) record(e audit.Entry) {
+	if s.audit == nil {
+		return
+	}
+	if e.Result == "" {
+		e.Result = audit.ResultOK
+	}
+	s.audit.Record(e)
+}
+
+// auditActor names who a session belongs to, as the audit log does.
+func auditActor(u User) (string, string) {
+	if u.Method == MethodOIDC {
+		return "sso:" + u.Display(), audit.ActorSSO
+	}
+	if u.Username != "" {
+		return u.Username, audit.ActorLocal
+	}
+	return u.Display(), audit.ActorLocal
 }

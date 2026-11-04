@@ -26,6 +26,7 @@ import (
 	_ "time/tzdata"
 
 	"github.com/danotchuuy/home-lab-manager/internal/api"
+	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"github.com/danotchuuy/home-lab-manager/internal/auth"
 	"github.com/danotchuuy/home-lab-manager/internal/autoupdate"
 	"github.com/danotchuuy/home-lab-manager/internal/backup"
@@ -232,6 +233,12 @@ func run(log *slog.Logger) error {
 		}
 		return set.DiskThreshold()
 	}, notifier)
+	// Who changed what: API requests, sign-ins, and hlm's own actions.
+	auditLog, err := audit.Open(filepath.Join(dataDir, "audit"), store, log)
+	if err != nil {
+		return fmt.Errorf("open audit log: %w", err)
+	}
+	go auditLog.Run(ctx)
 	fwd := forwarding.New(store, mgr, host.LANAddress, log)
 	mgr.UseIPChecker(func(ctx context.Context, ip string, ignore []string) (string, string, error) {
 		if !fwd.Configured() {
@@ -263,6 +270,7 @@ func run(log *slog.Logger) error {
 	}
 	signIn := auth.New(store, oidcOff, log)
 	signIn.UseNotifier(notifier)
+	signIn.UseAudit(auditLog)
 	tunnel := cftunnel.New(store, mgr, dc, env("HLM_CLOUDFLARED_IMAGE", ""), log)
 	if base := env("HLM_CLOUDFLARE_API", ""); base != "" {
 		tunnel.UseAPI(base)
@@ -282,6 +290,7 @@ func run(log *slog.Logger) error {
 	go mgr.RunStorageRefresher(ctx, 10*time.Minute)
 	backups := backup.New(store, mgr, log)
 	backups.UseNotifier(notifier)
+	backups.UseAudit(auditLog)
 	backups.UseConfig(backup.ConfigSource{
 		DataDir:    dataDir,
 		KeyFromEnv: env("HLM_SECRET_KEY", "") != "",
@@ -395,13 +404,13 @@ func run(log *slog.Logger) error {
 	// Servers' scheduled tasks, such as a nightly restart.
 	sched = schedule.New(schedule.Options{
 		Secrets: store, Servers: mgr, Backups: backups, Console: consoles, Notifier: notifier,
-		Players: queries.Players, Log: log,
+		Players: queries.Players, Audit: auditLog, Log: log,
 	})
 	go sched.Run(ctx)
 	// Updates applied automatically, for servers (and hlm) that want them.
 	autoUpdates := autoupdate.New(autoupdate.Options{
 		Secrets: store, Servers: mgr, Backups: backups, Console: consoles, Tasks: sched, Self: updater,
-		Notifier: notifier, Players: queries.Players, Location: sched.Location, ZoneName: sched.ZoneName, Log: log,
+		Notifier: notifier, Players: queries.Players, Audit: auditLog, Location: sched.Location, ZoneName: sched.ZoneName, Log: log,
 	})
 	go autoUpdates.Run(ctx)
 	checkEvery := autoUpdates.CheckInterval
@@ -431,6 +440,7 @@ func run(log *slog.Logger) error {
 		AutoUpdate:  autoUpdates,
 		Query:       queries,
 		ConfigFiles: configfiles.New(store, mgr),
+		Audit:       auditLog,
 		// Set when HLM_UPDATE_CHECK overrides the setting.
 		UpdateCheckEnv: updateCheckEnv,
 		Token:          env("HLM_TOKEN", ""),
@@ -507,6 +517,18 @@ func resetPassword(args []string) error {
 	password, created, err := service.ResetPassword(args[0], makeAdmin)
 	if err != nil {
 		return err
+	}
+	if l, err := audit.Open(filepath.Join(dataDir, "audit"), store, quiet); err == nil {
+		action := "auth.reset_password"
+		if created {
+			action = "auth.accounts.create"
+		}
+		details := map[string]string{"via": "hlm reset-password"}
+		if makeAdmin {
+			details["admin"] = "yes"
+		}
+		l.Record(audit.Entry{Actor: "host", ActorKind: audit.ActorHost, Action: action, Target: args[0], Details: details})
+		l.Close()
 	}
 	what := "New password"
 	if created {

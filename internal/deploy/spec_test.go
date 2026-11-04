@@ -185,3 +185,17 @@ func TestImageDefaultsAreNotPinned(t *testing.T) {
 		t.Errorf("env = %v", spec.Create.Env)
 	}
 }
+
+func TestChangedSettings(t *testing.T) {
+	params := "--memory=4g"
+	old := Request{Values: map[string]string{"port": "2456", "pw": "a", "name": "x"}, Network: "bridge"}
+	new := Request{Values: map[string]string{"port": "2457", "pw": "b", "world": "y", "name": "x"}, Network: "br0", ExtraParams: &params}
+	got := ChangedSettings(old, new)
+	want := []string{"port", "pw", "world", "network", "extraParams"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("changed = %q, want %q", got, want)
+	}
+	if got := ChangedSettings(old, old); len(got) != 0 {
+		t.Errorf("unchanged = %q", got)
+	}
+}

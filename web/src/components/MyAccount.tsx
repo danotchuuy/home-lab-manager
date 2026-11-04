@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api } from "../api";
+import { MySignIns } from "./ActivityLog";
 import type { AuthStatus, ServerGroup } from "../types";
 import { Spinner } from "./common";
 import { SSHKeys } from "./SSHKeys";
@@ -66,6 +67,7 @@ export function MyAccount() {
           <SSHKeys username={user.username} />
         </>
       )}
+      <MySignIns />
     </>
   );
 }

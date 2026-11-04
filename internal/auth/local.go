@@ -21,6 +21,7 @@ import (
 
 	"golang.org/x/crypto/argon2"
 
+	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"github.com/danotchuuy/home-lab-manager/internal/notify"
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
 )
@@ -399,7 +400,12 @@ func (s *Service) LocalLogin(w http.ResponseWriter, r *http.Request) (User, erro
 		return User{}, err
 	}
 	key := strings.ToLower(strings.TrimSpace(in.Username))
+	refused := func(why string) {
+		s.record(audit.Entry{Actor: key, ActorKind: audit.ActorLocal, IP: clientIP(r), Action: "auth.login",
+			Result: audit.ResultDenied, Error: why})
+	}
 	if wait := s.limiter.wait(key, s.now()); wait > 0 {
+		refused("locked after repeated wrong passwords")
 		return User{}, &LoginError{fmt.Errorf("too many wrong passwords for %s; try again in %s", in.Username, roundUp(wait)), wait}
 	}
 	a, ok := s.account(key)
@@ -410,6 +416,11 @@ func (s *Service) LocalLogin(w http.ResponseWriter, r *http.Request) (User, erro
 	if !passwordMatches(hash, in.Password) || !ok {
 		wait := s.limiter.fail(key, s.now())
 		s.log.Warn("refused local sign-in", "user", in.Username, "remote", r.RemoteAddr)
+		if wait > 0 {
+			refused("wrong password; now locked for " + roundUp(wait).String())
+		} else {
+			refused("wrong username or password")
+		}
 		if wait > 0 && s.notifier != nil {
 			s.notifier.Notify(notify.Event{
 				Kind:  notify.KindLockedOut,
@@ -431,6 +442,7 @@ func (s *Service) LocalLogin(w http.ResponseWriter, r *http.Request) (User, erro
 		return User{}, err
 	}
 	s.log.Info("signed in", "user", a.Username, "method", MethodLocal)
+	s.record(audit.Entry{Actor: a.Username, ActorKind: audit.ActorLocal, IP: clientIP(r), Action: "auth.login"})
 	return u, nil
 }
 

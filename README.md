@@ -540,6 +540,7 @@ Each backup holds, named as they are in the data directory (`HLM_DATA_DIR`):
 - `secrets/secrets.enc`: every integration's settings and credentials (UniFi, proxy and its SSH key, Linode, Cloudflare,
   backup storage), servers' port options and backup plans. Encrypted with AES-256-GCM.
 - `templates.json` (templates made from images) and `deleted-servers.json`, when they exist.
+- `audit/`: the [activity log](#activity-audit-log), a file a month.
 - `servers.json`: every server's name, template, image, start on boot and settings. Servers live in Docker rather than
   the data directory, so this is what it takes to install them again on a new host. Their game data is in their own
   backups.
@@ -1075,7 +1076,7 @@ own **Settings** tab.
 | --- | --- |
 | **Viewer** | See the server, its stats, its game status and player count, its port and backup status and its scheduled tasks, but not its settings, logs, files or tasks' console commands, which can hold passwords |
 | **Operator** | Also start, stop, restart and update it, [send it console commands](#sending-commands-to-a-server), run its scheduled tasks, read its logs, settings and files, and take and download backups. Settings that look like secrets (names with `TOKEN`, `SECRET`, `PASS`, `PWD`, `KEY`, `CREDENTIAL`, `AUTH` or `PRIVATE`, items the template masks, extra parameters and post arguments) are left out |
-| **Manager** | Also change its ports and variables, edit files, set up its console, change its scheduled tasks and how it's updated, set start on boot and port forwarding, change the backup plan, and restore and delete backups |
+| **Manager** | Also change its ports and variables, edit files, set up its console, change its scheduled tasks and how it's updated, set start on boot and port forwarding, change the backup plan, restore and delete backups, and see its [activity](#activity-audit-log) |
 
 Some things always take an admin, because they amount to control of the host or of other servers: deleting servers,
 installing them (except for [deployer keys](#deployer-keys)), importing templates, and changing a server's paths, devices, network, extra items or Docker options.
@@ -1261,6 +1262,45 @@ removed or the account's password changes. Changing a password doesn't remove th
 have been taken over, check them as well. Keys can be ed25519, ECDSA or RSA of at least 2048 bits. They're for local
 accounts; single sign-on users don't have one in hlm, so they use API keys.
 
+## Activity (audit log)
+
+hlm records who changed what, so a deleted server or a changed setting can be traced back. **System → Activity** lists
+the entries newest first. It can search (who, what, server, address, details), narrow to an area (servers, sign-ins,
+accounts and keys, groups, scheduled tasks, notifications, proxy and tunnel, system), a result and a time, and click a
+row for its details.
+
+**What's recorded:**
+- **Every change made through hlm's API:** starting or deleting a server, a setting saved, a file edited, a console
+  command sent, a backup restored, an account or API key created, and so on. Each entry says who did it (a local
+  account, a single sign-on user like `sso:bob`, an API key like `key:ci`, an SSH key sign-in, `HLM_TOKEN`, or
+  `anonymous` when sign-in isn't required), from which address, what to, and whether it worked. Requests that were
+  refused are recorded as **Denied**, and ones that failed (including an install or update that failed partway through)
+  as **Failed**, with the error.
+- **Sign-ins:** successful and refused ones (wrong password, locked out, not allowed by single sign-on), sign-outs,
+  confirming it's you, and SSH key sign-ins. `hlm reset-password` on the host is recorded too.
+- **What hlm does by itself,** as `hlm`: scheduled task runs, automatic updates and scheduled backups.
+- **Downloads** of backups and of hlm's configuration backups, and exports of the log itself.
+
+Reads (opening a page, listing files) aren't recorded.
+
+**What isn't in an entry:** request bodies and secrets. An entry has the names of what changed: which settings a
+reconfigure changed (not their values), the file that was saved, the backup restored, the account or key created. The
+command text is kept for console commands, as that's the point, but secret-looking parts (`password=…`, tokens,
+passwords in URLs) are masked.
+
+**Where it's kept:** one JSON Lines file a month, `<data>/audit/audit-YYYY-MM.jsonl`, written as each entry happens.
+- **Retention:** 12 months by default (**Keeping the log** changes it; shortening it deletes the older months, and takes
+  [confirming it's you](#confirming-its-you)).
+- **Tamper-resistance:** entries can't be changed or deleted through hlm.
+- **Backups:** the files are included in [hlm's configuration backups](#backing-up-hlms-own-configuration).
+- **Export:** CSV or JSON Lines, with the current filters.
+- **hlm's own log:** **Also write each entry to hlm's own log** sends them to journald, Loki and the like.
+
+**Who sees what:**
+- Admins see everything.
+- A server's **Settings** tab shows its last changes to its managers.
+- **Your account** shows your recent sign-ins.
+
 ## Configuration
 
 | Variable           | Default                       | Description                                                |
@@ -1349,6 +1389,11 @@ when the `HLM_*` one isn't set.
 | `POST /api/servers/{id}/tasks/{task}/run`      | Runs a task now (an operator); 409 if the server is busy.                          |
 | `GET /api/schedule/upcoming`                   | The next task runs on the servers you can see, soonest first.                      |
 | `GET/PUT /api/system/timezone`                 | hlm's time zone: `{timezone}` (empty for the system's); `PUT` takes an admin.      |
+| `GET /api/audit?actor=&action=&target=&server=&result=&text=&since=&before=&limit=` | The [activity log](#activity-audit-log), newest first: `{entries, next}`, where `next` is the `before` of the following page. Admins only. |
+| `GET /api/audit/export?format=csv\|jsonl&…`    | The matching entries as a file. Admins only.                                      |
+| `GET/PUT /api/system/audit`                    | `{retentionMonths, mirror}`; `PUT` needs a [confirmed](#confirming-its-you) session. |
+| `GET /api/servers/{id}/activity`               | A server's entries (a manager).                                                   |
+| `GET /api/auth/activity`                       | Your own recent sign-ins.                                                         |
 | `POST /api/servers/{id}/console/command`       | `{command}`: sends it; returns `{mode, output, exitCode?}`. Over stdin, the answer is in the logs instead. |
 | `GET /api/servers/{id}/files?path=`            | List a directory in the server's container, plus its data folders.                |
 | `GET /api/servers/{id}/files/content?path=`    | Read a text file (up to 1 MiB).                                                   |

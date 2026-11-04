@@ -1468,3 +1468,48 @@ export interface ConfigFiles {
   /** The game's usual settings files, found in its data folders, that aren't pinned. */
   suggested: ConfigFile[];
 }
+
+export type AuditResult = "ok" | "denied" | "error";
+export type AuditActorKind = "local" | "sso" | "key" | "ssh" | "token" | "anonymous" | "hlm" | "host" | "";
+
+/** One thing someone (or hlm) did. */
+export interface AuditEntry {
+  time: string;
+  actor: string;
+  actorKind: AuditActorKind;
+  ip?: string;
+  /** e.g. servers.restart, auth.login, notifications.targets.create */
+  action: string;
+  target?: string;
+  server?: string;
+  result: AuditResult;
+  /** The HTTP status, for API requests. */
+  status?: number;
+  error?: string;
+  details?: Record<string, string>;
+}
+
+/** A page of entries, newest first; next is the cursor for the following page. */
+export interface AuditPage {
+  entries: AuditEntry[];
+  next?: string;
+}
+
+export interface AuditFilter {
+  actor?: string;
+  action?: string;
+  target?: string;
+  server?: string;
+  result?: string;
+  text?: string;
+  since?: string;
+  before?: string;
+  limit?: number;
+}
+
+/** GET /api/system/audit */
+export interface AuditSettings {
+  retentionMonths: number;
+  mirror: boolean;
+  defaultRetention: number;
+}

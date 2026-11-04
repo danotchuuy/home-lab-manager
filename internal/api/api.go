@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"github.com/danotchuuy/home-lab-manager/internal/auth"
 	"github.com/danotchuuy/home-lab-manager/internal/autoupdate"
 	"github.com/danotchuuy/home-lab-manager/internal/backup"
@@ -76,6 +77,8 @@ type Options struct {
 	Query *gamequery.Service
 	// ConfigFiles keeps servers' pinned settings files.
 	ConfigFiles *configfiles.Service
+	// Audit records who changed what.
+	Audit *audit.Log
 	// UpdateCheckEnv is HLM_UPDATE_CHECK, which overrides the setting for
 	// how often updates are checked for, if set.
 	UpdateCheckEnv string
@@ -102,7 +105,7 @@ func Handler(opts Options) http.Handler {
 	mux := http.NewServeMux()
 
 	for _, rt := range s.routes() {
-		mux.HandleFunc(rt.pattern, s.authorize(rt.policy, rt.handler))
+		mux.HandleFunc(rt.pattern, s.audited(rt.pattern, s.authorize(rt.policy, rt.handler)))
 	}
 
 	if s.WebDir != "" {
@@ -292,6 +295,7 @@ func (s *server) importImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	audit.Add(r.Context(), "image", body.Image)
 	s.stream(w, r, func(ctx context.Context, emit func(manager.Event)) error {
 		app, err := s.Manager.ImportImage(ctx, body.Image, emit)
 		if err != nil {
@@ -495,6 +499,8 @@ func (s *server) installServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req := body.Request
+	audit.SetServer(r.Context(), req.Name)
+	audit.Add(r.Context(), "template", req.TemplateID)
 	access := s.access(r)
 	if access.Admin() {
 		s.stream(w, r, func(ctx context.Context, emit func(manager.Event)) error {
@@ -592,6 +598,10 @@ func (s *server) reconfigureServer(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	admin := s.access(r).Admin()
+	// Which settings change, by name; never their values.
+	if _, old, err := s.Manager.Config(r.Context(), id); err == nil {
+		audit.Add(r.Context(), "changed", strings.Join(deploy.ChangedSettings(old, req), ", "))
+	}
 	if !admin {
 		app, old, err := s.Manager.Config(r.Context(), id)
 		if err != nil {
@@ -1581,6 +1591,7 @@ func (s *server) writeFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	audit.Add(r.Context(), "path", body.Path)
 	f, err := s.Manager.WriteFile(r.Context(), r.PathValue("id"), body.Path, body.Content, body.ExpectedMtime)
 	if err != nil {
 		writeFileError(w, err)
@@ -1749,6 +1760,9 @@ func (s *server) stream(w http.ResponseWriter, r *http.Request, op func(context.
 	if err := op(ctx, emit); err != nil {
 		s.Log.Warn("operation failed", "path", r.URL.Path, "err", err)
 		emit(manager.Event{Stage: "error", Message: err.Error()})
+		// The response said 200 before this was known; the audit log
+		// records how it went.
+		audit.Fail(r.Context(), err)
 	}
 }
 
@@ -2115,6 +2129,10 @@ func (s *server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	audit.Add(r.Context(), "key", body.Key)
+	if body.BackupFirst {
+		audit.Add(r.Context(), "backupFirst", "yes")
+	}
 	if err := s.Backup.Restore(r.Context(), r.PathValue("id"), body.Key, body.BackupFirst); err != nil {
 		writeBackupError(w, err)
 		return
@@ -2289,6 +2307,8 @@ func (s *server) createAccount(w http.ResponseWriter, r *http.Request) {
 	if len(s.Auth.Accounts()) > 0 && !s.stepUp(w, r) {
 		return
 	}
+	audit.Add(r.Context(), "username", in.Username)
+	audit.Add(r.Context(), "role", string(in.Role))
 	a, err := s.Auth.CreateAccount(in.Username, in.Password, in.Role)
 	if errors.Is(err, auth.ErrAccountExists) {
 		writeError(w, http.StatusConflict, err)
@@ -2521,6 +2541,8 @@ func (s *server) createAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	audit.Add(r.Context(), "name", in.Name)
+	audit.Add(r.Context(), "role", string(in.Role))
 	key, info, err := s.Auth.CreateAPIKey(in.Name, in.Days, in.Role, in.AllowFrom)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)

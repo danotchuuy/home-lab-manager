@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"github.com/danotchuuy/home-lab-manager/internal/backup"
 	"github.com/danotchuuy/home-lab-manager/internal/console"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
@@ -51,7 +52,9 @@ type Options struct {
 	Notifier notify.Notifier
 	// Players says how many players are on a server, if that's known.
 	Players func(server string) (int, bool)
-	Log     *slog.Logger
+	// Audit records each run.
+	Audit audit.Recorder
+	Log   *slog.Logger
 	// Now and Sleep are for tests.
 	Now   func() time.Time
 	Sleep func(ctx context.Context, d time.Duration) error
@@ -452,6 +455,15 @@ func (s *Service) finish(server string, t Task, run Run) {
 	}
 	s.opts.Log.Log(context.Background(), level, "scheduled task", "server", server, "task", t.Name,
 		"trigger", run.Trigger, "result", run.Result, "err", run.Error)
+	if s.opts.Audit != nil {
+		res := audit.ResultOK
+		if run.Result == ResultFailed || run.Result == ResultMissed {
+			res = audit.ResultError
+		}
+		s.opts.Audit.Record(audit.Entry{Actor: "hlm", ActorKind: audit.ActorHLM, Action: "tasks.run",
+			Target: server + "/" + t.Name, Server: server, Result: res, Error: run.Error,
+			Details: map[string]string{"trigger": run.Trigger, "result": run.Result}})
+	}
 	if s.opts.Notifier == nil {
 		return
 	}
