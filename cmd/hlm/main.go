@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -25,6 +26,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/backup"
 	"github.com/danotchuuy/home-lab-manager/internal/catalog"
 	"github.com/danotchuuy/home-lab-manager/internal/cftunnel"
+	"github.com/danotchuuy/home-lab-manager/internal/console"
 	"github.com/danotchuuy/home-lab-manager/internal/deploy"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/forwarding"
@@ -333,6 +335,23 @@ func run(log *slog.Logger) error {
 	certs.UseNotifier(notifier)
 	go certs.Run(ctx)
 	go notifier.Run(ctx)
+	// Commands typed into servers' consoles.
+	consoles := console.New(console.Options{
+		Secrets: store,
+		Servers: mgr,
+		Docker:  dc,
+		HostAddresses: func() []string {
+			// Where the Docker host's published ports are, seen from here.
+			if !strings.HasPrefix(dc.Host(), "unix://") {
+				if u, err := url.Parse(dc.Host()); err == nil {
+					return []string{u.Hostname()}
+				}
+			}
+			return []string{"127.0.0.1", host.LANAddress()}
+		},
+		Log: log,
+	})
+	go consoles.Run(ctx)
 	handler := api.Handler(api.Options{
 		Docker:      dc,
 		Catalog:     cat,
@@ -349,6 +368,7 @@ func run(log *slog.Logger) error {
 		Groups:      groups,
 		HTTPS:       certs,
 		Notify:      notifier,
+		Console:     consoles,
 		Token:       env("HLM_TOKEN", ""),
 		WebDir:      env("HLM_WEB_DIR", ""),
 		Log:         log,

@@ -26,6 +26,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/catalog"
 	"github.com/danotchuuy/home-lab-manager/internal/cftunnel"
 	"github.com/danotchuuy/home-lab-manager/internal/cloudflare"
+	"github.com/danotchuuy/home-lab-manager/internal/console"
 	"github.com/danotchuuy/home-lab-manager/internal/deploy"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/files"
@@ -60,7 +61,9 @@ type Options struct {
 	// HTTPS serves hlm with a Let's Encrypt certificate, if it's turned on.
 	HTTPS *tlscert.Service
 	// Notify sends alerts to notification targets.
-	Notify      *notify.Service
+	Notify *notify.Service
+	// Console sends servers commands.
+	Console     *console.Service
 	Version     string
 	AppdataRoot string
 	// Token, when set, must be sent as a bearer token (or ?token= for
@@ -406,6 +409,11 @@ func (s *server) removeServer(w http.ResponseWriter, r *http.Request) {
 	// A new server with this name shouldn't get its access.
 	if err := s.Groups.ForgetServer(srv.Name); err != nil {
 		s.Log.Warn("take deleted server out of its groups", "server", srv.Name, "err", err)
+	}
+	if s.Console != nil {
+		if err := s.Console.ForgetServer(srv.Name); err != nil {
+			s.Log.Warn("forget deleted server's console settings", "server", srv.Name, "err", err)
+		}
 	}
 	if s.Notify != nil {
 		if err := s.Notify.ForgetServer(srv.Name); err != nil {

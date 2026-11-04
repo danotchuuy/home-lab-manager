@@ -1,18 +1,25 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, followEvents } from "../api";
 import { ansiCSS, parseAnsiLine, type AnsiSegment, type AnsiStyle } from "../ansi";
 
 const MAX_LINES = 5000;
 
+/** What a line is: output from the container, or a console command, its reply or an error added here. */
+export type LineKind = "command" | "reply" | "error";
+
 /** A line of output, split into ANSI-styled segments. */
 interface LogLine {
   id: number;
   segments: AnsiSegment[];
+  kind?: LineKind;
 }
 
+/** Adds lines of the given kind to the console, below the output so far. */
+export type AppendLines = (text: string, kind: LineKind) => void;
+
 /** One line; memoized so new output doesn't re-render the lines above it. */
-const Line = memo(function Line({ segments }: { segments: AnsiSegment[] }) {
-  return (
+const Line = memo(function Line({ segments, kind }: { segments: AnsiSegment[]; kind?: LineKind }) {
+  const content = (
     <>
       {segments.map((s, i) => {
         const css = ansiCSS(s.style);
@@ -27,10 +34,24 @@ const Line = memo(function Line({ segments }: { segments: AnsiSegment[] }) {
       {"\n"}
     </>
   );
+  return kind ? <span className={`console-${kind}`}>{content}</span> : content;
 });
 
-/** Follows a server's logs as server-sent events; `url` follows another container's instead. */
-export function LogViewer({ serverId, url, running }: { serverId?: string; url?: string; running: boolean }) {
+/**
+ * Follows a server's logs as server-sent events; `url` follows another container's instead. `footer` is shown
+ * under the output, and can add lines to it, such as console commands and their replies.
+ */
+export function LogViewer({
+  serverId,
+  url,
+  running,
+  footer,
+}: {
+  serverId?: string;
+  url?: string;
+  running: boolean;
+  footer?: (append: AppendLines) => ReactNode;
+}) {
   const src = url ?? api.logsUrl(serverId ?? "");
   const [lines, setLines] = useState<LogLine[]>([]);
   // Colors carry over from one line to the next, as in a terminal.
@@ -96,6 +117,16 @@ export function LogViewer({ serverId, url, running }: { serverId?: string; url?:
     if (follow && box) box.scrollTop = box.scrollHeight;
   }, [lines, follow]);
 
+  const append = useCallback<AppendLines>((text, kind) => {
+    const added = text.split("\n").map((t) => ({ id: nextId.current++, segments: parseAnsiLine(t, {}).segments, kind }));
+    setLines((prev) => {
+      const next = prev.concat(added);
+      return next.length > MAX_LINES ? next.slice(next.length - MAX_LINES) : next;
+    });
+    // A command is worth seeing the answer to.
+    if (kind === "command") setFollow(true);
+  }, []);
+
   function onScroll() {
     const box = boxRef.current;
     if (!box) return;
@@ -121,9 +152,10 @@ export function LogViewer({ serverId, url, running }: { serverId?: string; url?:
         {lines.length === 0 ? (
           <span className="muted">No log output yet.</span>
         ) : (
-          lines.map((l) => <Line key={l.id} segments={l.segments} />)
+          lines.map((l) => <Line key={l.id} segments={l.segments} kind={l.kind} />)
         )}
       </pre>
+      {footer?.(append)}
     </div>
   );
 }

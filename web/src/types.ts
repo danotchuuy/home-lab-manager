@@ -1196,3 +1196,53 @@ export interface NotifyRecord {
   suppressed?: boolean;
   deliveries: NotifyDelivery[];
 }
+
+/** How a server takes console commands. */
+export type ConsoleMode = "" | "stdin" | "rcon" | "exec";
+
+/** A server's console settings; the password is never sent back. */
+export interface ConsoleSettings {
+  mode: ConsoleMode;
+  /** RCON: an address to reach the port at instead of finding it; port is then the port there. */
+  host?: string;
+  /** RCON: the container's RCON port; 0 or empty finds it. */
+  port?: number;
+  /** RCON: a password to use instead of the variable's. Blank keeps the saved one. */
+  password?: string;
+  /** RCON: the container's environment variable holding the password. */
+  passwordVar?: string;
+  /** Exec: a command line run in the container, with {command} where the command goes. */
+  exec?: string;
+  quickCommands?: string[];
+}
+
+/** PUT /api/servers/{id}/console */
+export interface ConsoleInput extends ConsoleSettings {
+  clearPassword?: boolean;
+}
+
+/** GET /api/servers/{id}/console */
+export interface ConsoleStatus {
+  settings: ConsoleSettings;
+  hasPassword: boolean;
+  /** Whether commands can be sent now; reason says why not. */
+  ready: boolean;
+  reason?: string;
+  /** How the server looks like it takes commands, and why. */
+  detected?: ConsoleSettings;
+  detectedBecause?: string;
+  /** The container accepts input (-i). */
+  stdinOpen: boolean;
+  running: boolean;
+  game?: string;
+  quickCommands: string[];
+  envVars: string[];
+}
+
+/** POST /api/servers/{id}/console/command */
+export interface ConsoleResult {
+  mode: ConsoleMode;
+  /** The reply over RCON or from the exec command; stdin commands' output is in the logs. */
+  output: string;
+  exitCode?: number;
+}

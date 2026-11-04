@@ -18,6 +18,9 @@ import type {
   BackupSettings,
   BackupSettingsInput,
   CategoryCount,
+  ConsoleInput,
+  ConsoleResult,
+  ConsoleStatus,
   ConfigBackupOverview,
   ConfigBackupPlan,
   DeployEvent,
@@ -503,6 +506,21 @@ export const api = {
 
   update: (id: string, onEvent: (e: DeployEvent) => void) =>
     stream(`/api/servers/${encodeURIComponent(id)}/update`, { method: "POST" }, onEvent),
+
+  console: (id: string) => json<ConsoleStatus>(`/api/servers/${encodeURIComponent(id)}/console`),
+  saveConsole: (id: string, input: ConsoleInput) =>
+    json<ConsoleStatus>(`/api/servers/${encodeURIComponent(id)}/console`, { method: "PUT", body: JSON.stringify(input) }),
+  /** Checks console settings before they're saved; resolves to a description of what worked. */
+  testConsole: (id: string, input: ConsoleInput) =>
+    json<{ message: string }>(`/api/servers/${encodeURIComponent(id)}/console/test`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  consoleCommand: (id: string, command: string) =>
+    json<ConsoleResult>(`/api/servers/${encodeURIComponent(id)}/console/command`, {
+      method: "POST",
+      body: JSON.stringify({ command }),
+    }),
 
   /** Path of a stream of log lines, for followEvents. */
   logsUrl: (id: string, tail = 500) => withTail(`/api/servers/${encodeURIComponent(id)}/logs`, tail),

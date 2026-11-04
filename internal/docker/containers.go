@@ -65,6 +65,7 @@ type ContainerJSON struct {
 		Env          []string            `json:"Env"`
 		Labels       map[string]string   `json:"Labels"`
 		Tty          bool                `json:"Tty"`
+		OpenStdin    bool                `json:"OpenStdin"`
 		ExposedPorts map[string]struct{} `json:"ExposedPorts"`
 	} `json:"Config"`
 	NetworkSettings struct {

@@ -287,6 +287,44 @@ its own, so a multi-line XML comment or YAML text block can be colored as if it 
 Many games only read their settings at startup and some rewrite them on shutdown, so stop the server, edit, then start
 it again.
 
+## Sending commands to a server
+
+Under a server's **Console** output there's a command line. Commands go to the server in one of three ways, chosen in
+**Console settings** (managers of the server; operators can then use it):
+
+- **Typed into the server's console (stdin):** the command is written to the server program's input, as if typed at
+  its own console, and its answer shows up in the output. hlm creates every server with its input open (`-i`), as
+  Unraid does, so this works for servers that read commands there, such as Terraria, Factorio, or Minecraft run
+  directly. A server whose Docker options turn input off (`--interactive=false`) can't take commands this way.
+- **RCON:** hlm signs in to the game's RCON port and shows the reply under the command. It works with games that speak
+  the Source RCON protocol: Minecraft, Palworld, ARK, Rust (legacy RCON), Counter-Strike 2, Conan Exiles and others.
+  - **Password:** from one of the container's variables (such as `RCON_PASSWORD` or `ADMIN_PASSWORD`), or entered by
+    hand for games that keep it in a settings file. One entered by hand is stored encrypted and never shown again; it's
+    hidden from replies, should a game echo it.
+  - **Port:** the RCON port inside the container. hlm finds it from a variable like `RCON_PORT`, a usual RCON port the
+    container exposes or publishes, or the game's usual one.
+  - **Address:** hlm connects straight to the container on its networks, or else to the port published on the Docker
+    host, and remembers what worked. If it can't reach the server, enter the address by hand.
+  - **Connection:** it's kept open between commands and closed after 5 idle minutes.
+- **A command run in the container:** a command line run in the container for each command, with `{command}` replaced
+  by what you type (or added at the end), such as `rcon-cli {command}`. It isn't run by a shell. Images like
+  `itzg/minecraft-server` and Palworld's come with `rcon-cli`, which already knows the password.
+
+**Console settings** suggest a setup when the server's image or settings make it clear: `rcon-cli` or `send-command`
+for the images that have them, RCON when there's a password variable and a port, and typing into the console for games
+known to read it. **Test** checks the settings before saving them: it signs in over RCON, looks for the command in the
+container, or checks the container takes input.
+
+- Commands are at most 1 KiB; control characters other than tabs are removed. Each person can send at most 5 commands a
+  second to a server.
+- Commands you sent before are kept in your browser: ↑ and ↓ go through them.
+- Shortcuts above the command line put common commands for the game (Minecraft, Palworld, ARK, Rust, Terraria,
+  Factorio, Counter-Strike 2, 7 Days to Die) and your own into the command line, for you to finish and send.
+- hlm logs each command, with who sent it, but not the reply.
+
+Console commands can do whatever the game's admins can, and some games can run scripts or change files through them,
+so giving someone the **operator** role on a server lets them administer the game.
+
 ## Backups to S3 (SeaweedFS, MinIO, …)
 
 A server's **Backups** tab copies folders you choose from its container to S3-compatible storage, such as SeaweedFS,
@@ -881,8 +919,8 @@ own **Settings** tab.
 | Role in a group | Can |
 | --- | --- |
 | **Viewer** | See the server, its stats and its port and backup status, but not its settings, logs or files, which can hold passwords |
-| **Operator** | Also start, stop, restart and update it, read its logs, settings and files, and take and download backups. Settings that look like secrets (names with `TOKEN`, `SECRET`, `PASS`, `PWD`, `KEY`, `CREDENTIAL`, `AUTH` or `PRIVATE`, items the template masks, extra parameters and post arguments) are left out |
-| **Manager** | Also change its ports and variables, edit files, set start on boot and port forwarding, change the backup plan, and restore and delete backups |
+| **Operator** | Also start, stop, restart and update it, [send it console commands](#sending-commands-to-a-server), read its logs, settings and files, and take and download backups. Settings that look like secrets (names with `TOKEN`, `SECRET`, `PASS`, `PWD`, `KEY`, `CREDENTIAL`, `AUTH` or `PRIVATE`, items the template masks, extra parameters and post arguments) are left out |
+| **Manager** | Also change its ports and variables, edit files, set up its console, set start on boot and port forwarding, change the backup plan, and restore and delete backups |
 
 Some things always take an admin, because they amount to control of the host or of other servers: deleting servers,
 installing them (except for [deployer keys](#deployer-keys)), importing templates, and changing a server's paths, devices, network, extra items or Docker options.
@@ -1150,6 +1188,9 @@ when the `HLM_*` one isn't set.
 | `GET /api/servers/{id}/config`                 | Template plus the saved settings, for an edit form.                               |
 | `PUT /api/servers/{id}/config`                 | Recreate with new settings. Streams NDJSON.                                       |
 | `GET /api/servers/{id}/logs?tail=500`          | Server-sent events, one log line per event.                                       |
+| `GET/PUT /api/servers/{id}/console`            | How the server takes [console commands](#sending-commands-to-a-server): `{mode, host?, port?, password?, passwordVar?, exec?, quickCommands?}` (`mode` is `stdin`, `rcon`, `exec` or empty), plus whether it's ready, what was detected, and quick commands. The password is never returned; `PUT` with it empty keeps it, and with `clearPassword` removes it. `PUT` takes a manager. |
+| `POST /api/servers/{id}/console/test`          | Checks console settings as given, without saving them (a manager).               |
+| `POST /api/servers/{id}/console/command`       | `{command}`: sends it; returns `{mode, output, exitCode?}`. Over stdin, the answer is in the logs instead. |
 | `GET /api/servers/{id}/files?path=`            | List a directory in the server's container, plus its data folders.                |
 | `GET /api/servers/{id}/files/content?path=`    | Read a text file (up to 1 MiB).                                                   |
 | `PUT /api/servers/{id}/files/content`          | `{path, content, expectedMtime}`: save a file; 409 if it changed since it was read. |

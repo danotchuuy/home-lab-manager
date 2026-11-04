@@ -173,7 +173,7 @@ func (m *Manager) serverEvent(ctx context.Context, e docker.EventMessage, name s
 		}
 		m.notify(notify.Event{
 			Kind: notify.KindServerCrashed, Title: name + " crashed", Message: msg, Server: name,
-			Link: "/servers/" + name + "?tab=console", Time: e.When(),
+			Link: "/servers/" + name, Time: e.When(),
 			Fields: map[string]string{"Exit code": cmp.Or(code, "unknown")},
 		})
 	case strings.HasPrefix(e.Action, "health_status"):
