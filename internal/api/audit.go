@@ -40,6 +40,8 @@ var auditNames = map[string]string{
 	"POST /api/servers/bulk":                            "servers.bulk",
 	"POST /api/hosts/setup-docker":                      "hosts.setup-docker",
 	"POST /api/hosts/setup-tls":                         "hosts.setup-tls",
+	"POST /api/hosts/agent-enrolment":                   "hosts.agent-enrolment",
+	"POST /api/agent/enrol":                             "hosts.agent-enrolled",
 	"POST /api/servers/{id}/clone/preview":              "-",
 	"GET /api/integrations/backup/targets/{target}/key": "integrations.backup.targets.key",
 }

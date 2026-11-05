@@ -1818,7 +1818,7 @@ export interface DockerHost {
   name: string;
   local?: boolean;
   status?: { id: string; ok: boolean; error?: string; checked: string };
-  kind?: "tcp" | "ssh";
+  kind?: "tcp" | "ssh" | "agent";
   url?: string;
   ca?: string;
   cert?: string;
@@ -1827,6 +1827,25 @@ export interface DockerHost {
   socket?: string;
   appdataRoot?: string;
   address?: string;
+  /** For a host with hlm's agent: its connection. */
+  agent?: AgentStatus;
+}
+
+/** A host's agent's connection to hlm. */
+export interface AgentStatus {
+  connected: boolean;
+  since?: string;
+  lastSeen?: string;
+  version?: string;
+  remote?: string;
+}
+
+/** A single-use token for a new host's agent. */
+export interface AgentEnrolment {
+  token: string;
+  host: DockerHost;
+  expires: string;
+  version?: string;
 }
 
 /** A host to save: the TLS client key is only ever sent, never shown. */

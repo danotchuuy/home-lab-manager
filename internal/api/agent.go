@@ -1,0 +1,76 @@
+package api
+
+import (
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"time"
+
+	"github.com/danotchuuy/home-lab-manager/internal/agent"
+	"github.com/danotchuuy/home-lab-manager/internal/audit"
+	"github.com/danotchuuy/home-lab-manager/internal/hosts"
+	"github.com/danotchuuy/home-lab-manager/internal/statuspage"
+)
+
+// --- Hosts' agents ---
+
+// enrolLimiter slows down guessing enrolment tokens (which are long and
+// random anyway): ten tries, then one a minute per address.
+var enrolLimiter = &statuspage.Limiter{Rate: 1.0 / 60, Burst: 10}
+
+// createEnrolment makes a single-use token for a new host's agent; the UI
+// turns it into the command to run there.
+func (s *server) createEnrolment(w http.ResponseWriter, r *http.Request) {
+	in, ok := readHost(w, r)
+	if !ok {
+		return
+	}
+	audit.Add(r.Context(), "host", in.ID)
+	e, err := s.Hosts.CreateEnrolment(in.Host)
+	if err != nil {
+		writeHostError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"token": e.Token, "host": e.Host, "expires": e.Expires, "version": s.Version})
+}
+
+// enrolAgent trades an enrolment token for the agent's credential. It's
+// called by "hlm agent", not a signed-in user: the token is the proof.
+func (s *server) enrolAgent(w http.ResponseWriter, r *http.Request) {
+	if s.Hosts == nil || s.Agents == nil {
+		writeError(w, http.StatusNotFound, errors.New("agents can't connect to this hlm"))
+		return
+	}
+	if !enrolLimiter.Allow(remoteHost(r), time.Now()) {
+		writeError(w, http.StatusTooManyRequests, errors.New("too many tries; wait a minute"))
+		return
+	}
+	var in agent.EnrolRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&in); err != nil || in.Token == "" {
+		writeError(w, http.StatusBadRequest, errors.New("send the enrolment token"))
+		return
+	}
+	h, cred, err := s.Hosts.Enrol(in.Token)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, hosts.ErrBadToken) {
+			status = http.StatusUnauthorized
+		}
+		writeError(w, status, err)
+		return
+	}
+	audit.Add(r.Context(), "host", h.ID)
+	audit.Add(r.Context(), "version", in.Version)
+	writeJSON(w, http.StatusOK, agent.EnrolResponse{Host: h.ID, Credential: cred})
+}
+
+// agentConnect takes an agent's connection (a WebSocket, signed in with
+// its credential).
+func (s *server) agentConnect(w http.ResponseWriter, r *http.Request) {
+	if s.Agents == nil {
+		writeError(w, http.StatusNotFound, errors.New("agents can't connect to this hlm"))
+		return
+	}
+	s.Agents.ServeHTTP(w, r)
+}

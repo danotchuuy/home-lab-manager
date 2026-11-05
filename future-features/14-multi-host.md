@@ -2,7 +2,7 @@
 
 **Priority:** Low (large) · **Depends on:** nothing, but touches almost everything
 
-> **Status: done (phases 1–3; the agent is a follow-up)** (branch `feature/14-multi-host`). See the README's
+> **Status: done** (phases 1–3 on branch `feature/14-multi-host`; the agent on `feature/14-agent`). See the README's
 > [More Docker hosts](../README.md#more-docker-hosts). Where the result differs from this plan:
 >
 > - **IDs are `name@host`, not `host/name`,** and servers on the local host keep their plain names. Docker doesn't allow
@@ -28,7 +28,15 @@
 > - **Added: TLS set up over SSH.** For a TCP host, hlm can make a per-host CA (key discarded after signing), a server
 >   and a client certificate, install the server's, and start dockerd with `--tlsverify` on port 2376 through a
 >   systemd drop-in (rolled back if Docker doesn't start), then save the host with its client certificate.
-> - **Not built (yet):** the `hlm agent` mode (B) and enrolment tokens; host metrics, disk usage and deleted-server data
+> - **Agent mode (B), built later:** `hlm agent` (the same binary and image) dials out to hlm over a WebSocket
+>   (`/api/agent/connect`), not mTLS: hlm is often behind a reverse proxy or Cloudflare Tunnel that ends TLS before it,
+>   and those pass WebSockets on. Streams are multiplexed with yamux (`github.com/hashicorp/yamux`, the one new
+>   dependency); hlm's Docker client dials a stream per connection, so everything (attach, logs, events, archives)
+>   works unchanged. The agent authenticates with a credential from a single-use, one-hour enrolment token (made by a
+>   confirmed admin; only hashes are stored), checks hlm's certificate (plain HTTP only with `--allow-http`), and passes
+>   on only an allow-list of the Docker calls hlm makes. Hosts gain `kind: "agent"`. Host metrics (`/proc`) and host
+>   folder reads through the agent weren't built: hlm's files and backups already go through Docker.
+> - **Not built (yet):** host metrics, disk usage and deleted-server data
 >   for other hosts (the Host page is the local host's); Compose stacks on other hosts; "host" as an RBAC grant target.
 
 ## Why
@@ -99,5 +107,5 @@ does TLS.
 - [x] Extra hosts over TLS/SSH
 - [x] UI host picker and badges
 - [x] Per-host network features (links, queries, UniFi, Cloudflare Tunnel; not a cloudflared/WireGuard per host)
-- [ ] Agent mode + enrolment
+- [x] Agent mode + enrolment
 - [x] README section

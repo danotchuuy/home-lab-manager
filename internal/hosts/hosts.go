@@ -1,6 +1,7 @@
 // Package hosts keeps the other Docker hosts hlm manages servers on, and
-// connects to them: Docker's API over TCP with TLS, or Docker's socket on
-// the host reached over SSH.
+// connects to them: Docker's API over TCP with TLS, Docker's socket on the
+// host reached over SSH, or hlm's agent on the host, which connects out to
+// hlm.
 package hosts
 
 import (
@@ -20,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/danotchuuy/home-lab-manager/internal/agent"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
 	"github.com/danotchuuy/home-lab-manager/internal/remote"
@@ -34,8 +36,9 @@ const (
 
 // Kinds of connection.
 const (
-	KindTCP = "tcp"
-	KindSSH = "ssh"
+	KindTCP   = "tcp"
+	KindSSH   = "ssh"
+	KindAgent = "agent"
 )
 
 // DefaultSocket is where Docker's socket usually is.
@@ -97,7 +100,10 @@ type Options struct {
 	Credentials func(ctx context.Context, ref string) (docker.RegistryAuth, bool)
 	// OnChange gets the hosts whenever they change, and at Load.
 	OnChange func([]manager.RemoteHost)
-	Log      *slog.Logger
+	// Agents are the agents' connections; without it, hosts can't have
+	// agents.
+	Agents *agent.Hub
+	Log    *slog.Logger
 }
 
 // Registry keeps the hosts and their connections.
@@ -127,7 +133,12 @@ func New(o Options) *Registry {
 	if o.Log == nil {
 		o.Log = slog.Default()
 	}
-	return &Registry{opts: o, conns: map[string]*conn{}}
+	r := &Registry{opts: o, conns: map[string]*conn{}}
+	if o.Agents != nil {
+		o.Agents.Authenticate = r.authenticateAgent
+		o.Agents.OnConnect = r.agentChanged
+	}
+	return r
 }
 
 func (r *Registry) load() ([]Host, error) {
@@ -264,8 +275,13 @@ func validate(h *Host, key string) error {
 		if h.Address == "" {
 			h.Address = h.SSH.Host
 		}
+	case KindAgent:
+		h.URL, h.CA, h.Cert, h.HasKey, h.SSH, h.Socket = "", "", "", false, nil, ""
+		if h.Address == "" {
+			return errors.New("give the host's address on your network (its IP address or name), for its servers' ports")
+		}
 	default:
-		return errors.New(`connect over "tcp" (Docker's API with TLS) or "ssh"`)
+		return errors.New(`connect over "tcp" (Docker's API with TLS), "ssh" or "agent"`)
 	}
 	return nil
 }
@@ -320,6 +336,9 @@ func (r *Registry) connectWith(h Host, key string) (*conn, error) {
 		c.ssh = &sshDialer{target: *h.SSH, socket: h.Socket, key: r.opts.SSHKey, log: r.opts.Log.With("host", h.ID)}
 		cfg.Host = "ssh://" + net.JoinHostPort(h.SSH.Host, strconv.Itoa(h.SSH.Port)) + h.Socket
 		cfg.Dial = c.ssh.dial
+	case KindAgent:
+		cfg.Host = "agent://" + h.ID
+		cfg.Dial = r.agentDial(h.ID)
 	}
 	client, err := docker.NewClient(cfg)
 	if err != nil {
@@ -387,6 +406,10 @@ func (r *Registry) prepare(in Input) (Host, string, error) {
 	key := strings.TrimSpace(in.Key)
 	if old, err := r.Get(h.ID); err == nil {
 		h.Created = old.Created
+		// An agent's host stays one: its agent is what reaches it.
+		if (old.Kind == KindAgent) != (h.Kind == KindAgent) {
+			return Host{}, "", errors.New("a host with an agent stays one: remove it and add it again to connect another way")
+		}
 		if key == "" && old.HasKey && h.Kind == KindTCP && h.Cert != "" {
 			if _, err := r.opts.Secrets.Get(secretKeyPrefix+h.ID, &key); err != nil {
 				return Host{}, "", err
@@ -394,6 +417,8 @@ func (r *Registry) prepare(in Input) (Host, string, error) {
 		}
 	} else if !errors.Is(err, ErrNotFound) {
 		return Host{}, "", err
+	} else if h.Kind == KindAgent {
+		return Host{}, "", errors.New("hosts with an agent are added by enrolling the agent")
 	}
 	if key = strings.TrimSpace(key); key != "" && h.Kind == KindTCP {
 		key += "\n"
@@ -432,9 +457,12 @@ func (r *Registry) Save(ctx context.Context, in Input, create bool) (Host, error
 	if err != nil {
 		return Host{}, err
 	}
-	if _, err := test(ctx, c); err != nil {
-		c.close()
-		return Host{}, err
+	// An agent's host can be changed while it's away.
+	if h.Kind != KindAgent {
+		if _, err := test(ctx, c); err != nil {
+			c.close()
+			return Host{}, err
+		}
 	}
 	now := time.Now().UTC()
 	if h.Created.IsZero() {
@@ -506,6 +534,13 @@ func (r *Registry) Delete(id string) error {
 	}
 	if err := r.opts.Secrets.Delete(secretKeyPrefix + id); err != nil {
 		return err
+	}
+	// Its agent's credential stops working, and it's disconnected.
+	if err := r.opts.Secrets.Delete(secretAgentPrefix + id); err != nil {
+		return err
+	}
+	if r.opts.Agents != nil {
+		r.opts.Agents.Drop(id)
 	}
 	r.mu.Lock()
 	if c, ok := r.conns[id]; ok {

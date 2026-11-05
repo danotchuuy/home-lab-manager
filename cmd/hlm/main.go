@@ -27,6 +27,7 @@ import (
 	// Time zone names work even where the system has no zone database.
 	_ "time/tzdata"
 
+	"github.com/danotchuuy/home-lab-manager/internal/agent"
 	"github.com/danotchuuy/home-lab-manager/internal/api"
 	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"github.com/danotchuuy/home-lab-manager/internal/auth"
@@ -86,6 +87,14 @@ func main() {
 			if err := sshLoginCommand(os.Args[2:], os.Stdout, os.Stderr); err != nil {
 				if !errors.Is(err, flag.ErrHelp) {
 					fmt.Fprintln(os.Stderr, "hlm ssh-login:", err)
+				}
+				os.Exit(1)
+			}
+			return
+		case "agent":
+			if err := agentCommand(log, os.Args[2:]); err != nil {
+				if !errors.Is(err, flag.ErrHelp) {
+					fmt.Fprintln(os.Stderr, "hlm agent:", err)
 				}
 				os.Exit(1)
 			}
@@ -306,8 +315,11 @@ func run(log *slog.Logger) error {
 	go tunnel.RenameLegacyConnector(ctx)
 	// Other Docker hosts, whose servers hlm manages too. They sign in over
 	// SSH with the same key as the proxy.
+	// Hosts can also have hlm's agent, which connects out to hlm.
+	agents := agent.NewHub(log)
+	defer agents.Close()
 	dockerHosts := hosts.New(hosts.Options{
-		Secrets: store, SSHKey: relay.KeyPair, Credentials: registries.For, OnChange: mgr.SetHosts, Log: log,
+		Secrets: store, SSHKey: relay.KeyPair, Credentials: registries.For, OnChange: mgr.SetHosts, Agents: agents, Log: log,
 	})
 	if err := dockerHosts.Load(); err != nil {
 		log.Warn("load Docker hosts", "err", err)
@@ -595,6 +607,7 @@ func run(log *slog.Logger) error {
 		Transfer:      transfers,
 		Stacks:        stacks,
 		Hosts:         dockerHosts,
+		Agents:        agents,
 		Cleanup:       cleaner,
 		Prefs:         prefs.New(store),
 		StatusPage:    statusPage,

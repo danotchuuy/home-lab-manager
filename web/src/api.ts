@@ -88,6 +88,7 @@ import type {
   WireGuardResult,
   WireGuardStatus,
   SSHKeyInfo,
+  AgentEnrolment,
   DockerHost,
   DockerHostInput,
   DockerVersion,
@@ -470,6 +471,9 @@ export const api = {
   updateHost: (h: DockerHostInput) =>
     json<DockerHost>(`/api/hosts/${encodeURIComponent(h.id)}`, { method: "PUT", body: JSON.stringify(h) }),
   deleteHost: (id: string) => json<void>(`/api/hosts/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  /** A single-use token for a new host's agent (confirmed admins). */
+  agentEnrolment: (h: DockerHostInput) =>
+    json<AgentEnrolment>("/api/hosts/agent-enrolment", { method: "POST", body: JSON.stringify(h) }),
   checkHost: (id: string) => json<DockerVersion>(`/api/hosts/${encodeURIComponent(id)}/check`, { method: "POST" }),
   /** Signs in to an SSH host: is Docker there, and how would hlm set it up? */
   inspectHost: (h: DockerHostInput) =>

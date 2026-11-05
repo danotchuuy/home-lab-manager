@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/danotchuuy/home-lab-manager/internal/agent"
 	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"github.com/danotchuuy/home-lab-manager/internal/hosts"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
@@ -32,6 +33,8 @@ type hostView struct {
 	Socket      string              `json:"socket,omitempty"`
 	AppdataRoot string              `json:"appdataRoot,omitempty"`
 	Address     string              `json:"address,omitempty"`
+	// Agent is the connection of the host's agent.
+	Agent *agent.Status `json:"agent,omitempty"`
 }
 
 func (s *server) listHosts(w http.ResponseWriter, r *http.Request) {
@@ -65,6 +68,9 @@ func (s *server) listHosts(w http.ResponseWriter, r *http.Request) {
 		if admin {
 			v.Kind, v.URL, v.CA, v.Cert, v.HasKey = h.Kind, h.URL, h.CA, h.Cert, h.HasKey
 			v.SSH, v.Socket, v.AppdataRoot = h.SSH, h.Socket, h.AppdataRoot
+			if h.Kind == hosts.KindAgent {
+				v.Agent = s.Hosts.AgentStatus(h.ID)
+			}
 		}
 		out = append(out, v)
 	}

@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/danotchuuy/home-lab-manager/internal/agent"
 	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"github.com/danotchuuy/home-lab-manager/internal/auth"
 	"github.com/danotchuuy/home-lab-manager/internal/autoupdate"
@@ -107,6 +108,8 @@ type Options struct {
 	Stacks *stack.Service
 	// Hosts are the other Docker hosts servers can be on.
 	Hosts *hosts.Registry
+	// Agents are the connections of hosts' agents.
+	Agents *agent.Hub
 	// Cleanup keeps the disk cleanup settings.
 	Cleanup *cleanup.Service
 	// Prefs keeps servers' tags and users' favourites.
@@ -169,8 +172,10 @@ func (s *server) auth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// The public status page (which answers 404 unless it's on).
-		if !strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api/status-page" || strings.HasPrefix(r.URL.Path, "/api/status-page/") {
+		// The public status page (which answers 404 unless it's on), and
+		// hosts' agents, which have their own credentials.
+		if !strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api/status-page" || strings.HasPrefix(r.URL.Path, "/api/status-page/") ||
+			strings.HasPrefix(r.URL.Path, "/api/agent/") {
 			next.ServeHTTP(w, r)
 			return
 		}
