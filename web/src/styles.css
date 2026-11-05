@@ -4244,3 +4244,11 @@ pre .muted {
   width: auto;
   max-width: 16rem;
 }
+
+/* Setting up another host's end of the WireGuard tunnel. */
+.wg-host-form {
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}

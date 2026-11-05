@@ -38,6 +38,22 @@ export function WireGuardTunnel({
   const [note, setNote] = useState<{ text: string; output?: string }>();
   const [check, setCheck] = useState<WireGuardCheck>();
   const otherHosts = (useHosts() ?? []).filter((h) => !h.local);
+  // The setup form open for another host's end, with that host's networks.
+  const [hostForm, setHostForm] = useState<{
+    host: string;
+    lanNetwork: string;
+    lanAddress: string;
+    networks?: { name: string; driver: string; subnet: string; parent?: string }[];
+    error?: string;
+  }>();
+  const openHostForm = (host: string) => {
+    const end = status?.hosts?.find((e) => e.host === host);
+    setHostForm({ host, lanNetwork: end?.lanNetwork ?? "", lanAddress: end?.lanAddress ?? "" });
+    api.hostLANNetworks(host).then(
+      (networks) => setHostForm((f) => (f && f.host === host ? { ...f, networks } : f)),
+      (e) => setHostForm((f) => (f && f.host === host ? { ...f, networks: [], error: (e as Error).message } : f)),
+    );
+  };
   // The last setup's console: its steps and the output of each, as they
   // happen. It stays up afterwards, until the next setup.
   const [log, setLog] = useState<{ step: boolean; text: string }[]>([]);
@@ -114,12 +130,15 @@ export function WireGuardTunnel({
     });
 
   // The tunnel's end on another Docker host.
-  const setupHost = (host: string) =>
+  const setupHost = (host: string, lan?: { lanNetwork: string; lanAddress: string }) =>
     run(`host:${host}`, async () => {
       setLog([]);
       let r: WireGuardResult | undefined;
       let failure: string | undefined;
-      await api.setupHostWireGuard(host, {}, (e) => {
+      // Without a choice, an end keeps how it runs.
+      const end = status?.hosts?.find((e) => e.host === host);
+      const input = lan ?? { lanNetwork: end?.lanNetwork ?? "", lanAddress: end?.lanAddress ?? "" };
+      await api.setupHostWireGuard(host, input, (e) => {
         if (e.stage === "step" || e.stage === "output") {
           const line = { step: e.stage === "step", text: e.message ?? "" };
           setLog((l) => [...l.slice(-1999), line]);
@@ -129,8 +148,10 @@ export function WireGuardTunnel({
       if (failure) throw new Error(failure);
       if (!r) throw new Error("The setup stopped without finishing; set it up again.");
       load(r.status);
-      const end = r.status.hosts?.find((h) => h.host === host);
-      let text = `${host}'s end of the tunnel is up at ${end?.homeAddress ?? "its address"}.`;
+      setHostForm(undefined);
+      const up = r.status.hosts?.find((h) => h.host === host);
+      let text = `${host}'s end of the tunnel is up at ${up?.homeAddress ?? "its address"}.`;
+      if (up?.lanNetwork) text += ` It reaches servers' own addresses on ${up.lanNetwork} (${up.lanSubnet}).`;
       if (r.apply && !r.applyError) text += ` nginx now relays ${host}'s servers through it.`;
       setNote({ text });
       if (r.applyError) setError({ message: `The end is up, but applying nginx failed: ${r.applyError}`, output: r.apply?.output });
@@ -324,9 +345,26 @@ export function WireGuardTunnel({
                           {end.home.running
                             ? "its hlm-wireguard container is running"
                             : end.home.error || `its hlm-wireguard container is ${end.home.state}`}
+                          {end.lanNetwork && (
+                            <>
+                              ; reaches servers&apos; own addresses on <code>{end.lanNetwork}</code> ({end.lanSubnet})
+                              {end.home.lanAddress ? (
+                                <>
+                                  {" "}
+                                  from <code>{end.home.lanAddress}</code>
+                                </>
+                              ) : (
+                                ", with no address there yet"
+                              )}
+                            </>
+                          )}
                           {check && (handshake ? `; last handshake ${timeAgo(handshake)}` : "; it hasn't connected yet")}{" "}
                           <button className="link-button" onClick={() => setupHost(h.id)} disabled={disabled || !!busy}>
                             {busy === `host:${h.id}` ? "setting up…" : "set up again"}
+                          </button>{" "}
+                          ·{" "}
+                          <button className="link-button" onClick={() => openHostForm(h.id)} disabled={disabled || !!busy}>
+                            change
                           </button>{" "}
                           ·{" "}
                           <button className="link-button danger" onClick={() => removeHost(h.id)} disabled={disabled || !!busy}>
@@ -336,10 +374,74 @@ export function WireGuardTunnel({
                       ) : (
                         <>
                           no end of the tunnel, so nginx can&apos;t relay its servers through it.{" "}
-                          <button className="btn small" onClick={() => setupHost(h.id)} disabled={disabled || !!busy}>
-                            {busy === `host:${h.id}` ? "Setting up…" : `Set up ${h.id}'s end`}
-                          </button>
+                          {hostForm?.host !== h.id && (
+                            <button className="btn small" onClick={() => openHostForm(h.id)} disabled={disabled || !!busy}>
+                              Set up {h.id}&apos;s end…
+                            </button>
+                          )}
                         </>
+                      )}
+                      {hostForm?.host === h.id && (
+                        <div className="wg-host-form">
+                          <div className="field-grid">
+                            <label className="field">
+                              <span className="field-label">Reach servers with their own LAN address</span>
+                              <select
+                                value={hostForm.lanNetwork}
+                                onChange={(e) => setHostForm({ ...hostForm, lanNetwork: e.target.value })}
+                                disabled={!hostForm.networks}
+                              >
+                                <option value="">No: only {h.id}&apos;s published ports (host networking)</option>
+                                {hostForm.networks?.map((n) => (
+                                  <option key={n.name} value={n.name}>
+                                    Through {n.name} ({n.driver} {n.subnet}
+                                    {n.parent ? ` on ${n.parent}` : ""})
+                                  </option>
+                                ))}
+                              </select>
+                              <span className="field-help">
+                                {!hostForm.networks
+                                  ? `Loading ${h.id}'s networks…`
+                                  : hostForm.error
+                                    ? `Couldn't list ${h.id}'s networks: ${hostForm.error}`
+                                    : hostForm.networks.length
+                                      ? `For servers on one of ${h.id}'s macvlan/ipvlan networks: its end joins that network (and Docker's bridge, for published ports), and the proxy routes the network's subnet to it. One end per LAN.`
+                                      : `${h.id} has no macvlan or ipvlan networks. Servers with published ports don't need one.`}
+                              </span>
+                            </label>
+                            {hostForm.lanNetwork && (
+                              <label className="field">
+                                <span className="field-label">Its LAN address (optional)</span>
+                                <input
+                                  value={hostForm.lanAddress}
+                                  onChange={(e) => setHostForm({ ...hostForm, lanAddress: e.target.value })}
+                                  placeholder="Docker chooses one"
+                                  spellCheck={false}
+                                />
+                                <span className="field-help">
+                                  A free address on that network, outside your router&apos;s DHCP range.
+                                </span>
+                              </label>
+                            )}
+                          </div>
+                          <div className="btn-row">
+                            <button
+                              className="btn small primary"
+                              onClick={() =>
+                                setupHost(h.id, {
+                                  lanNetwork: hostForm.lanNetwork,
+                                  lanAddress: hostForm.lanNetwork ? hostForm.lanAddress.trim() : "",
+                                })
+                              }
+                              disabled={disabled || !!busy || !hostForm.networks}
+                            >
+                              {busy === `host:${h.id}` ? "Setting up…" : end ? "Save & set up again" : `Set up ${h.id}'s end`}
+                            </button>
+                            <button className="btn small ghost" onClick={() => setHostForm(undefined)} disabled={!!busy}>
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
                       )}
                     </li>
                   );

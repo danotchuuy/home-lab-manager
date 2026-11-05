@@ -16,6 +16,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/danotchuuy/home-lab-manager/internal/docker"
 )
 
 // UseDockerHosts gives the Docker of other hosts, by host ID, for the
@@ -112,6 +114,27 @@ func (s *Service) pushProxyEnd(ctx context.Context, wg WireGuard, extraNets []ne
 	}
 	if !strings.Contains(r.Stdout, "hlm:wgup") {
 		return out, fmt.Errorf("restarting WireGuard on the proxy server failed (exit status %d)", r.ExitCode)
+	}
+	return out, nil
+}
+
+// HostLANNetworks are the macvlan/ipvlan networks on another host that its
+// end can use for LAN mode.
+func (s *Service) HostLANNetworks(ctx context.Context, host string) ([]LANNetwork, error) {
+	if host == "" || host == localHost {
+		return nil, errors.New("this host's networks are in the tunnel's status")
+	}
+	hctx, err := s.onHost(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	nets, err := s.dk(hctx).ListNetworks(hctx)
+	if err != nil {
+		return nil, err
+	}
+	out := docker.LANNetworks(nets)
+	if out == nil {
+		out = []LANNetwork{}
 	}
 	return out, nil
 }
