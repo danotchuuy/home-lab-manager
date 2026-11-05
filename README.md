@@ -307,9 +307,8 @@ alerts as usual.
     `/proc` and root filesystem (the two read-only mounts in the command, as for hlm itself; leave them out and only
     its Docker is used). hlm asks every 15 seconds: the **Host** page has a picker for this host or an agent's host,
     with the live charts and the kept history (by the minute for a day, by the quarter hour for 30 days), and
-    [`/metrics`](#prometheus-metrics) has its `hlm_host_*` series with a `host` label. Disk usage by server and deleted
-    servers' data stay this host's only ([cleanup](#disk-cleanup) already works on every host). Hosts reached over SSH or TLS don't report these: nothing of hlm's runs
-    there to read them.
+    [`/metrics`](#prometheus-metrics) has its `hlm_host_*` series with a `host` label. (Hosts reached over SSH or TLS
+    report them too, see below.)
   - **Removing the host** disconnects its agent and its credential stops working; the agent says so and exits. Remove
     the `hlm-agent` container there too. The table shows each agent's connection: since when, and its version.
   - The agent's settings can also be given as `HLM_AGENT_SERVER`, `HLM_AGENT_TOKEN`, `HLM_AGENT_DATA` (default
@@ -328,12 +327,28 @@ alerts as usual.
 If a host can't be reached, the Servers page says so and its servers are left out until it's back; their settings in
 hlm are kept. Removing a host stops hlm managing its servers: they keep running there.
 
+The **Host** page has a picker at the top for this host or another. For each host it shows:
+
+- **CPU, memory, network and disks**, live and as [history](#resource-history), and in
+  [`/metrics`](#prometheus-metrics) with a `host` label. A host with [hlm's agent](#more-docker-hosts) reports them
+  every 15 seconds. On an SSH host, hlm runs a short script over its SSH connection every 15 seconds (it reads
+  `/proc` and runs `df`; nothing is installed). On a TLS host, the same script runs every minute in a throwaway
+  `busybox` container (labelled `io.hlm.helper=metrics`, no network) with the host's `/proc` and `/` mounted
+  read-only, which is removed straight away. The live charts span 360 samples: 30 minutes for this host and agents,
+  90 minutes for SSH hosts and 6 hours for TLS hosts.
+- **Disk usage by server**, from Docker's figures and the size of each data folder. On another host, the folders are
+  measured with `du` by one throwaway helper container per calculation (the host's `/` mounted read-only).
+- **Deleted servers' data**, kept and shown per host. **Delete** runs a helper container there, with the same
+  checks as here: never a system or top-level folder, the host's data folder itself, or a folder another container
+  still uses.
+- [Disk cleanup](#disk-cleanup), which already worked on every host.
+
+A [Compose stack](#compose-stacks) can go on any host too, and a [server group](#roles-and-server-groups) can hold a whole
+host.
+
 Limits for now:
 
-- The Host page's CPU, memory, network and disks are this host's and those of hosts with the agent; not those of hosts
-  reached over SSH or TLS. Disk usage by server and the data of deleted servers are this host's only.
-- [Compose stacks](#compose-stacks), hlm's own WireGuard and Cloudflare Tunnel containers, and self-update run on this
-  host.
+- hlm's own WireGuard and Cloudflare Tunnel containers, and self-update, run on this host.
 - Container IP addresses on another host's bridge networks can't be reached from here; hlm uses the host's published
   ports (or a server's own LAN address on a macvlan network) instead.
 
@@ -846,6 +861,9 @@ Some apps need several containers: an app with its database and cache, or a game
   container back.
 - **Delete stack** removes its containers and networks. Data folders and named volumes are kept, and listed on the
   Host page, as for deleted servers.
+- **Docker host.** With [more Docker hosts](#more-docker-hosts), a new stack's form asks which one it goes on; its
+  services, networks and relative data folders (under that host's data folder) are all there, and its services are
+  named `<name>@<host>`. A stack stays on its host: to move it, create it on the other one and delete the old one.
 
 What hlm reads from the file:
 
@@ -1644,7 +1662,10 @@ Everyone who signs in has a global role:
 
 **System → Server groups** puts servers in groups and says who may use them: local accounts, single sign-on users or
 groups, and API keys. A server can be in several groups; the highest role applies. Servers can also be added on their
-own **Settings** tab.
+own **Settings** tab. Servers on [other Docker hosts](#more-docker-hosts) go in by their full name (`name@host`), and
+with more than one host a group can also hold **whole Docker hosts**: every server on them, including ones installed
+there later. Removing a host takes it out of every group, so a different machine given the same ID later doesn't
+inherit its access.
 
 | Role in a group | Can |
 | --- | --- |
@@ -1945,7 +1966,7 @@ when the `HLM_*` one isn't set.
 | `POST /api/auth/download-ticket`               | `{url}` of a backup download returns a URL that works once, for a minute, from the same address: for downloads when signed in with a token. |
 | `POST /api/auth/ssh/challenge`, `POST /api/auth/ssh/login` | Sign in with an SSH key: `{username}` returns `{challenge}`; `{challenge, signature}` returns `{token, expires}`. |
 | `GET/POST /api/auth/keys`, `PUT/DELETE /api/auth/keys/{id}` | [API keys](#api-keys); `POST {name, days, role, allowFrom?}` returns the key, once; `PUT {allowFrom}`. Both need a [confirmed](#confirming-its-you) session. |
-| `GET/POST /api/groups`, `PUT/DELETE /api/groups/{id}` | [Server groups](#roles-and-server-groups): `{name, servers, grants}`. `GET` gives members their own groups, without grants. |
+| `GET/POST /api/groups`, `PUT/DELETE /api/groups/{id}` | [Server groups](#roles-and-server-groups): `{name, servers, hosts, grants}` (`hosts`: Docker host IDs, `local` for this one, whose every server is in the group). `GET` gives members their own groups, without grants. |
 | `PUT /api/servers/{id}/groups`                 | `{groups}`: the IDs of the groups a server is in.                                 |
 | `GET/PUT/DELETE /api/auth/oidc`                | [Single sign-on](#single-sign-on-with-authelia-openid-connect) settings; the client secret is never returned. |
 | `POST /api/auth/oidc/test`                     | Fetches the provider's discovery document for (unsaved) settings.                 |
@@ -2016,8 +2037,8 @@ when the `HLM_*` one isn't set.
 | `POST /api/hosts/setup-tls`                    | `{…host, ssh: {host, port, user, hostKey}, port?}`: make a CA and certificates, set Docker's API up with TLS on the host over SSH, then save it as a TCP host. Streams NDJSON. Confirmed session. |
 | `POST /api/hosts/setup-docker`                 | Install Docker CE on an SSH host (or start it, or add the user to the `docker` group), streaming the output as NDJSON. [Confirmed](#confirming-its-you) session. |
 | `GET /api/stacks`, `GET /api/stacks/{name}`   | [Compose stacks](#compose-stacks) and their services' state (the services the caller can see); admins also get the file and `.env`. |
-| `POST /api/stacks/preview`                     | `{name, yaml, env, existing}`: what creating (or, with `existing`, changing) the stack would do, per service. Admins. |
-| `POST /api/stacks`, `PUT /api/stacks/{name}`   | `{name, yaml, env}`: create a stack, or apply a changed file. Streams NDJSON. Admins. |
+| `POST /api/stacks/preview`                     | `{name, yaml, env, existing, host}`: what creating (or, with `existing`, changing) the stack would do, per service. Admins. |
+| `POST /api/stacks`, `PUT /api/stacks/{name}`   | `{name, yaml, env, host}`: create a stack (on `host`, this one by default), or apply a changed file (it stays on its host). Streams NDJSON. Admins. |
 | `POST /api/stacks/{name}/{action}`             | `start`, `stop`, `restart` or `update` the whole stack. Streams NDJSON. Operators of every service. |
 | `DELETE /api/stacks/{name}`                    | Remove the stack's containers and networks (data is kept). Admins.              |
 | `GET /api/servers/{id}/export?secrets=0\|1`    | The server's settings as an [export file](#export-import-and-clone). Operators; `secrets=1` (passwords included) takes a manager in a [confirmed](#confirming-its-you) browser session. |
@@ -2096,13 +2117,13 @@ when the `HLM_*` one isn't set.
 | `POST /api/system/update/check`                | Check GitHub for a newer hlm release.                                             |
 | `POST /api/system/update/apply`                | Install the latest release. Streams NDJSON; hlm restarts afterwards.             |
 | `POST /api/system/update/dismiss`              | Clear the result of the last update.                                              |
-| `GET /api/host?host=`                          | Host CPU, memory, network, filesystems and disk I/O, with 30 minutes of history: this host's, or (`host=`) a host's with [hlm's agent](#more-docker-hosts). When they can't be had, `available` is false and `reason` says why. |
+| `GET /api/host?host=`                          | Host CPU, memory, network, filesystems and disk I/O, with recent history: this host's, or (`host=`) another [Docker host's](#more-docker-hosts). When they can't be had, `available` is false and `reason` says why. |
 | `GET /api/host/history?range=1h\|6h\|24h\|7d\|30d&host=` | The host's (or, with `host=`, an agent host's) [resource history](#resource-history): `{step, times, series: {name: {avg, max}}}`, `null` where nothing was recorded. Admins only. |
 | `GET /api/servers/{id}/history?range=…`        | A server's resource history (a viewer).                                           |
 | `GET /metrics`                                 | [Prometheus](#prometheus) metrics: a metrics or admin key, or an allowed address. |
 | `GET/PUT /api/system/metrics`                  | `{allowFrom}`: who may scrape without a key; `PUT` needs a [confirmed](#confirming-its-you) session. |
-| `GET /api/host/storage`                        | Disk usage per server and Docker's totals (last background calculation).          |
-| `POST /api/host/storage/refresh`               | Recalculate disk usage now (runs in the background).                              |
+| `GET /api/host/storage?host=`                  | A Docker host's disk usage per server, deleted servers' data and Docker's totals (last background calculation; this host by default). |
+| `POST /api/host/storage/refresh?host=`         | Recalculate disk usage now, on every host (runs in the background), and return the host's last report. |
 | `POST /api/host/storage/deleted/{id}/delete`   | Delete a deleted server's folder or volume `{path, volume}` from disk.             |
 | `POST /api/host/storage/deleted/{id}/forget`   | Stop tracking a deleted server's folder or volume `{path, volume}`, or all of them without a `path`. |
 | `GET /api/jobs`                                | Installs and updates in progress, plus those that finished in the last minute.    |

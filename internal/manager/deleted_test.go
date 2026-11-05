@@ -127,11 +127,11 @@ func TestDeletedServerData(t *testing.T) {
 	if err := m.DeleteDeletedData(ctx, "v1", "/srv/appdata", false); !errors.Is(err, ErrNotTracked) {
 		t.Errorf("untracked: %v", err)
 	}
-	if err := m.checkDeletable(ctx, "/srv/appdata"); err == nil || !strings.Contains(err.Error(), "every server's data") {
+	if err := m.checkDeletable(ctx, LocalHost, "/srv/appdata"); err == nil || !strings.Contains(err.Error(), "every server's data") {
 		t.Errorf("appdata root: %v", err)
 	}
 	for _, p := range []string{"/srv", "/etc", "/srv/../etc", "relative/path"} {
-		if err := m.checkDeletable(ctx, p); err == nil {
+		if err := m.checkDeletable(ctx, LocalHost, p); err == nil {
 			t.Errorf("%s: want refusal", p)
 		}
 	}

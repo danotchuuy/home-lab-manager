@@ -1,6 +1,7 @@
 package hostmetrics
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"net/netip"
@@ -52,7 +53,7 @@ func TestSample(t *testing.T) {
 	dir := t.TempDir()
 	c := New(Config{ProcPath: dir, RootPath: "/", Interval: time.Second}, "")
 	fakeProc(t, dir, 1)
-	c.sample()
+	c.sample(context.Background())
 	s := c.Snapshot()
 	if !s.Available || s.Hostname != "gamebox" || s.CPU.Cores != 2 || s.Uptime != 3600.5 || s.CPU.Load1 != 0.5 {
 		t.Fatalf("first sample = %+v", s)
@@ -66,7 +67,7 @@ func TestSample(t *testing.T) {
 	c.prevAt = c.prevAt.Add(-time.Second)
 	c.mu.Unlock()
 	fakeProc(t, dir, 2)
-	c.sample()
+	c.sample(context.Background())
 	s = c.Snapshot()
 
 	// Busy 400 of 1000 jiffies in the interval.
@@ -98,7 +99,7 @@ func TestHistoryIsBounded(t *testing.T) {
 	fakeProc(t, dir, 1)
 	c := New(Config{ProcPath: dir, Interval: time.Second, History: 3}, "")
 	for i := 0; i < 6; i++ {
-		c.sample()
+		c.sample(context.Background())
 	}
 	if n := len(c.Snapshot().History); n != 3 {
 		t.Errorf("history length = %d, want 3", n)
@@ -120,9 +121,9 @@ func TestRealProc(t *testing.T) {
 		t.Skip("needs Linux procfs")
 	}
 	c := New(Config{Interval: 100 * time.Millisecond}, "")
-	c.sample()
+	c.sample(context.Background())
 	time.Sleep(200 * time.Millisecond)
-	c.sample()
+	c.sample(context.Background())
 	s := c.Snapshot()
 	if !s.Available || s.CPU.Cores == 0 || s.Memory.Total == 0 || len(s.Disks) == 0 {
 		t.Errorf("real host snapshot looks empty: %+v", s)

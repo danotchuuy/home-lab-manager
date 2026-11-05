@@ -88,8 +88,8 @@ export function DockerHosts() {
         Other machines hlm runs servers on, such as a NAS or a mini-PC. Their servers are listed with this host&apos;s,
         named <code>name@host</code>, with their console, files, backups and updates. hlm reaches their Docker over SSH
         (as a user in the <code>docker</code> group) or Docker&apos;s API over TCP with TLS, or through hlm&apos;s agent
-        on the host, which connects out to hlm, so nothing has to be opened there. Hosts with the agent also report
-        their CPU, memory, network and disks: choose one at the top of this page.
+        on the host, which connects out to hlm, so nothing has to be opened there. Choose a host at the top of this
+        page for its CPU, memory, network, disks and disk usage by server.
       </p>
       {error && <div className="alert error small">{error}</div>}
       {!hosts ? (

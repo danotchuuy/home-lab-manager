@@ -122,9 +122,29 @@ type Grant struct {
 type Group struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
-	// Servers are container names.
+	// Servers are container names (name@host on another Docker host).
 	Servers []string `json:"servers"`
-	Grants  []Grant  `json:"grants"`
+	// Hosts are Docker hosts ("local" for hlm's own) whose every server is
+	// in the group, including ones added later.
+	Hosts  []string `json:"hosts,omitempty"`
+	Grants []Grant  `json:"grants"`
+}
+
+// LocalHost is the Docker host hlm runs with, as group hosts name it.
+const LocalHost = "local"
+
+// HostOfServer is the Docker host of a server name: what follows its @, or
+// LocalHost.
+func HostOfServer(server string) string {
+	if i := strings.LastIndexByte(server, '@'); i >= 0 {
+		return server[i+1:]
+	}
+	return LocalHost
+}
+
+// Has reports whether a server is in the group: by name, or by its host.
+func (g Group) Has(server string) bool {
+	return slices.Contains(g.Servers, server) || slices.Contains(g.Hosts, HostOfServer(server))
 }
 
 // Principal is who a request comes from.
@@ -147,11 +167,14 @@ func (p Principal) holds(s Subject) bool {
 
 // Access is what one principal may do, as of when it was made.
 type Access struct {
-	admin   bool
-	roles   map[string]Role     // by server
-	groups  map[string][]string // the groups each server is seen in, by server
-	visible []Group             // the principal's groups, without grants
-	manages []string            // the IDs of the groups they have Manager in
+	admin  bool
+	roles  map[string]Role     // by server
+	groups map[string][]string // the groups each server is seen in, by server
+	// hostRoles and hostGroups are the same for groups' hosts.
+	hostRoles  map[string]Role
+	hostGroups map[string][]string
+	visible    []Group  // the principal's groups, without grants
+	manages    []string // the IDs of the groups they have Manager in
 }
 
 // Role returns the principal's role on a server: None if they can't see it.
@@ -159,7 +182,11 @@ func (a Access) Role(server string) Role {
 	if a.admin {
 		return Admin
 	}
-	return a.roles[server]
+	r := a.roles[server]
+	if h := a.hostRoles[HostOfServer(server)]; h.rank() > r.rank() {
+		r = h
+	}
+	return r
 }
 
 // Can reports whether the principal has at least want on a server.
@@ -172,7 +199,15 @@ func (a Access) Admin() bool { return a.admin }
 
 // GroupsOf returns the names of a server's groups that the principal may
 // see.
-func (a Access) GroupsOf(server string) []string { return a.groups[server] }
+func (a Access) GroupsOf(server string) []string {
+	out := slices.Clone(a.groups[server])
+	for _, g := range a.hostGroups[HostOfServer(server)] {
+		if !slices.Contains(out, g) {
+			out = append(out, g)
+		}
+	}
+	return out
+}
 
 // Groups returns the groups the principal has a grant in, without the grants.
 func (a Access) Groups() []Group { return a.visible }
@@ -182,7 +217,8 @@ func (a Access) ManagedGroups() []string { return a.manages }
 
 // computeAccess works out p's access from the groups.
 func computeAccess(p Principal, groups []Group) Access {
-	a := Access{admin: p.Admin(), roles: map[string]Role{}, groups: map[string][]string{}, visible: []Group{}}
+	a := Access{admin: p.Admin(), roles: map[string]Role{}, groups: map[string][]string{}, visible: []Group{},
+		hostRoles: map[string]Role{}, hostGroups: map[string][]string{}}
 	if !p.Role.Valid() {
 		return Access{roles: a.roles, groups: a.groups, visible: a.visible} // an unknown role has no grants
 	}
@@ -199,11 +235,17 @@ func computeAccess(p Principal, groups []Group) Access {
 		if role == Manager {
 			a.manages = append(a.manages, g.ID)
 		}
-		a.visible = append(a.visible, Group{ID: g.ID, Name: g.Name, Servers: g.Servers, Grants: []Grant{}})
+		a.visible = append(a.visible, Group{ID: g.ID, Name: g.Name, Servers: g.Servers, Hosts: g.Hosts, Grants: []Grant{}})
 		for _, srv := range g.Servers {
 			a.groups[srv] = append(a.groups[srv], g.Name)
 			if role.rank() > a.roles[srv].rank() {
 				a.roles[srv] = role
+			}
+		}
+		for _, h := range g.Hosts {
+			a.hostGroups[h] = append(a.hostGroups[h], g.Name)
+			if role.rank() > a.hostRoles[h].rank() {
+				a.hostRoles[h] = role
 			}
 		}
 	}
@@ -216,7 +258,10 @@ var (
 	ErrGroupExists = errors.New("there's already a server group with that name")
 )
 
-var validServer = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
+var (
+	validServer = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}(@[a-z0-9][a-z0-9-]{0,31})?$`)
+	validHost   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+)
 
 // Store keeps the groups in the encrypted secrets store, so hlm's
 // configuration backups include them.
@@ -286,6 +331,17 @@ func tidy(g Group) (Group, error) {
 		}
 	}
 	g.Servers = servers
+	var hosts []string
+	for _, h := range g.Hosts {
+		h = strings.TrimSpace(h)
+		if !validHost.MatchString(h) {
+			return g, fmt.Errorf("%q isn't a Docker host's ID", h)
+		}
+		if !slices.Contains(hosts, h) {
+			hosts = append(hosts, h)
+		}
+	}
+	g.Hosts = hosts
 	grants := make([]Grant, 0, len(g.Grants))
 	for _, gr := range g.Grants {
 		gr.Subject.Name = strings.TrimSpace(gr.Subject.Name)
@@ -442,6 +498,28 @@ func (s *Store) SetServerGroups(server string, ids []string) error {
 // with the same name doesn't get the old one's access.
 func (s *Store) ForgetServer(server string) error {
 	return s.SetServerGroups(server, nil)
+}
+
+// ForgetHost takes a removed Docker host out of the groups, so a host added
+// later with the same ID doesn't get the old one's access.
+func (s *Store) ForgetHost(host string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	list, err := s.load()
+	if err != nil {
+		return err
+	}
+	changed := false
+	for i := range list {
+		if j := slices.Index(list[i].Hosts, host); j >= 0 {
+			list[i].Hosts = slices.Delete(slices.Clone(list[i].Hosts), j, j+1)
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	return s.save(list)
 }
 
 // ForgetSubject removes a deleted account's or API key's grants, so a new

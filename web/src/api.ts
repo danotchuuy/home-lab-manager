@@ -435,10 +435,13 @@ export const api = {
   stacks: () => json<Stack[]>("/api/stacks"),
   /** A stack, with its Compose file and .env for admins. */
   stack: (name: string) => json<{ stack: Stack; yaml?: string; env?: string }>(`/api/stacks/${encodeURIComponent(name)}`),
-  previewStack: (name: string, yaml: string, env: string, existing: boolean) =>
-    json<StackPlan>("/api/stacks/preview", { method: "POST", body: JSON.stringify({ name, yaml, env, existing }) }),
-  createStack: (name: string, yaml: string, env: string, onEvent: (e: DeployEvent) => void) =>
-    stream("/api/stacks", { method: "POST", body: JSON.stringify({ name, yaml, env }) }, onEvent),
+  previewStack: (name: string, yaml: string, env: string, existing: boolean, host = "local") =>
+    json<StackPlan>("/api/stacks/preview", {
+      method: "POST",
+      body: JSON.stringify({ name, yaml, env, existing, host }),
+    }),
+  createStack: (name: string, yaml: string, env: string, onEvent: (e: DeployEvent) => void, host = "local") =>
+    stream("/api/stacks", { method: "POST", body: JSON.stringify({ name, yaml, env, host }) }, onEvent),
   updateStack: (name: string, yaml: string, env: string, onEvent: (e: DeployEvent) => void) =>
     stream(`/api/stacks/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ yaml, env }) }, onEvent),
   stackAction: (name: string, action: "start" | "stop" | "restart" | "update", onEvent: (e: DeployEvent) => void) =>
@@ -676,8 +679,10 @@ export const api = {
   /** A host's CPU, memory, network and disks: this host's, or another's (with hlm's agent). */
   host: (id?: string) =>
     json<HostSnapshot>(id && id !== "local" ? `/api/host?host=${encodeURIComponent(id)}` : "/api/host"),
-  storage: () => json<StorageReport>("/api/host/storage"),
-  refreshStorage: () => json<StorageReport>("/api/host/storage/refresh", { method: "POST" }),
+  /** A Docker host's disk usage per server ("local", or another host's ID). */
+  storage: (host = "local") => json<StorageReport>(`/api/host/storage?host=${encodeURIComponent(host)}`),
+  refreshStorage: (host = "local") =>
+    json<StorageReport>(`/api/host/storage/refresh?host=${encodeURIComponent(host)}`, { method: "POST" }),
   /** Deletes a deleted server's folder or volume from disk. */
   deleteDeletedData: (id: string, path: string, volume: boolean) =>
     json<StorageReport>(`/api/host/storage/deleted/${encodeURIComponent(id)}/delete`, {

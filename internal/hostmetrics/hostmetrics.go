@@ -8,6 +8,7 @@ package hostmetrics
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -18,7 +19,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -104,6 +104,9 @@ type DiskIO struct {
 // Collector samples the host periodically.
 type Collector struct {
 	cfg Config
+	// fetch gets each sample's files from another host; nil reads this
+	// machine's (see NewRemote).
+	fetch func(ctx context.Context) (*Dump, error)
 
 	mu       sync.RWMutex
 	snap     Snapshot
@@ -148,12 +151,21 @@ func New(cfg Config, unavailable string) *Collector {
 	return c
 }
 
+// NewRemote creates a collector for another host, whose files fetch
+// gets for each sample (see DumpScript).
+func NewRemote(interval time.Duration, history int, fetch func(ctx context.Context) (*Dump, error)) *Collector {
+	c := New(Config{Interval: interval, History: history}, "")
+	c.fetch = fetch
+	c.snap.Reason = "not sampled yet"
+	return c
+}
+
 // Run samples every interval until ctx is done.
 func (c *Collector) Run(ctx context.Context) {
-	if c.snap.Reason != "" {
+	if c.snap.Reason != "" && c.fetch == nil {
 		return
 	}
-	c.sampleAndNotify()
+	c.sampleAndNotify(ctx)
 	t := time.NewTicker(c.cfg.Interval)
 	defer t.Stop()
 	for {
@@ -161,13 +173,16 @@ func (c *Collector) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			c.sampleAndNotify()
+			c.sampleAndNotify(ctx)
 		}
 	}
 }
 
-func (c *Collector) sampleAndNotify() {
-	c.sample()
+// SampleNow takes a sample now (for a remote host's first look).
+func (c *Collector) SampleNow(ctx context.Context) { c.sampleAndNotify(ctx) }
+
+func (c *Collector) sampleAndNotify(ctx context.Context) {
+	c.sample(ctx)
 	c.mu.RLock()
 	s, obs, ok := c.snap, c.observers, len(c.history) > 0 && c.snap.Available
 	c.mu.RUnlock()
@@ -197,50 +212,62 @@ func (c *Collector) HostPath(p string) string {
 	return filepath.Join(c.cfg.RootPath, p)
 }
 
-// Available reports whether host files can be read.
+// Available reports whether host files can be read (from this machine).
 func (c *Collector) Available() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.snap.Reason == ""
+	return c.snap.Reason == "" && c.fetch == nil
 }
 
 func (c *Collector) proc(parts ...string) string {
 	return filepath.Join(append([]string{c.cfg.ProcPath}, parts...)...)
 }
 
-func (c *Collector) sample() {
+func (c *Collector) sample(ctx context.Context) {
+	var src source = localSource{c}
+	if c.fetch != nil {
+		d, err := c.fetch(ctx)
+		if err != nil {
+			c.fail(err)
+			return
+		}
+		src = d
+	}
 	now := time.Now()
 	s := Snapshot{Available: true, SampledAt: now, Interval: c.cfg.Interval.Seconds()}
 	// procfs reports the hostname of the reader's namespace, which is the
 	// container's when hlm runs in one; the host's root has the real name.
-	if c.cfg.RootPath != "" && c.cfg.RootPath != "/" {
-		s.Hostname = readTrim(c.HostPath("/etc/hostname"))
-	}
+	s.Hostname = trimmed(src.root("/etc/hostname"))
 	if s.Hostname == "" {
-		s.Hostname = readTrim(c.proc("sys", "kernel", "hostname"))
+		s.Hostname = trimmed(src.proc("sys/kernel/hostname"))
 	}
-	s.Kernel = readTrim(c.proc("sys", "kernel", "osrelease"))
-	if f := strings.Fields(readTrim(c.proc("uptime"))); len(f) > 0 {
+	s.Kernel = trimmed(src.proc("sys/kernel/osrelease"))
+	if f := strings.Fields(trimmed(src.proc("uptime"))); len(f) > 0 {
 		s.Uptime, _ = strconv.ParseFloat(f[0], 64)
 	}
 
-	cpu, cores, err := readCPU(c.proc("stat"))
+	stat, err := src.proc("stat")
+	if err != nil {
+		c.fail(err)
+		return
+	}
+	cpu, cores, err := readCPU(stat)
 	if err != nil {
 		c.fail(err)
 		return
 	}
 	s.CPU.Cores = cores
-	if f := strings.Fields(readTrim(c.proc("loadavg"))); len(f) >= 3 {
+	if f := strings.Fields(trimmed(src.proc("loadavg"))); len(f) >= 3 {
 		s.CPU.Load1, _ = strconv.ParseFloat(f[0], 64)
 		s.CPU.Load5, _ = strconv.ParseFloat(f[1], 64)
 		s.CPU.Load15, _ = strconv.ParseFloat(f[2], 64)
 	}
-	s.Memory, _ = readMemory(c.proc("meminfo"))
+	s.Memory, _ = readMemory(orEmpty(src.proc("meminfo")))
 	// PID 1's view is the host's network namespace and mounts, even when hlm
 	// itself runs in a container with the host's /proc mounted.
-	net, _ := readNetDev(c.proc("1", "net", "dev"))
-	disks, _ := readDiskStats(c.proc("diskstats"))
-	s.Disks = c.filesystems()
+	net, _ := readNetDev(orEmpty(src.proc("1/net/dev")))
+	disks, _ := readDiskStats(orEmpty(src.proc("diskstats")))
+	s.Disks = filesystems(src)
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -303,13 +330,14 @@ func sortedKeys[V any](m map[string]V) []string {
 	return keys
 }
 
-func readTrim(path string) string {
-	b, err := os.ReadFile(path)
+func trimmed(b []byte, err error) string {
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
 }
+
+func orEmpty(b []byte, _ error) []byte { return b }
 
 // --- CPU ---
 
@@ -325,12 +353,8 @@ func (c cpuTimes) percentSince(prev cpuTimes) float64 {
 	return (1 - float64(c.idle-prev.idle)/dt) * 100
 }
 
-func readCPU(path string) (cpuTimes, int, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return cpuTimes{}, 0, err
-	}
-	defer f.Close()
+func readCPU(data []byte) (cpuTimes, int, error) {
+	f := bytes.NewReader(data)
 	var t cpuTimes
 	cores := 0
 	found := false
@@ -359,19 +383,15 @@ func readCPU(path string) (cpuTimes, int, error) {
 		}
 	}
 	if !found {
-		return t, 0, errors.New("no cpu line in " + path)
+		return t, 0, errors.New("no cpu line in /proc/stat")
 	}
 	return t, cores, sc.Err()
 }
 
 // --- memory ---
 
-func readMemory(path string) (Memory, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return Memory{}, err
-	}
-	defer f.Close()
+func readMemory(data []byte) (Memory, error) {
+	f := bytes.NewReader(data)
 	vals := map[string]uint64{}
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
@@ -407,12 +427,8 @@ func readMemory(path string) (Memory, error) {
 // them is already counted on the host's real interfaces.
 var virtualIface = regexp.MustCompile(`^(lo|veth.*|docker\d+|br-.*|virbr.*|cni.*|flannel.*|vxlan.*|dm-.*|tap.*|tailscale.*)$`)
 
-func readNetDev(path string) (map[string][2]uint64, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
+func readNetDev(data []byte) (map[string][2]uint64, error) {
+	f := bytes.NewReader(data)
 	out := map[string][2]uint64{}
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
@@ -441,12 +457,8 @@ func readNetDev(path string) (map[string][2]uint64, error) {
 var wholeDisk = regexp.MustCompile(`^(sd[a-z]+|vd[a-z]+|xvd[a-z]+|hd[a-z]+|nvme\d+n\d+|mmcblk\d+|md\d+)$`)
 
 // readDiskStats returns bytes read and written per whole disk.
-func readDiskStats(path string) (map[string][2]uint64, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
+func readDiskStats(data []byte) (map[string][2]uint64, error) {
+	f := bytes.NewReader(data)
 	out := map[string][2]uint64{}
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
@@ -470,12 +482,12 @@ var realFS = map[string]bool{
 	"fuse.mergerfs": true, "fuse.shfs": true, "fuseblk": true,
 }
 
-func (c *Collector) filesystems() []Filesystem {
-	f, err := os.Open(c.proc("1", "mounts"))
+func filesystems(src source) []Filesystem {
+	data, err := src.proc("1/mounts")
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
+	f := bytes.NewReader(data)
 	seen := map[string]bool{}
 	out := []Filesystem{}
 	sc := bufio.NewScanner(f)
@@ -488,20 +500,12 @@ func (c *Collector) filesystems() []Filesystem {
 		if seen[dev] || strings.HasPrefix(mount, "/var/lib/docker/") || strings.HasPrefix(mount, "/snap/") {
 			continue // btrfs subvolumes and bind mounts repeat the same device
 		}
-		var st syscall.Statfs_t
-		if err := syscall.Statfs(c.HostPath(mount), &st); err != nil || st.Blocks == 0 {
+		total, used, free, err := src.statfs(mount)
+		if err != nil || total == 0 {
 			continue
 		}
 		seen[dev] = true
-		bs := uint64(st.Bsize)
-		out = append(out, Filesystem{
-			Device: dev,
-			Mount:  mount,
-			FSType: fields[2],
-			Total:  st.Blocks * bs,
-			Used:   (st.Blocks - st.Bfree) * bs,
-			Free:   st.Bavail * bs,
-		})
+		out = append(out, Filesystem{Device: dev, Mount: mount, FSType: fields[2], Total: total, Used: used, Free: free})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Mount < out[j].Mount })
 	return out

@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,7 +25,9 @@ import (
 
 // DeletedServer is a deleted server's leftover data.
 type DeletedServer struct {
-	ID        string          `json:"id"` // the container's ID
+	ID string `json:"id"` // the container's ID (with @host on another host)
+	// Host is where it was: "" for this host.
+	Host      string          `json:"host,omitempty"`
 	Name      string          `json:"name"`
 	App       string          `json:"app,omitempty"`
 	Icon      string          `json:"icon,omitempty"`
@@ -106,13 +109,12 @@ func (m *Manager) DeletedServers() ([]DeletedServer, error) {
 // recordDeleted remembers the data folders of a server about to be deleted,
 // with their sizes from the last storage report.
 func (m *Manager) recordDeleted(info docker.ContainerJSON) error {
-	// The Host page is about the local host: other hosts' folders can't be
-	// measured or deleted from here.
-	if m.deleted == nil || HostOf(info.ID) != LocalHost {
+	if m.deleted == nil {
 		return nil
 	}
+	host := HostOf(info.ID)
 	known := map[string]int64{}
-	for _, s := range m.Storage().Servers {
+	for _, s := range m.Storage(host).Servers {
 		if s.ID == info.ID {
 			for _, f := range s.Data {
 				known[f.Target] = f.Size
@@ -128,6 +130,9 @@ func (m *Manager) recordDeleted(info docker.ContainerJSON) error {
 		DeletedAt: time.Now().UTC(),
 		Folders:   []DeletedFolder{},
 	}
+	if host != LocalHost {
+		rec.Host = host
+	}
 	for _, mnt := range info.Mounts {
 		f := DeletedFolder{Target: mnt.Destination, Size: -1}
 		if size, ok := known[mnt.Destination]; ok {
@@ -141,7 +146,7 @@ func (m *Manager) recordDeleted(info docker.ContainerJSON) error {
 			if skipDataPath[src] || strings.HasSuffix(src, ".sock") {
 				continue
 			}
-			if m.host != nil && m.host.Available() {
+			if host == LocalHost && m.host != nil && m.host.Available() {
 				if st, err := os.Stat(m.host.HostPath(src)); err == nil && !st.IsDir() {
 					continue // a socket or single file
 				}
@@ -193,9 +198,10 @@ func (m *Manager) changeDeleted(fn func([]DeletedServer) ([]DeletedServer, error
 	if err != nil {
 		return err
 	}
-	// Keep the report's measured sizes for what's still tracked.
+	// Keep the reports' measured sizes for what's still tracked.
 	t := m.storage
 	t.mu.Lock()
+	defer t.mu.Unlock()
 	tracked := map[string]map[string]bool{}
 	for _, d := range list {
 		tracked[d.ID] = map[string]bool{}
@@ -203,8 +209,18 @@ func (m *Manager) changeDeleted(fn func([]DeletedServer) ([]DeletedServer, error
 			tracked[d.ID][folderKey(f.Path, f.Volume)] = true
 		}
 	}
+	for host, r := range t.reports {
+		r.Deleted = keepTracked(r.Deleted, tracked)
+		t.reports[host] = r
+	}
+	return nil
+}
+
+// keepTracked is a report's deleted servers' folders that are still
+// tracked.
+func keepTracked(deleted []DeletedStorage, tracked map[string]map[string]bool) []DeletedStorage {
 	var report []DeletedStorage
-	for _, d := range t.report.Deleted {
+	for _, d := range deleted {
 		var data []DataFolder
 		for _, f := range d.Data {
 			if tracked[d.ID][folderKey(f.Path, f.Volume)] {
@@ -217,9 +233,22 @@ func (m *Manager) changeDeleted(fn func([]DeletedServer) ([]DeletedServer, error
 			report = append(report, d)
 		}
 	}
-	t.report.Deleted = report
-	t.mu.Unlock()
-	return nil
+	return report
+}
+
+// deletedOn is the deleted servers that were on a host.
+func (m *Manager) deletedOn(host string) []DeletedServer {
+	list, err := m.DeletedServers()
+	if err != nil {
+		return nil
+	}
+	var out []DeletedServer
+	for _, d := range list {
+		if cmp.Or(d.Host, LocalHost) == host {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // deletedTotal adds up a deleted server's folders, leaving out nested
@@ -272,11 +301,11 @@ func (m *Manager) DeleteDeletedData(ctx context.Context, id, p string, volume bo
 	if err != nil {
 		return err
 	}
-	found := false
+	found, host := false, LocalHost
 	for _, d := range list {
 		for _, f := range d.Folders {
 			if d.ID == id && f.Path == p && f.Volume == volume {
-				found = true
+				found, host = true, cmp.Or(d.Host, LocalHost)
 			}
 		}
 	}
@@ -284,14 +313,14 @@ func (m *Manager) DeleteDeletedData(ctx context.Context, id, p string, volume bo
 		return ErrNotTracked
 	}
 	if volume {
-		if err := m.docker.RemoveVolume(ctx, LocalHost, p); err != nil && !docker.IsNotFound(err) {
+		if err := m.docker.RemoveVolume(ctx, host, p); err != nil && !docker.IsNotFound(err) {
 			return fmt.Errorf("remove volume %s: %w", p, err)
 		}
 	} else {
-		if err := m.checkDeletable(ctx, p); err != nil {
+		if err := m.checkDeletable(ctx, host, p); err != nil {
 			return err
 		}
-		if err := m.removeHostDir(ctx, p); err != nil {
+		if err := m.removeHostDir(ctx, host, p); err != nil {
 			return err
 		}
 	}
@@ -313,17 +342,19 @@ func (m *Manager) DeleteDeletedData(ctx context.Context, id, p string, volume bo
 // checkDeletable refuses to delete host folders that aren't plainly a
 // server's own data: system paths, top-level folders, the appdata root (or
 // anything containing it), and folders any container still uses.
-func (m *Manager) checkDeletable(ctx context.Context, p string) error {
+func (m *Manager) checkDeletable(ctx context.Context, host, p string) error {
 	if !path.IsAbs(p) || path.Clean(p) != p {
 		return fmt.Errorf("%q isn't a clean absolute path", p)
 	}
 	if skipDataPath[p] || strings.Count(p, "/") < 2 {
 		return fmt.Errorf("refusing to delete %s: it's a system or top-level folder", p)
 	}
-	if root := path.Clean(m.appdataRoot); m.appdataRoot != "" && (root == p || strings.HasPrefix(root, p+"/")) {
-		return fmt.Errorf("refusing to delete %s: it holds every server's data (%s)", p, root)
+	if appdata := m.appdataFor(host); appdata != "" {
+		if root := path.Clean(appdata); root == p || strings.HasPrefix(root, p+"/") {
+			return fmt.Errorf("refusing to delete %s: it holds every server's data (%s)", p, root)
+		}
 	}
-	list, err := m.docker.ListContainersOn(ctx, LocalHost)
+	list, err := m.docker.ListContainersOn(ctx, host)
 	if err != nil {
 		return err
 	}
@@ -347,9 +378,9 @@ func (m *Manager) checkDeletable(ctx context.Context, p string) error {
 // belong to the game server's user).
 const cleanupImage = "busybox:1.37"
 
-func (m *Manager) removeHostDir(ctx context.Context, p string) error {
+func (m *Manager) removeHostDir(ctx context.Context, host, p string) error {
 	parent, base := path.Split(p)
-	code, out, err := m.runHelper(ctx, LocalHost, strings.TrimRight(parent, "/")+":/hlm-parent", "rm", "-rf", "--", "/hlm-parent/"+base)
+	code, out, err := m.runHelper(ctx, host, strings.TrimRight(parent, "/")+":/hlm-parent", "rm", "-rf", "--", "/hlm-parent/"+base)
 	if err != nil {
 		return fmt.Errorf("delete %s: %w", p, err)
 	}
@@ -377,8 +408,19 @@ func (m *Manager) checkRemoteFresh(ctx context.Context, host, base string, inUse
 }
 
 // runHelper runs a command in a throwaway busybox container on a host, with
-// one bind mount, and returns its exit status and the end of its output.
+// one bind mount, and returns its exit status and the end of its output
+// when it failed.
 func (m *Manager) runHelper(ctx context.Context, host, bind string, cmd ...string) (int, string, error) {
+	code, out, err := m.runHelperOutput(ctx, host, bind, "20", cmd...)
+	if code == 0 {
+		out = ""
+	}
+	return code, strings.TrimSpace(out), err
+}
+
+// runHelperOutput is runHelper returning the last lines of output (tail:
+// a number, or "all") whatever the exit status.
+func (m *Manager) runHelperOutput(ctx context.Context, host, bind, tail string, cmd ...string) (int, string, error) {
 	if _, err := m.docker.InspectImage(ctx, host, cleanupImage); err != nil {
 		if err := m.docker.PullImage(ctx, host, cleanupImage, nil); err != nil {
 			return 0, "", fmt.Errorf("pull %s: %w", cleanupImage, err)
@@ -404,28 +446,25 @@ func (m *Manager) runHelper(ctx context.Context, host, bind string, cmd ...strin
 	if err != nil {
 		return 0, "", err
 	}
-	msg := ""
-	if code != 0 {
-		if r, err := m.docker.Logs(ctx, id, docker.LogsOptions{Tail: "20"}); err == nil {
-			out, _ := io.ReadAll(io.LimitReader(r, 4096))
-			r.Close()
-			msg = strings.TrimSpace(string(out))
-		}
+	r, err := m.docker.Logs(ctx, id, docker.LogsOptions{Tail: tail})
+	if err != nil {
+		return code, "", nil
 	}
-	return code, msg, nil
+	defer r.Close()
+	limit := int64(4096)
+	if tail == "all" {
+		limit = 16 << 20
+	}
+	out, _ := io.ReadAll(io.LimitReader(r, limit))
+	return code, string(out), nil
 }
 
 // deletedReport measures the folders of deleted servers for the storage
 // report. sizes holds folders already measured for existing servers, and
 // users the existing servers using each folder.
-func (m *Manager) deletedReport(ctx context.Context, du *docker.DiskUsage, canMeasure bool, sizes map[string]DataFolder, users map[string][]string) []DeletedStorage {
-	list, err := m.DeletedServers()
-	if err != nil {
-		m.log.Warn("read deleted servers", "err", err)
-		return nil
-	}
+func (m *Manager) deletedReport(ctx context.Context, host string, du *docker.DiskUsage, meas measurer, sizes map[string]DataFolder, users map[string][]string) []DeletedStorage {
 	var out []DeletedStorage
-	for _, d := range list {
+	for _, d := range m.deletedOn(host) {
 		ds := DeletedStorage{ID: d.ID, Name: d.Name, App: d.App, Icon: d.Icon, Image: d.Image, DeletedAt: d.DeletedAt, Data: []DataFolder{}}
 		for _, f := range d.Folders {
 			mnt := docker.MountPoint{Type: "bind", Source: f.Path, Destination: f.Target}
@@ -435,15 +474,18 @@ func (m *Manager) deletedReport(ctx context.Context, du *docker.DiskUsage, canMe
 			key := mountKey(mnt)
 			folder, done := sizes[key]
 			if !done {
-				folder = m.measure(ctx, mnt, du, canMeasure)
+				folder = m.measure(ctx, mnt, du, meas)
 				sizes[key] = folder
+			}
+			if folder.Path == "" && !f.Volume && host != LocalHost {
+				continue // a file or socket, not a folder
 			}
 			folder.Path, folder.Volume, folder.Target = f.Path, f.Volume, f.Target
 			folder.InUseBy = users[key]
 			switch {
 			case f.Volume && du != nil && folder.Size < 0:
 				folder.Missing = true // Docker no longer has it
-			case !f.Volume && canMeasure && strings.HasPrefix(folder.Error, "not readable:") && os.IsNotExist(statErr(m, f.Path)):
+			case !f.Volume && host == LocalHost && strings.HasPrefix(folder.Error, "not readable:") && os.IsNotExist(statErr(m, f.Path)):
 				folder.Missing, folder.Error = true, ""
 			}
 			if folder.Missing {

@@ -42,33 +42,40 @@ function Tile({ label, value, detail, percent }: { label: string; value: string;
 }
 
 export function HostPage() {
-  // Which host's metrics: this one, or one with hlm's agent.
+  // Which Docker host the page is about.
   const [selected, setSelected] = useState("local");
   const [hostList] = usePoll(api.hosts, 30000);
-  const agentHosts = hostList?.hosts.filter((h) => h.kind === "agent") ?? [];
+  const otherHosts = hostList?.hosts.filter((h) => !h.local) ?? [];
   const local = selected === "local";
-  const selectedName = local ? "This host" : (agentHosts.find((h) => h.id === selected)?.name ?? selected);
+  const selectedName = local ? "This host" : (otherHosts.find((h) => h.id === selected)?.name ?? selected);
   const [polled, hostError, reloadHost] = usePoll(async () => ({ id: selected, snap: await api.host(selected) }), 5000);
   // Not the last host's figures under the new one's name.
   const host = polled?.id === selected ? polled.snap : undefined;
-  const [storage, storageError, reloadStorage] = usePoll(api.storage, 15000);
+  const [polledStorage, storageError, reloadStorage] = usePoll(
+    async () => ({ id: selected, report: await api.storage(selected) }),
+    15000,
+  );
+  const storage = polledStorage?.id === selected ? polledStorage.report : undefined;
 
   return (
     <div className="page host-page">
       <div className="page-header">
         <h1>Host</h1>
-        {agentHosts.length > 0 && (
+        {otherHosts.length > 0 && (
           <select
             aria-label="Host"
             className="host-picker"
             value={selected}
             onChange={(e) => {
               setSelected(e.target.value);
-              setTimeout(reloadHost);
+              setTimeout(() => {
+                reloadHost();
+                reloadStorage();
+              });
             }}
           >
             <option value="local">This host</option>
-            {agentHosts.map((h) => (
+            {otherHosts.map((h) => (
               <option key={h.id} value={h.id}>
                 {h.name} ({h.id})
               </option>
@@ -88,35 +95,36 @@ export function HostPage() {
       {host && !host.available && (
         <div className="alert info">
           {local ? "Host" : `${selectedName}'s`} CPU, memory, network and disk metrics aren't available: {host.reason}.
-          {local && " Disk usage per server is still shown below from Docker's figures."}
+          {" Disk usage per server is still shown below from Docker's figures."}
         </div>
       )}
       {host?.available && <HostMetrics key={selected} host={host} hostId={selected} />}
 
-      {!local ? (
-        <p className="muted small">
-          Disk usage by server and deleted servers&apos; data are for this host only; choose{" "}
-          <button type="button" className="link-button" onClick={() => setSelected("local")}>
-            This host
-          </button>{" "}
-          to see them. Cleanup, below, works on every host.
-        </p>
-      ) : (
-        <StorageSection
-          report={storage}
-          error={storageError}
-          onRefresh={async () => {
-            await api.refreshStorage();
-            reloadStorage();
-          }}
-        />
-      )}
+      <StorageSection
+        report={storage}
+        error={storageError}
+        onRefresh={async () => {
+          await api.refreshStorage(selected);
+          reloadStorage();
+        }}
+      />
       <DiskCleanup onCleaned={reloadStorage} />
-      {local && storage?.deleted && storage.deleted.length > 0 && (
+      {storage?.deleted && storage.deleted.length > 0 && (
         <DeletedSection deleted={storage.deleted} onChanged={reloadStorage} />
       )}
     </div>
   );
+}
+
+/** The live charts' span: 360 samples, every interval seconds. */
+function liveWindow(host: HostSnapshot): string {
+  const minutes = Math.round(((host.interval || 5) * 360) / 60);
+  return minutes >= 120 ? `${Math.round(minutes / 60)} hours` : `${minutes} minutes`;
+}
+
+function everyWords(seconds: number): string {
+  const s = Math.round(seconds || 5);
+  return s === 60 ? "minute" : `${s} seconds`;
 }
 
 type HostRange = "live" | HistoryRange;
@@ -169,7 +177,7 @@ function HostMetrics({ host, hostId }: { host: HostSnapshot; hostId: string }) {
       <div className="chart-range">
         <span className="muted small">
           {range === "live"
-            ? "Every 5 seconds, last 30 minutes"
+            ? `Every ${everyWords(host.interval)}, last ${liveWindow(host)}`
             : "History kept by hlm: a day by the minute, 30 days by the quarter hour"}
         </span>
         <RangePicker value={range} onChange={setRange} options={HOST_RANGES} />
@@ -204,7 +212,9 @@ function LiveCharts({
       <div className="chart-grid">
         <section className="card">
           <h2>CPU</h2>
-          <p className="muted small chart-sub">Percent of all {host.cpu.cores} cores, last 30 minutes</p>
+          <p className="muted small chart-sub">
+            Percent of all {host.cpu.cores} cores, last {liveWindow(host)}
+          </p>
           <TimeSeriesChart
             label="CPU usage over time"
             times={times}
@@ -215,7 +225,9 @@ function LiveCharts({
         </section>
         <section className="card">
           <h2>Memory</h2>
-          <p className="muted small chart-sub">Used of {formatBytes(mem.total)}, last 30 minutes</p>
+          <p className="muted small chart-sub">
+            Used of {formatBytes(mem.total)}, last {liveWindow(host)}
+          </p>
           <TimeSeriesChart
             label="Memory usage over time"
             times={times}
@@ -226,7 +238,7 @@ function LiveCharts({
         </section>
         <section className="card chart-wide">
           <h2>Network</h2>
-          <p className="muted small chart-sub">All host interfaces, per second, last 30 minutes</p>
+          <p className="muted small chart-sub">All host interfaces, per second, last {liveWindow(host)}</p>
           <TimeSeriesChart
             label="Network traffic over time"
             times={times}

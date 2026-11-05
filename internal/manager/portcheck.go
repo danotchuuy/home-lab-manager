@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -97,6 +98,11 @@ func (m *Manager) PortConflicts(ctx context.Context, req deploy.Request, self st
 // local host.
 func (m *Manager) PortConflictsOf(ctx context.Context, c docker.CreateRequest, self string) ([]PortConflict, error) {
 	return m.portConflicts(ctx, LocalHost, c, self)
+}
+
+// PortConflictsOn is PortConflictsOf on a Docker host.
+func (m *Manager) PortConflictsOn(ctx context.Context, host string, c docker.CreateRequest, self string) ([]PortConflict, error) {
+	return m.portConflicts(ctx, cmp.Or(host, LocalHost), c, self)
 }
 
 func (m *Manager) portConflicts(ctx context.Context, host string, c docker.CreateRequest, self string) ([]PortConflict, error) {

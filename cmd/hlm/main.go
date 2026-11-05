@@ -549,7 +549,11 @@ func run(log *slog.Logger) error {
 			}
 			out := make(map[string][]string, len(list))
 			for _, g := range list {
-				out[g.ID] = g.Servers
+				// Whole hosts as "@host".
+				out[g.ID] = slices.Clone(g.Servers)
+				for _, h := range g.Hosts {
+					out[g.ID] = append(out[g.ID], "@"+h)
+				}
 			}
 			return out, nil
 		},
@@ -577,7 +581,7 @@ func run(log *slog.Logger) error {
 		return domains, port, err
 	})
 	// Docker Compose stacks.
-	stacks := stack.New(store, dc, mgr, log)
+	stacks := stack.New(store, func(host string) (stack.Docker, error) { return mgr.DockerFor(host) }, mgr, log)
 	handler := api.Handler(api.Options{
 		Docker:        dc,
 		Catalog:       cat,

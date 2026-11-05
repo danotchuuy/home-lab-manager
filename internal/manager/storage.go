@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -73,7 +74,7 @@ var skipDataPath = map[string]bool{
 
 type storageTracker struct {
 	mu          sync.Mutex
-	report      StorageReport
+	reports     map[string]StorageReport // by host
 	calculating bool
 	run         sync.Mutex
 }
@@ -84,12 +85,15 @@ func (m *Manager) UseHostMetrics(c *hostmetrics.Collector) {
 	m.host = c
 }
 
-// Storage returns the last storage report.
-func (m *Manager) Storage() StorageReport {
+// Storage returns the last storage report of a host ("" for this one).
+func (m *Manager) Storage(host string) StorageReport {
+	if host == "" {
+		host = LocalHost
+	}
 	t := m.storage
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	r := t.report
+	r := t.reports[host]
 	r.Calculating = t.calculating
 	if r.Servers == nil {
 		r.Servers = []ServerStorage{}
@@ -148,25 +152,67 @@ func (m *Manager) calculateStorage(ctx context.Context) {
 		t.mu.Unlock()
 	}()
 
+	hosts := m.docker.hosts()
+	for _, host := range hosts {
+		m.calculateHostStorage(ctx, host)
+	}
+	// Hosts that were removed.
+	t.mu.Lock()
+	for host := range t.reports {
+		if !slices.Contains(hosts, host) {
+			delete(t.reports, host)
+		}
+	}
+	t.mu.Unlock()
+}
+
+// calculateHostStorage makes one host's storage report.
+func (m *Manager) calculateHostStorage(ctx context.Context, host string) {
 	var r StorageReport
-	// The Host page is about the local host.
-	du, err := m.docker.SystemDiskUsage(ctx, LocalHost)
+	du, err := m.docker.SystemDiskUsage(ctx, host)
 	if err != nil {
 		r.DockerError = err.Error()
 	} else {
 		r.Docker = &du
 	}
 
-	list, err := m.docker.ListContainersWithSizeOn(ctx, LocalHost, deploy.LabelManaged+"=true")
+	list, err := m.docker.ListContainersWithSizeOn(ctx, host, deploy.LabelManaged+"=true")
 	if err != nil {
 		r.DockerError = err.Error()
-		m.setStorage(r)
+		m.setStorage(host, r)
 		return
 	}
 
-	canMeasure := m.host != nil && m.host.Available()
-	if !canMeasure {
-		r.DataReason = "data folder sizes need access to the Docker host's filesystem"
+	// Data folders are measured here through the host's filesystem, or on
+	// another host by a helper container.
+	var meas measurer
+	if host == LocalHost {
+		local := localMeasurer{m: m, can: m.host != nil && m.host.Available()}
+		if !local.can {
+			r.DataReason = "data folder sizes need access to the Docker host's filesystem"
+		}
+		meas = local
+	} else {
+		var paths []string
+		for _, c := range list {
+			for _, mnt := range c.Mounts {
+				if mnt.Type == "bind" {
+					paths = append(paths, mnt.Source)
+				}
+			}
+		}
+		for _, d := range m.deletedOn(host) {
+			for _, f := range d.Folders {
+				if !f.Volume {
+					paths = append(paths, f.Path)
+				}
+			}
+		}
+		rm := m.measureRemote(ctx, host, paths)
+		if rm.err != nil {
+			r.DataReason = "data folder sizes couldn't be measured on " + m.HostName(host) + ": " + rm.err.Error()
+		}
+		meas = rm
 	}
 
 	// Count how many servers use each image and each folder.
@@ -198,11 +244,16 @@ func (m *Manager) calculateStorage(ctx context.Context) {
 			key := mountKey(mnt)
 			folder, done := sizes[key]
 			if !done {
-				folder = m.measure(ctx, mnt, r.Docker, canMeasure)
+				folder = m.measure(ctx, mnt, r.Docker, meas)
 				sizes[key] = folder
 			}
 			if folder.Path == "" {
 				continue // not a data folder (tmpfs, socket, system path)
+			}
+			if folder.Missing {
+				// Docker mounted it, so it's there: the helper couldn't see it
+				// (through a symlink, say).
+				folder.Missing, folder.Size, folder.Error = false, -1, "couldn't be found to measure"
 			}
 			folder.Target = mnt.Destination
 			folder.Shared = folderUsers[key] > 1
@@ -216,15 +267,18 @@ func (m *Manager) calculateStorage(ctx context.Context) {
 		a, b := r.Servers[i], r.Servers[j]
 		return a.DataTotal+a.Writable+a.ImageSize > b.DataTotal+b.Writable+b.ImageSize
 	})
-	r.Deleted = m.deletedReport(ctx, r.Docker, canMeasure, sizes, folderNames)
-	m.setStorage(r)
+	r.Deleted = m.deletedReport(ctx, host, r.Docker, meas, sizes, folderNames)
+	m.setStorage(host, r)
 }
 
-func (m *Manager) setStorage(r StorageReport) {
+func (m *Manager) setStorage(host string, r StorageReport) {
 	now := time.Now()
 	r.CalculatedAt = &now
 	m.storage.mu.Lock()
-	m.storage.report = r
+	if m.storage.reports == nil {
+		m.storage.reports = map[string]StorageReport{}
+	}
+	m.storage.reports[host] = r
 	m.storage.mu.Unlock()
 }
 
@@ -254,9 +308,16 @@ func mountKey(mnt docker.MountPoint) string {
 	return mnt.Type + ":" + mnt.Source
 }
 
+// measurer measures a host's data folders.
+type measurer interface {
+	// bind measures a folder on the host: a zero DataFolder if it isn't one
+	// (a socket or a file), Missing if it isn't there.
+	bind(ctx context.Context, p string) DataFolder
+}
+
 // measure returns the size of one mount. A zero DataFolder means the mount
 // isn't a data folder.
-func (m *Manager) measure(ctx context.Context, mnt docker.MountPoint, du *docker.DiskUsage, canMeasure bool) DataFolder {
+func (m *Manager) measure(ctx context.Context, mnt docker.MountPoint, du *docker.DiskUsage, meas measurer) DataFolder {
 	switch mnt.Type {
 	case "volume":
 		f := DataFolder{Path: mnt.Name, Volume: true, Size: -1}
@@ -270,11 +331,24 @@ func (m *Manager) measure(ctx context.Context, mnt docker.MountPoint, du *docker
 	default:
 		return DataFolder{}
 	}
-	if skipDataPath[strings.TrimRight(mnt.Source, "/")] || skipDataPath[mnt.Source] {
+	if skipDataPath[strings.TrimRight(mnt.Source, "/")] || skipDataPath[mnt.Source] || strings.HasSuffix(mnt.Source, ".sock") {
 		return DataFolder{}
 	}
+	return meas.bind(ctx, mnt.Source)
+}
+
+// localMeasurer measures folders on this host, through the host metrics
+// collector's view of its filesystem.
+type localMeasurer struct {
+	m   *Manager
+	can bool
+}
+
+func (l localMeasurer) bind(ctx context.Context, p string) DataFolder {
+	m := l.m
+	mnt := docker.MountPoint{Source: p}
 	f := DataFolder{Path: mnt.Source, Size: -1}
-	if !canMeasure {
+	if !l.can {
 		return f
 	}
 	if ctx.Err() != nil {
