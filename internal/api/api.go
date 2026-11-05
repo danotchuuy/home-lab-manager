@@ -1331,6 +1331,17 @@ func (s *server) setupHostWireGuard(w http.ResponseWriter, r *http.Request) {
 	send(proxy.WireGuardEvent{Stage: "done", Result: &res})
 }
 
+// hostLANNetworks lists another host's networks its end can use for LAN
+// mode.
+func (s *server) hostLANNetworks(w http.ResponseWriter, r *http.Request) {
+	nets, err := s.Proxy.HostLANNetworks(r.Context(), r.PathValue("host"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, nets)
+}
+
 func (s *server) removeHostWireGuard(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	defer cancel()

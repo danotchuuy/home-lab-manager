@@ -141,3 +141,63 @@ func planFor(plan []Proxied, server string) Proxied {
 	}
 	return Proxied{}
 }
+
+// Another host's end in LAN mode: its networks are listed from its Docker,
+// the proxy routes its LAN subnet to it, and a LAN only one end can reach.
+func TestWireGuardHostEndLANMode(t *testing.T) {
+	store, _ := secrets.Open(t.TempDir(), "")
+	s := New(store, fakeServers{}, slog.New(slog.DiscardHandler))
+	local, nas := lanDocker(), lanDocker()
+	s.UseDocker(local, "")
+	s.UseDockerHosts(func(host string) (Containers, error) {
+		if host == "nas" {
+			return nas, nil
+		}
+		return nil, errors.New("there's no Docker host " + host)
+	})
+	var proxyConf string
+	s.run = func(_ context.Context, script string, stdin []byte, _ func(string)) (remote.Result, error) {
+		if strings.Contains(script, "wg-quick up") {
+			proxyConf = string(stdin)
+			return remote.Result{Stdout: "hlm:wgup\n"}, nil
+		}
+		return remote.Result{}, nil
+	}
+	ctx := context.Background()
+	s.Save(Settings{Target: remote.Target{Host: "vps.example.com", User: "root"}, Upstream: "203.0.113.7"})
+	if _, err := s.SetupWireGuard(ctx, WireGuardInput{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	nets, err := s.HostLANNetworks(ctx, "nas")
+	if err != nil || len(nets) != 1 || nets[0].Name != "br0" || nets[0].Subnet != "192.168.1.0/24" {
+		t.Fatalf("nas's networks: %+v %v", nets, err)
+	}
+	if _, err := s.HostLANNetworks(ctx, "nope"); err == nil {
+		t.Error("networks of an unknown host")
+	}
+	if _, err := s.SetupHostWireGuard(ctx, "nas", HostWireGuardInput{LANNetwork: "missing"}, nil); err == nil {
+		t.Error("a network nas doesn't have")
+	}
+	if _, err := s.SetupHostWireGuard(ctx, "nas", HostWireGuardInput{LANNetwork: "br0", LANAddress: "192.168.1.250"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	wg, _, _ := s.tunnel()
+	e := wg.Hosts["nas"]
+	if e.LANNetwork != "br0" || e.LANSubnet != "192.168.1.0/24" || e.LANAddress != "192.168.1.250" || e.BridgeGateway != "172.17.0.1" {
+		t.Errorf("end: %+v", e)
+	}
+	if !strings.Contains(proxyConf, "AllowedIPs = 10.77.77.3/32, 192.168.1.0/24") {
+		t.Errorf("proxy config:\n%s", proxyConf)
+	}
+	home := nas.files["/config/wg_confs/gsh0.conf"]
+	if !strings.Contains(home, "-d 10.77.77.3 -j DNAT --to-destination 172.17.0.1") {
+		t.Errorf("nas's end:\n%s", home)
+	}
+	if st, _ := s.WireGuardStatus(ctx); len(st.Hosts) != 1 || st.Hosts[0].LANNetwork != "br0" || st.Hosts[0].LANSubnet != "192.168.1.0/24" {
+		t.Errorf("status: %+v", st.Hosts)
+	}
+	// This host's end can't take the same LAN.
+	if _, err := s.SetupWireGuard(ctx, WireGuardInput{LANNetwork: "br0"}, nil); err == nil || !strings.Contains(err.Error(), "already reaches") {
+		t.Errorf("same LAN here: %v", err)
+	}
+}

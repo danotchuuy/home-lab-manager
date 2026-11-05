@@ -671,6 +671,11 @@ export const api = {
   /** Sets up the tunnel's end on another Docker host, streaming as setupWireGuard does. */
   setupHostWireGuard: (host: string, input: { lanNetwork?: string; lanAddress?: string }, onEvent: (e: WireGuardEvent) => void) =>
     stream<WireGuardEvent>(`/api/proxy/wireguard/hosts/${encodeURIComponent(host)}`, { method: "PUT", body: JSON.stringify(input) }, onEvent),
+  /** Another host's macvlan/ipvlan networks, for its end's LAN mode. */
+  hostLANNetworks: (host: string) =>
+    json<{ name: string; driver: string; subnet: string; parent?: string }[]>(
+      `/api/proxy/wireguard/hosts/${encodeURIComponent(host)}/networks`,
+    ),
   removeHostWireGuard: (host: string) =>
     json<WireGuardResult>(`/api/proxy/wireguard/hosts/${encodeURIComponent(host)}`, { method: "DELETE" }),
   linode: () => json<FirewallStatus>("/api/integrations/linode"),

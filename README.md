@@ -1160,8 +1160,11 @@ and adds it to the proxy server's `gsh0` as another peer (which restarts the pro
 the proxy too, so the host can be anywhere. nginx then relays each server to the tunnel address of the host it runs
 on; a server on a host without an end is listed with an error and skipped. **Check tunnel** shows each end's last
 handshake. An end can be set up again (same key and address) or removed; removing the whole tunnel removes them all.
-The tunnel network can't change while other hosts have ends in it. Through the API, an end can also use LAN mode, on a
-macvlan/ipvlan network of its host's (one end per LAN subnet).
+The tunnel network can't change while other hosts have ends in it. An end can use **LAN mode** too: in its setup form
+(**Set up _host_'s end…**, or **change**), choose one of that host's macvlan/ipvlan networks (listed from its Docker),
+optionally with a fixed address there. It then reaches that host's servers with their own LAN address, as this host's
+end does, and the proxy routes that network's subnet to it; only one end (this host's or another's) can reach a given
+LAN. **Set up again** keeps an end's settings.
 
 Limits: the host's kernel and the proxy's need WireGuard (built into Linux 5.6 and later), and LAN mode needs `iptables`
 in the image (the default image has it). A server with its own LAN address on a network other than the one chosen is
@@ -2148,6 +2151,7 @@ when the `HLM_*` one isn't set.
 | `PUT /api/proxy/wireguard`                     | Set up or update the tunnel (streams NDJSON: `step` and `output` events, then `done` with the result or `error`) `{network, listenPort, endpoint, useForRelays, lanNetwork, lanAddress}` on both ends; `lanNetwork` (a macvlan/ipvlan network) lets it reach servers' own LAN addresses; `useForRelays` makes it the home address and re-applies nginx if applied. |
 | `POST /api/proxy/wireguard/check`              | The last handshake the proxy saw and whether it can ping this host (`reachable`), and each other host's end's last handshake (`hosts`). |
 | `PUT /api/proxy/wireguard/hosts/{host}`        | Set up (or again) the tunnel's end on another Docker host `{lanNetwork?, lanAddress?}`: a peer on the proxy and a container there; re-applies nginx if it relays through the tunnel. Streams NDJSON like `PUT /api/proxy/wireguard`. |
+| `GET /api/proxy/wireguard/hosts/{host}/networks` | That host's macvlan/ipvlan networks, for its end's LAN mode.                    |
 | `DELETE /api/proxy/wireguard/hosts/{host}`     | Remove that host's end.                                                           |
 | `DELETE /api/proxy/wireguard`                  | Take the tunnel down on both ends and forget it (refused while applied relays use it). |
 | `GET /api/integrations/linode`                 | The Linode connection, the firewall hlm manages, its rules for the relays and whether they're up to date. |
