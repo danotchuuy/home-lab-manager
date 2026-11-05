@@ -1,5 +1,15 @@
-import { useMemo, useState } from "react";
-import { type Field, flipBool, humanize, parseSettings, setValue } from "../settingsform";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  type Field,
+  type Place,
+  addSetting,
+  flipBool,
+  humanize,
+  parseSettings,
+  placesOf,
+  sectionsOf,
+  setValue,
+} from "../settingsform";
 
 const NUMBER = /^[-+]?(\d+\.?\d*|\.\d+)$/;
 
@@ -14,9 +24,39 @@ const OPTIONS: Record<string, string[]> = {
   "level-type": ["minecraft:normal", "minecraft:flat", "minecraft:large_biomes", "minecraft:amplified"],
 };
 
-function groupName(f: Field): string {
+function groupName(f: Field | Place): string {
   if (f.group) return f.section ? `${f.group} (${f.section})` : f.group;
   return f.section;
+}
+
+const NEW_SECTION = "new";
+
+/** Where a new setting can go: each section (its structs first, then the section itself), including empty ones. */
+function placesFor(text: string, fields: Field[]): Place[] {
+  const structs = placesOf(fields).filter((p) => p.group !== undefined);
+  const headers = sectionsOf(text);
+  const sections = fields.some((f) => f.section === "") || headers.length === 0 ? ["", ...headers] : headers;
+  const out: Place[] = [];
+  for (const section of sections) {
+    out.push(...structs.filter((p) => p.section === section));
+    out.push({ section });
+  }
+  return out;
+}
+
+function placeLabel(p: Place, hasSections: boolean): string {
+  if (p.group) return p.section ? `${p.group}, in [${p.section}]` : p.group;
+  if (p.section) return `[${p.section}]`;
+  return hasSections ? "Before the first section" : "The file";
+}
+
+interface Adding {
+  /** An index into the places, or NEW_SECTION. */
+  where: string;
+  section: string;
+  key: string;
+  value: string;
+  error?: string;
 }
 
 /**
@@ -62,6 +102,110 @@ export function SettingsForm({
 
   const set = (f: Field, value: string) => onChange(setValue(text, f, value));
 
+  const places = useMemo(() => placesFor(text, fields), [text, fields]);
+  const hasSections = places.some((p) => p.section !== "");
+  const [adding, setAdding] = useState<Adding | null>(null);
+  // The setting just added, to show and focus once it's in the form.
+  const [added, setAdded] = useState<{ section: string; group?: string; key: string } | null>(null);
+  useEffect(() => {
+    if (!added) return;
+    const f = [...fields].reverse().find((x) => x.section === added.section && x.group === added.group && x.key === added.key);
+    setAdded(null);
+    const el = f && document.getElementById(`setting-${f.id}`);
+    if (el) {
+      el.scrollIntoView({ block: "center" });
+      el.focus();
+    }
+  }, [fields, added]);
+
+  const startAdding = (p?: Place) => {
+    const i = p ? places.findIndex((x) => x.section === p.section && x.group === p.group) : 0;
+    setAdding({ where: String(Math.max(i, 0)), section: "", key: "", value: "" });
+  };
+
+  const add = (e: FormEvent) => {
+    e.preventDefault();
+    if (!adding) return;
+    const place: Place = adding.where === NEW_SECTION ? { section: adding.section.trim() } : places[Number(adding.where)];
+    try {
+      if (adding.where === NEW_SECTION && !place.section) throw new Error("Name the new section.");
+      const next = addSetting(text, place, adding.key, adding.value);
+      setFilter("");
+      setOnlyChanged(false);
+      setAdding(null);
+      setAdded({ ...place, key: adding.key.trim() });
+      onChange(next);
+    } catch (err) {
+      setAdding({ ...adding, error: err instanceof Error ? err.message : String(err) });
+    }
+  };
+
+  const addForm = adding && (
+    <form className="settings-add" onSubmit={add} aria-label="Add a setting">
+      <label className="field">
+        <span className="field-label">Where</span>
+        <select value={adding.where} onChange={(e) => setAdding({ ...adding, where: e.target.value, error: undefined })}>
+          {places.map((p, i) => (
+            <option key={i} value={String(i)}>
+              {placeLabel(p, hasSections)}
+            </option>
+          ))}
+          {hasSections && <option value={NEW_SECTION}>A new section…</option>}
+        </select>
+      </label>
+      {adding.where === NEW_SECTION && (
+        <label className="field">
+          <span className="field-label">Section</span>
+          <input
+            value={adding.section}
+            onChange={(e) => setAdding({ ...adding, section: e.target.value, error: undefined })}
+            placeholder="ServerSettings"
+            spellCheck={false}
+            autoComplete="off"
+          />
+        </label>
+      )}
+      <label className="field">
+        <span className="field-label">Name</span>
+        <input
+          value={adding.key}
+          onChange={(e) => setAdding({ ...adding, key: e.target.value, error: undefined })}
+          placeholder="MaxPlayers"
+          spellCheck={false}
+          autoComplete="off"
+          autoFocus
+          required
+        />
+      </label>
+      <label className="field">
+        <span className="field-label">Value</span>
+        <input
+          value={adding.value}
+          onChange={(e) => setAdding({ ...adding, value: e.target.value, error: undefined })}
+          spellCheck={false}
+          autoComplete="off"
+        />
+      </label>
+      <div className="settings-add-buttons">
+        <button type="submit" className="btn small primary">
+          Add
+        </button>
+        <button type="button" className="btn small ghost" onClick={() => setAdding(null)}>
+          Cancel
+        </button>
+      </div>
+      {adding.error && (
+        <p className="form-error small" role="alert">
+          {adding.error}
+        </p>
+      )}
+      <p className="muted small settings-add-help">
+        It&apos;s written like the settings around it; check the game&apos;s documentation for the exact name. Like
+        other edits, it&apos;s saved with Save.
+      </p>
+    </form>
+  );
+
   return (
     <div className="settings-form">
       <div className="settings-form-bar">
@@ -76,7 +220,13 @@ export function SettingsForm({
           <input type="checkbox" checked={onlyChanged} onChange={(e) => setOnlyChanged(e.target.checked)} disabled={!changed && !onlyChanged} />
           Only changed{changed ? ` (${changed})` : ""}
         </label>
+        {!readOnly && (
+          <button type="button" className="btn small" onClick={() => (adding ? setAdding(null) : startAdding())}>
+            Add a setting
+          </button>
+        )}
       </div>
+      {addForm}
       {visible.length === 0 && <p className="muted small">No settings match.</p>}
       {groups.map((g, gi) => (
         <section key={gi} className="settings-group">
@@ -159,6 +309,11 @@ export function SettingsForm({
               );
             })}
           </div>
+          {!readOnly && !q && !onlyChanged && (
+            <button type="button" className="link-button small settings-add-here" onClick={() => startAdding(g.fields[0])}>
+              Add a setting{g.name ? ` to ${g.name}` : ""}
+            </button>
+          )}
         </section>
       ))}
     </div>

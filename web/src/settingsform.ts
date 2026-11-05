@@ -205,3 +205,111 @@ export function humanize(key: string): string {
     });
   return words.join(" ") || key;
 }
+
+/** Where a new setting goes: an INI section ("" before any), and optionally a struct in it. */
+export interface Place {
+  section: string;
+  group?: string;
+}
+
+/** The places the file has, in order: each section's own settings, and each struct. */
+export function placesOf(fields: Field[]): Place[] {
+  const out: Place[] = [];
+  for (const f of fields) {
+    if (!out.some((p) => p.section === f.section && p.group === f.group)) out.push({ section: f.section, group: f.group });
+  }
+  return out;
+}
+
+/** The sections a file has, from its [headers], in order. */
+export function sectionsOf(text: string): string[] {
+  const out: string[] = [];
+  for (const line of text.split("\n")) {
+    const m = /^\s*\[([^\]]*)\]\s*$/.exec(line);
+    if (m && !out.includes(m[1])) out.push(m[1]);
+  }
+  return out;
+}
+
+const PLAIN_STRUCT_VALUE = /^([\w.+-]*|\(.*\))$/;
+
+function quote(value: string): string {
+  return `"${value.replace(/(["\\])/g, "\\$1")}"`;
+}
+
+/**
+ * Returns text with a new setting added, written the way the file writes its
+ * settings: in a struct, as another member; in a section, as a line after
+ * its last setting, copying a neighbour's indentation, separator and
+ * quoting; in a section the file doesn't have yet, under a new header at
+ * the end. Throws if the key isn't one, or the place already has it (keys
+ * starting with "+", Unreal's "add to the list", may repeat).
+ */
+export function addSetting(text: string, place: Place, key: string, value: string): string {
+  key = key.trim();
+  value = value.replace(/[\r\n]+/g, " ");
+  if (!KEY.test(key)) throw new Error(`"${key}" can't be a setting's name: use letters, digits, _ . - and /, starting with a letter.`);
+  const section = place.section.trim();
+  if (/[\]\r\n]/.test(section)) throw new Error("A section's name can't have ] in it.");
+  const fields = parseSettings(text) ?? [];
+  const nl = text.includes("\r\n") ? "\r\n" : "\n";
+  const inPlace = fields.filter((f) => f.section === section && f.group === place.group);
+  if (!key.startsWith("+") && inPlace.some((f) => f.key === key)) {
+    throw new Error(`${key} is already there${place.group ? ` in ${place.group}` : section ? ` in [${section}]` : ""}.`);
+  }
+
+  if (place.group !== undefined) {
+    // Another struct member, after the last one.
+    const last = inPlace[inPlace.length - 1];
+    if (!last) throw new Error(`There's no ${place.group} to add to.`);
+    const raw = PLAIN_STRUCT_VALUE.test(value) ? value : quote(value);
+    return text.slice(0, last.end) + `,${key}=${raw}` + text.slice(last.end);
+  }
+
+  // A line like a neighbour's: the last plain setting in the section, or else in the file.
+  const plain = fields.filter((f) => f.group === undefined);
+  const like = [...plain].reverse().find((f) => f.section === section) ?? plain[plain.length - 1];
+  let line = `${key}=${value}`;
+  if (like) {
+    const lineStart = text.lastIndexOf("\n", like.start - 1) + 1;
+    const prefix = text.slice(lineStart, like.start);
+    const at = prefix.lastIndexOf(like.key);
+    if (at >= 0) {
+      const raw = like.quoted ? quote(value) : value;
+      line = prefix.slice(0, at) + key + prefix.slice(at + like.key.length) + raw;
+    }
+  }
+
+  // After the section's last setting (struct lines included), or its header.
+  const lastInSection = fields.filter((f) => f.section === section).pop();
+  let after = -1; // the index of the line's end
+  if (lastInSection) {
+    after = text.indexOf("\n", lastInSection.end);
+  } else if (section === "") {
+    // Settings before any section go first.
+    return line + nl + text;
+  } else {
+    const lines = text.split("\n");
+    let pos = 0;
+    for (const l of lines) {
+      const m = /^\s*\[([^\]]*)\]\s*$/.exec(l);
+      if (m && m[1] === section) {
+        after = text.indexOf("\n", pos);
+        if (after < 0) after = text.length;
+        break;
+      }
+      pos += l.length + 1;
+    }
+    if (after < 0) {
+      // A new section at the end, after a blank line.
+      let t = text;
+      if (t !== "" && !t.endsWith("\n")) t += nl;
+      if (t.trim() !== "" && !t.endsWith("\n\n") && !t.endsWith("\n\r\n")) t += nl;
+      return `${t}[${section}]${nl}${line}${nl}`;
+    }
+  }
+  if (after < 0) after = text.length;
+  // The last line has no newline: the new one goes after it.
+  if (after === text.length) return text + nl + line;
+  return text.slice(0, after + 1) + line + nl + text.slice(after + 1);
+}

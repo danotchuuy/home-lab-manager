@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { flipBool, humanize, parseSettings, setValue } from "./settingsform.ts";
+import { addSetting, flipBool, humanize, parseSettings, placesOf, sectionsOf, setValue } from "./settingsform.ts";
 
 const palworld = `[/Script/Pal.PalGameWorldSettings]
 OptionSettings=(Difficulty=None,DayTimeSpeedRate=1.000000,bEnablePlayerToPlayerDamage=False,ServerName="My \\"Pal\\" Server",ServerPassword="",AdminPassword="hunter2",PublicPort=8211,RCONEnabled=True,RCONPort=25575,CrossplayPlatforms=(Steam,Xbox,PS5,Mac),BanListURL="https://api.palworldgame.com/api/banlist.txt")
@@ -115,4 +115,62 @@ test("booleans keep their case, keys read as words", () => {
   assert.equal(humanize("max-players"), "Max players");
   assert.equal(humanize("PalEggDefaultHatchingTime"), "Pal egg default hatching time");
   assert.equal(humanize("+ActiveGameModsIds"), "Active game mods ids");
+});
+
+test("adding a setting to a struct writes another member", () => {
+  const where = { section: "/Script/Pal.PalGameWorldSettings", group: "OptionSettings" };
+  let text = addSetting(palworld, where, "bIsPvP", "True");
+  text = addSetting(text, where, "ServerDescription", "Friends, mostly (EU)");
+  assert.ok(
+    text.includes(
+      `BanListURL="https://api.palworldgame.com/api/banlist.txt",bIsPvP=True,ServerDescription="Friends, mostly (EU)")\n`,
+    ),
+  );
+  const f = parseSettings(text)!;
+  assert.equal(f.length, 13);
+  assert.equal(f.find((x) => x.key === "ServerDescription")!.value, "Friends, mostly (EU)");
+  assert.equal(f.find((x) => x.key === "bIsPvP")!.group, "OptionSettings");
+  assert.throws(() => addSetting(text, where, "RCONPort", "1"), /already there in OptionSettings/);
+});
+
+test("adding a setting to a section copies a neighbour's style", () => {
+  const ini = `; comment
+[Server]
+  Name = "My server"
+MaxPlayers = 16
+
+[Other]
+Thing=1
+`;
+  // After the section's last setting, like the line before it.
+  assert.equal(
+    addSetting(ini, { section: "Server" }, "Port", "2456"),
+    ini.replace("MaxPlayers = 16\n", "MaxPlayers = 16\nPort = 2456\n"),
+  );
+  assert.equal(addSetting(ini, { section: "Other" }, "Two", "2"), ini + "Two=2\n");
+  // A section the file doesn't have: a new header at the end.
+  assert.equal(addSetting(ini, { section: "New" }, "A", "b"), ini + "\n[New]\nThing=b\n".replace("Thing", "A"));
+  // An empty section: right under its header.
+  const empty = "[A]\n[B]\nx=1\n";
+  assert.equal(addSetting(empty, { section: "A" }, "y", "2"), "[A]\ny=2\n[B]\nx=1\n");
+  // Keys before any section go first.
+  assert.equal(addSetting(empty, { section: "" }, "top", "1"), "top=1\n" + empty);
+  // Repeats: refused, except Unreal's "+" keys.
+  assert.throws(() => addSetting(ini, { section: "Server" }, "MaxPlayers", "1"), /already there in \[Server\]/);
+  const ark = "[ServerSettings]\n+ActiveMods=1\n";
+  assert.equal(addSetting(ark, { section: "ServerSettings" }, "+ActiveMods", "2"), "[ServerSettings]\n+ActiveMods=1\n+ActiveMods=2\n");
+  assert.throws(() => addSetting(ini, { section: "Server" }, "two words", "1"), /can't be a setting's name/);
+  assert.throws(() => addSetting(ini, { section: "a]b" }, "k", "1"), /section's name/);
+});
+
+test("adding a setting to .properties, .env and CRLF files", () => {
+  assert.equal(addSetting("motd=Hi\nmax-players=20", { section: "" }, "pvp", "true"), "motd=Hi\nmax-players=20\npvp=true");
+  assert.equal(addSetting('export TOKEN="abc"\n', { section: "" }, "NAME", "x y"), 'export TOKEN="abc"\nexport NAME="x y"\n');
+  assert.equal(addSetting("[S]\r\na=1\r\n\r\n[T]\r\nb=2\r\n", { section: "S" }, "c", "3"), "[S]\r\na=1\r\nc=3\r\n\r\n[T]\r\nb=2\r\n");
+  assert.equal(addSetting("[S]\r\na=1\r\n", { section: "U" }, "c", "3"), "[S]\r\na=1\r\n\r\n[U]\r\nc=3\r\n");
+  assert.deepEqual(placesOf(parseSettings(palworld + "[X]\nk=v\n")!), [
+    { section: "/Script/Pal.PalGameWorldSettings", group: "OptionSettings" },
+    { section: "X", group: undefined },
+  ]);
+  assert.deepEqual(sectionsOf("[A]\nx=1\n[B]\n"), ["A", "B"]);
 });

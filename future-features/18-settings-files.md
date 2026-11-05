@@ -3,6 +3,10 @@
 **Priority:** Requested · **Depends on:** nothing
 
 > **Status: done** (branch `feature/config-files`). See the README's [Editing server files](../README.md#editing-server-files).
+>
+> - **Added later: adding settings** (requested, branch `feature/18-add-settings`): the form's **Add a setting** puts a
+>   new key into a section, a struct or a new section, written in the style of its neighbours (`addSetting` in
+>   `web/src/settingsform.ts`); duplicates are refused except Unreal's `+Name` lines.
 
 ## Why
 
