@@ -3710,3 +3710,24 @@ textarea.code-input {
 .setup-log {
   margin: 0.6rem 0;
 }
+
+/* Disk cleanup */
+.disk-cleanup .section-head {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  justify-content: space-between;
+}
+.disk-cleanup .cleanup-settings {
+  margin: 0.6rem 0;
+}
+.disk-cleanup .cleanup-group {
+  margin-top: 0.8rem;
+}
+.disk-cleanup .cleanup-items {
+  list-style: none;
+  margin: 0.3rem 0 0 1.4rem;
+  padding: 0;
+  max-height: 14rem;
+  overflow: auto;
+}

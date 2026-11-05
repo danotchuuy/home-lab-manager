@@ -1838,3 +1838,41 @@ export interface HostInspection {
   reason?: string;
   notes?: string[];
 }
+
+export type CleanupKind = "old-image" | "unused-image" | "helper" | "build-cache" | "volume";
+
+/** Something disk cleanup can delete. */
+export interface CleanupItem {
+  kind: CleanupKind;
+  id?: string;
+  name: string;
+  size: number;
+  created?: string;
+  default: boolean;
+}
+
+export interface CleanupPlan {
+  host: string;
+  items: CleanupItem[];
+}
+
+export interface CleanupRequest {
+  images?: string[];
+  containers?: string[];
+  volumes?: string[];
+  buildCache?: boolean;
+}
+
+export interface CleanupResult {
+  freed: number;
+  removed: CleanupItem[];
+  failed: (CleanupItem & { error: string })[];
+}
+
+export interface CleanupSettings {
+  keepOldImages: boolean;
+  weekly: boolean;
+  lastRun?: string;
+  lastFreed: number;
+  lastError?: string;
+}

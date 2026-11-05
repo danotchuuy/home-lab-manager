@@ -65,6 +65,9 @@ type Manager struct {
 	// beforeStop saves a running server's world before hlm stops it; see
 	// UseBeforeStop.
 	beforeStop func(ctx context.Context, id string)
+	// removeOldImages says whether to delete a server's old image after it's
+	// recreated with another; see UseOldImageRemoval.
+	removeOldImages func() bool
 	// Event watchers for other hosts; see WatchEvents.
 	watchMu  sync.Mutex
 	watchCtx context.Context
@@ -645,6 +648,8 @@ func (m *Manager) recreate(ctx context.Context, id string, req *deploy.Request, 
 	}
 	if err := m.docker.RemoveContainer(ctx, info.ID, true); err != nil {
 		emit(Event{Stage: "warning", Message: "could not remove old container " + backup + ": " + err.Error()})
+	} else {
+		m.removeOldImage(ctx, host, info.Image, srv.imageID, emit)
 	}
 	// The image was just pulled, so the new container is up to date.
 	current := UpdateStatus{State: UpdateCurrent, CheckedAt: time.Now()}

@@ -1201,6 +1201,33 @@ These figures come from the host's `/proc` and filesystems:
 - **Remote Docker host:** the host can't be read from here, so the page only shows Docker's figures (image and container
   layer sizes per server, and Docker's totals).
 
+### Disk cleanup
+
+Updates leave the old image behind (game images are often several GB), and deleted servers leave their images. The
+Host page's **Clean up** finds what Docker can let go of, on this host or (with the picker) any other
+[Docker host](#more-docker-hosts), and deletes what you tick:
+
+| Item | What it is | Ticked to start with |
+| --- | --- | --- |
+| **Old images** | Untagged images no container uses: left when an update moved the tag to a newer image | Yes |
+| **Leftover containers** | Stopped containers hlm left behind: its helpers, and a recreated server's `<name>-old-<time>` container (only when `<name>` exists again) | Yes |
+| **Unused images** | Tagged images no container uses | No |
+| **Build cache** | Docker's build cache | No |
+| **Unused volumes** | Volumes no container uses, except deleted servers' data | No (asks again, naming them) |
+
+Nothing a container uses (running or stopped, hlm's or not) is a candidate, images are deleted without force (Docker
+refuses one in use, and that's reported), and what's asked for is checked again before anything is deleted. Deleted
+servers' folders and volumes stay with **Deleted servers**. Image sizes include layers other images may share, so a
+little less may be freed than shown.
+
+Two settings, in the same card:
+
+- **Delete a server's old image once an update has worked** (on by default): after an update (or a settings change that
+  uses another image) succeeds, the previous image is deleted if no container uses it and it has no tags left. A failed
+  update is rolled back first, so its image is kept.
+- **Every week** (off by default): old images and leftover containers, the ticked-by-default items, on every host. The
+  last run and what it freed are shown, and each run is in the activity log as `host.cleanup.weekly`.
+
 ## Resource usage
 
 The server list shows each running server's CPU, memory and network use, and the server page adds disk I/O and process
@@ -1823,6 +1850,9 @@ when the `HLM_*` one isn't set.
 | `POST /api/servers/{id}/backups`               | Start a backup now (202); progress shows in `GET .../backups`.                     |
 | `POST /api/servers/{id}/backups/restore`       | `{key, target?, backupFirst}`: start restoring a backup (202); progress shows in `GET .../backups`. |
 | `GET /api/servers/{id}/backups/download?key=&target=` | Download one of the server's backups (decrypted).                           |
+| `GET /api/host/cleanup?host=`                 | What [disk cleanup](#disk-cleanup) can delete on a Docker host (`items`: kind, ID, name, size, ticked by default); nothing is deleted. Admins. |
+| `POST /api/host/cleanup?host=`                | `{images, containers, volumes, buildCache}`: delete those (if they're still candidates); answers `{freed, removed, failed}`. Admins. |
+| `GET/PUT /api/system/cleanup`                  | `{keepOldImages, weekly}`, plus the last weekly run (`lastRun`, `lastFreed`, `lastError`). Admins. |
 | `GET /api/hosts`                               | [Docker hosts](#more-docker-hosts) and whether they could be reached. Admins also get how each is reached (never a client key) and hlm's SSH public key. |
 | `POST /api/hosts/test`                         | Connect to a host as given, without saving it: its Docker version, or (for SSH) the host key to confirm (`hostKey`, `hostKeyFingerprint`). Admins. |
 | `POST /api/hosts`, `PUT /api/hosts/{id}`       | `{id, name, kind: "ssh"\|"tcp", ssh?: {host, port, user, hostKey}, socket?, url?, ca?, cert?, key?, appdataRoot, address?}`: add or change a host, after connecting to it. An empty `key` keeps the saved one. [Confirmed](#confirming-its-you) session. |
@@ -1966,7 +1996,7 @@ curl -N -X POST localhost:8080/api/servers -d '{
 ```sh
 make test
 # Also run the Docker-backed tests (a busybox container, and SeaweedFS for backups):
-HLM_DOCKER_TESTS=1 go test ./internal/files ./internal/backup
+HLM_DOCKER_TESTS=1 go test ./internal/files ./internal/backup ./internal/manager
 # Also install Docker CE in throwaway Ubuntu, Debian, Fedora and CentOS containers (downloads a few hundred MB):
 HLM_DOCKER_TESTS=1 HLM_INSTALL_TESTS=1 go test ./internal/hosts -run DockerInstallSteps
 # (HLM_DOCKER_TESTS=1 alone also runs the TLS setup script in a busybox container.)

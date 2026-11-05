@@ -92,6 +92,10 @@ import type {
   DockerHostInput,
   DockerVersion,
   HostInspection,
+  CleanupPlan,
+  CleanupRequest,
+  CleanupResult,
+  CleanupSettings,
   NetworkRequest,
   UpdateCheckInfo,
   Role,
@@ -453,6 +457,13 @@ export const api = {
   /** Makes certificates and sets Docker's API up with TLS on a host over SSH, then saves the host; streams the output. */
   setupTLS: (h: DockerHostInput & { port: number }, onEvent: (e: DeployEvent) => void) =>
     stream("/api/hosts/setup-tls", { method: "POST", body: JSON.stringify(h) }, onEvent),
+  /** What disk cleanup can delete on a Docker host; nothing is deleted. */
+  cleanupCandidates: (host?: string) => json<CleanupPlan>(`/api/host/cleanup${hostQuery(host)}`),
+  cleanup: (req: CleanupRequest, host?: string) =>
+    json<CleanupResult>(`/api/host/cleanup${hostQuery(host)}`, { method: "POST", body: JSON.stringify(req) }),
+  cleanupSettings: () => json<CleanupSettings>("/api/system/cleanup"),
+  saveCleanupSettings: (s: Pick<CleanupSettings, "keepOldImages" | "weekly">) =>
+    json<CleanupSettings>("/api/system/cleanup", { method: "PUT", body: JSON.stringify(s) }),
   /** Makes hlm's SSH key, if there isn't one. */
   hostsSSHKey: () => json<SSHKeyInfo>("/api/hosts/ssh-key", { method: "POST" }),
   reconfigure: (id: string, req: DeployRequest, onEvent: (e: DeployEvent) => void) =>

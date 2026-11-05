@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import { StackedBar, TimeSeriesChart, usePoll } from "../components/charts";
 import { AppIcon, Spinner } from "../components/common";
+import { DiskCleanup } from "../components/DiskCleanup";
 import { DockerHosts } from "../components/DockerHosts";
 import { HostHistory, RangePicker } from "../components/ResourceHistory";
 import type { HistoryRange, DataFolder, DeletedStorage, HostSnapshot, ServerStorage, StorageReport } from "../types";
@@ -74,6 +75,7 @@ export function HostPage() {
           reloadStorage();
         }}
       />
+      <DiskCleanup onCleaned={reloadStorage} />
       {storage?.deleted && storage.deleted.length > 0 && <DeletedSection deleted={storage.deleted} onChanged={reloadStorage} />}
     </div>
   );

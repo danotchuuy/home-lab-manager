@@ -33,6 +33,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/backup"
 	"github.com/danotchuuy/home-lab-manager/internal/catalog"
 	"github.com/danotchuuy/home-lab-manager/internal/cftunnel"
+	"github.com/danotchuuy/home-lab-manager/internal/cleanup"
 	"github.com/danotchuuy/home-lab-manager/internal/configfiles"
 	"github.com/danotchuuy/home-lab-manager/internal/console"
 	"github.com/danotchuuy/home-lab-manager/internal/deploy"
@@ -493,6 +494,11 @@ func run(log *slog.Logger) error {
 		Manager: mgr, Catalog: cat, Backups: backups, Tasks: sched, Updates: autoUpdates, Query: queries,
 		Console: consoles, ConfigFiles: pinned, Health: healthStore, Version: version, Log: log,
 	})
+	// Old images and leftovers: deleted by hand from the Host page, after
+	// updates, and weekly if that's on.
+	cleaner := cleanup.New(store, mgr, auditLog, log)
+	mgr.UseOldImageRemoval(cleaner.RemoveOldImages)
+	go cleaner.Run(ctx)
 	// Docker Compose stacks.
 	stacks := stack.New(store, dc, mgr, log)
 	handler := api.Handler(api.Options{
@@ -526,6 +532,7 @@ func run(log *slog.Logger) error {
 		Transfer:      transfers,
 		Stacks:        stacks,
 		Hosts:         dockerHosts,
+		Cleanup:       cleaner,
 		// Set when HLM_UPDATE_CHECK overrides the setting.
 		UpdateCheckEnv: updateCheckEnv,
 		Token:          env("HLM_TOKEN", ""),
