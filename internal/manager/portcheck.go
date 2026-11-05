@@ -166,6 +166,34 @@ func (m *Manager) portConflicts(ctx context.Context, c docker.CreateRequest, sel
 	return out, nil
 }
 
+// HostPortsInUse lists the host ports ("27015/udp") that containers publish
+// (running or not) and, when the host can be read, that programs on it
+// listen on.
+func (m *Manager) HostPortsInUse(ctx context.Context) (map[string]bool, error) {
+	list, err := m.docker.ListContainers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list containers: %w", err)
+	}
+	used := map[string]bool{}
+	for _, s := range list {
+		info, err := m.docker.InspectContainer(ctx, s.ID)
+		if err != nil {
+			continue // removed meanwhile
+		}
+		for _, p := range hostPorts(info.HostConfig.NetworkMode, info.Config.ExposedPorts, info.HostConfig.PortBindings) {
+			used[fmt.Sprintf("%d/%s", p.port, p.proto)] = true
+		}
+	}
+	if m.host != nil && m.host.Available() {
+		if ls, err := m.host.Listeners(); err == nil {
+			for _, l := range ls {
+				used[fmt.Sprintf("%d/%s", l.Port, l.Proto)] = true
+			}
+		}
+	}
+	return used, nil
+}
+
 // checkPorts refuses settings whose host ports are already in use.
 func (m *Manager) checkPorts(ctx context.Context, spec *deploy.Spec, self string) error {
 	conflicts, err := m.portConflicts(ctx, spec.Create, self)

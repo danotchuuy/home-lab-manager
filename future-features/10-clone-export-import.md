@@ -2,6 +2,35 @@
 
 **Priority:** Medium · **Depends on:** nothing (uses existing backup/restore)
 
+> **Status: done** (branch `feature/10-clone-export-import`). See the README's
+> [Export, import and clone](../README.md#export-import-and-clone). Where the result differs from this plan:
+>
+> - **Code:** a new package, `internal/transfer` (export, import, clone), behind small interfaces to the manager,
+>   catalog and each settings service. Helpers were added to `deploy` (`Items`, `ParseHostPorts`), `manager` (`Create`
+>   without starting, `CopyData`, `HostPortsInUse`) and `backup` (`RestoreInto`, `IsBackupOf`).
+> - **Export format:** the template is always embedded (not only for custom ones): it's small, and it makes the file
+>   self-contained. `autostart` is the request's `restartPolicy`. Also exported: console, health and pinned-files
+>   settings (from features 02, 09 and 18).
+> - **Not exported:** internet ports (port forwarding) and hostnames (tunnel routes). They open the server to the
+>   internet or claim names, which should be a deliberate choice on the new hlm; they'd also clash on a clone.
+> - **Secrets:** left blank rather than removed, so the import form shows them as empty fields, with a warning naming
+>   them; required ones then can't be skipped.
+> - **Copying data:** rather than `cp -a` in a busybox helper, the copy streams the original's folders through the same
+>   archive code backups use, into the new container (created but not started; Docker's archive API makes its bind
+>   folders). No helper image is needed, it works for bind mounts and anonymous volumes alike, and it reports progress.
+>   Named volumes that aren't named after the server stay shared, with a warning.
+> - **Ports:** every host port moves up by the same smallest step that frees them all, so related ports stay related.
+>   Servers with their own LAN address keep theirs.
+> - **Paths:** folders under the appdata root are renamed after the copy (or nested under a folder named after it);
+>   folders elsewhere are renamed only where a path segment is the server's name, and otherwise stay shared, with a
+>   warning.
+> - **Import warnings also cover** data folders that another server here already uses (importing a file on the hlm it
+>   came from).
+> - **Restore as new server** goes to the clone page with the backup chosen, so the settings can be checked first. The
+>   backup key is checked before anything is created.
+> - **Testing:** the opt-in Docker test for the copy wasn't written. A manual end-to-end run with real containers and a
+>   SeaweedFS bucket covered copy-now, restore-from-backup and the UI flows instead (see the pull request).
+
 ## Why
 
 - Making a test copy of a world (try a mod) means installing again and copying files by hand.
@@ -80,9 +109,9 @@ Admin for import/clone because installing is admin-only (except deployer keys).
 
 ## Tasks
 
-- [ ] Export format + builder from manager config, backup plan and other per-server settings
-- [ ] Import preview + Install page "from file" mode
-- [ ] Clone: name/path/port rewrite, data copy helper as job
-- [ ] Restore-as-new on Backups tab
-- [ ] API + UI
-- [ ] README section
+- [x] Export format + builder from manager config, backup plan and other per-server settings
+- [x] Import preview + Install page "from file" mode
+- [x] Clone: name/path/port rewrite, data copy helper as job
+- [x] Restore-as-new on Backups tab
+- [x] API + UI
+- [x] README section

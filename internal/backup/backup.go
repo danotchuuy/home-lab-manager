@@ -878,6 +878,60 @@ func (s *Service) restore(ctx context.Context, cl *s3.Client, name, key string, 
 	return run
 }
 
+// IsBackupOf reports whether key is one of server name's backups.
+func (s *Service) IsBackupOf(name, key string) bool {
+	_, c, err := s.client()
+	return err == nil && serverSeries(c, name).has(key)
+}
+
+// RestoreInto extracts one of server from's backups into another server's
+// container (a new copy of it, say), and waits for it to finish. The
+// target should be stopped. progress, if not nil, is called as files are
+// written.
+func (s *Service) RestoreInto(ctx context.Context, from, key, toID string, progress func(files.ArchiveStats)) (Run, error) {
+	cl, c, err := s.client()
+	if err != nil {
+		return Run{}, err
+	}
+	if !serverSeries(c, from).has(key) {
+		return Run{}, ErrBadKey
+	}
+	_, to, err := s.serverName(ctx, toID)
+	if err != nil {
+		return Run{}, err
+	}
+	prog, err := s.claim(to, "restore", "restore")
+	if err != nil {
+		return Run{}, err
+	}
+	defer s.release(to)
+	prog.Key = key
+	run := Run{Trigger: "restore", Started: prog.Started, Key: key}
+	s.setStage(prog, "restoring")
+	rc, _, err := cl.Get(ctx, key)
+	if err != nil {
+		return run, err
+	}
+	defer rc.Close()
+	gz, err := gzip.NewReader(rc)
+	if err != nil {
+		return run, fmt.Errorf("read the backup: %w", err)
+	}
+	st, err := s.servers.RestoreArchive(ctx, toID, gz, func(st files.ArchiveStats) {
+		s.mu.Lock()
+		prog.Files, prog.Bytes = st.Files, st.Bytes
+		s.mu.Unlock()
+		if progress != nil {
+			progress(st)
+		}
+	})
+	run.Files, run.Bytes, run.Warnings, run.Finished = st.Files, st.Bytes, st.Warnings, time.Now()
+	if err != nil {
+		run.Error = err.Error()
+	}
+	return run, err
+}
+
 // prune deletes all but the newest keep backups of a series.
 func prune(ctx context.Context, cl *s3.Client, r series, keep int) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)

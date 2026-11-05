@@ -195,6 +195,10 @@ func (s *Service) settings(name string) (Settings, error) {
 	return all[name], nil
 }
 
+// Settings returns a server's saved settings, password included, for
+// copying them to another server.
+func (s *Service) Settings(name string) (Settings, error) { return s.settings(name) }
+
 func serverName(info docker.ContainerJSON) string { return strings.TrimPrefix(info.Name, "/") }
 
 // Status describes how a server takes commands.

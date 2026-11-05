@@ -10,6 +10,8 @@ import { HostPage } from "./pages/Host";
 import { ProxyPage } from "./pages/Proxy";
 import { TunnelPage } from "./pages/Tunnel";
 import { InstallPage } from "./pages/Install";
+import { ImportServerPage } from "./pages/ImportServer";
+import { CloneServerPage } from "./pages/CloneServer";
 import { ServerDetailPage } from "./pages/ServerDetail";
 import { ServersPage } from "./pages/Servers";
 import { SystemPage } from "./pages/System";
@@ -123,6 +125,8 @@ export function App() {
           <Route path="/catalog" element={<CatalogPage />} />
           <Route path="/catalog/:id" element={<InstallPage />} />
           <Route path="/servers/:name" element={<ServerDetailPage />} />
+          <Route path="/servers/:name/clone" element={<CloneServerPage />} />
+          <Route path="/import" element={<ImportServerPage />} />
           <Route path="/connections/:name" element={<ConnectionDetailPage />} />
           <Route path="/host" element={<HostPage />} />
           <Route path="/system" element={<SystemPage />} />

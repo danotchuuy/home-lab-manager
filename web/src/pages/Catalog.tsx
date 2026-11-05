@@ -89,6 +89,9 @@ export function CatalogPage() {
           <button className="btn" onClick={() => setImporting((v) => !v)}>
             + Add a Docker image
           </button>
+          <Link className="btn" to="/import">
+            Import a server
+          </Link>
           <button className="btn ghost" onClick={refresh} disabled={refreshing}>
             {refreshing ? "Refreshing…" : "Refresh feed"}
           </button>

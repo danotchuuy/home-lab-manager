@@ -5,6 +5,7 @@ import { api, ApiError } from "../api";
 import { AppIcon, CrashLoopBadge, HealthBadge, Spinner, StateBadge } from "../components/common";
 import { ServerActivity } from "../components/ActivityLog";
 import { ConfigFilesCard } from "../components/ConfigFilesCard";
+import { ExportCard } from "../components/ExportCard";
 import { ConfigForm } from "../components/ConfigForm";
 import { ConsoleInputBar } from "../components/Console";
 import { DeployProgress } from "../components/DeployProgress";
@@ -288,6 +289,8 @@ export function ServerDetailPage() {
           <ServerHealthCard server={server.name} running={running} canManage={manager} />
           <hr />
           <ConfigFilesCard server={server.name} canManage={manager} />
+          <hr />
+          <ExportCard server={server.name} canManage={manager} canClone={admin} />
           <hr />
           {manager && (
             <>

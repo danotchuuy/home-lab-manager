@@ -93,6 +93,7 @@ var expected = map[string]string{
 	"GET /api/schedule/upcoming":              "signedIn",
 	"GET /api/servers/{id}/update-policy":     "viewer",
 	"GET /api/servers/{id}/health":            "viewer",
+	"GET /api/servers/{id}/export":            "operator",
 	"PUT /api/servers/{id}/health":            "manager",
 	"POST /api/servers/{id}/health/test":      "manager",
 	"GET /api/query":                          "signedIn",

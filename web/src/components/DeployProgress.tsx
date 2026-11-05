@@ -15,12 +15,16 @@ export function DeployProgress({ events }: { events: DeployEvent[] }) {
     const warnings: string[] = [];
     const layers = new Map<string, Layer>();
     let error: string | undefined;
-    let done = false;
+    let done: string | undefined;
+    let copying = false; // the last step is a copy's progress, updated in place
     for (const e of events) {
+      const progress = e.stage === "copy" && !!e.message?.endsWith("so far");
       if (e.stage === "warning" && e.message) warnings.push(e.message);
       else if (e.stage === "error") error = e.message;
-      else if (e.stage === "done") done = true;
+      else if (e.stage === "done") done = e.message || "Server is up.";
+      else if (e.message && progress && copying) steps[steps.length - 1] = e.message;
       else if (e.message) steps.push(e.message);
+      if (e.message && e.stage !== "warning") copying = progress;
 
       const p = e.progress;
       if (p?.id && p.status && !p.status.startsWith("Pulling from")) {
@@ -82,7 +86,7 @@ export function DeployProgress({ events }: { events: DeployEvent[] }) {
         </ul>
       )}
       {error && <div className="alert error">{error}</div>}
-      {done && <div className="alert success">Server is up.</div>}
+      {done && <div className="alert success">{done}</div>}
     </div>
   );
 }

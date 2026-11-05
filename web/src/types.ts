@@ -90,7 +90,39 @@ export interface DeployRequest {
   extraParams?: string;
   postArgs?: string;
   privileged?: boolean;
+  /** Overrides the template's restart policy; start on boot switches it. */
+  restartPolicy?: string;
 }
+
+/** A server's settings exported to a file (<server>.hlm.json); see the README. */
+export interface ServerExport {
+  hlmExport: number;
+  exported: string;
+  hlmVersion?: string;
+  server: string;
+  template: App;
+  request: DeployRequest;
+  secrets: boolean;
+  omitted?: string[];
+  settings: Record<string, unknown>;
+}
+
+/** A server about to be imported or cloned: the settings form, filled in, and what to look out for. */
+export interface TransferPreview {
+  app: App;
+  request: DeployRequest;
+  /** Names of settings left out of the file (passwords). */
+  omitted?: string[];
+  warnings: string[];
+  /** The template isn't in the catalog: it's added from the file. */
+  templateMissing?: boolean;
+  /** The other settings that come along, in words. */
+  settings: string[];
+  /** Data folders a clone copies. */
+  copies?: { target: string; from: string; to: string }[];
+}
+
+export type CopyData = "none" | "now" | "backup";
 
 export type ExtraConfigType = "Path" | "Port" | "Variable" | "Label" | "Device";
 
@@ -349,7 +381,12 @@ export interface DeployEvent {
     | "download"
     | "verify"
     | "install"
-    | "restart";
+    | "restart"
+    // imports and clones:
+    | "created"
+    | "template"
+    | "settings"
+    | "copy";
   message?: string;
   /** The server an event is about, when updating several servers. */
   target?: string;
