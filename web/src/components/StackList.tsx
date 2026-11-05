@@ -5,6 +5,7 @@ import { api } from "../api";
 import type { DeployEvent, Stack } from "../types";
 import { usePoll } from "../usePoll";
 import { DeployProgress } from "./DeployProgress";
+import { HostBadge, useHosts } from "./HostPicker";
 import { StateBadge } from "./common";
 
 const OPEN_KEY = "hlm.openStacks";
@@ -20,6 +21,7 @@ function openStacks(): string[] {
 /** The Servers page's Compose stacks: one card each, opening to its services. */
 export function StackList({ group, groups }: { group: string; groups: Record<string, string[] | undefined> }) {
   const admin = useAdmin();
+  const hosts = useHosts();
   const [stacks, setStacks] = useState<Stack[]>([]);
   const [open, setOpen] = useState<string[]>(openStacks);
   const [events, setEvents] = useState<Record<string, DeployEvent[]>>({});
@@ -55,7 +57,7 @@ export function StackList({ group, groups }: { group: string; groups: Record<str
   }
 
   // A group filter shows stacks with a service in that group.
-  const shown = stacks.filter((st) => !group || st.services.some((m) => groups[m.container]?.includes(group)));
+  const shown = stacks.filter((st) => !group || st.services.some((m) => groups[m.server]?.includes(group)));
   if (shown.length === 0) return null;
   return (
     <div className="stack-list">
@@ -70,6 +72,7 @@ export function StackList({ group, groups }: { group: string; groups: Record<str
                 {isOpen ? "▾" : "▸"} <span className="stack-name">{st.name}</span>
               </button>
               <span className="badge">stack</span>
+              <HostBadge host={st.host} hosts={hosts} />
               <span className={`muted small ${up === st.services.length ? "" : "stack-partial"}`}>
                 {up} of {st.services.length} running
               </span>
@@ -109,7 +112,7 @@ export function StackList({ group, groups }: { group: string; groups: Record<str
                     {m.state === "missing" ? (
                       <span>{m.service}</span>
                     ) : (
-                      <Link to={`/servers/${encodeURIComponent(m.container)}`}>{m.service}</Link>
+                      <Link to={`/servers/${encodeURIComponent(m.server)}`}>{m.service}</Link>
                     )}
                     <StateBadge state={m.state} health={m.health} />
                     <code className="muted small">{m.image}</code>

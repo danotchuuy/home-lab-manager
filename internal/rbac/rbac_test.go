@@ -3,6 +3,7 @@ package rbac
 import (
 	"errors"
 	"log/slog"
+	"slices"
 	"testing"
 
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
@@ -173,5 +174,80 @@ func TestGroupValidation(t *testing.T) {
 		if _, err := s.Create(g); err == nil {
 			t.Errorf("accepted %+v", g)
 		}
+	}
+}
+
+// Servers on other Docker hosts can be in groups, and a group can hold
+// whole hosts: every server there, including ones added later.
+func TestHostsInGroups(t *testing.T) {
+	s := testStore(t)
+	alice := Principal{Role: Member, Subjects: []Subject{{SubjectLocal, "alice"}}}
+	g, err := s.Create(Group{Name: "NAS", Servers: []string{"valheim", "minecraft@pi"}, Hosts: []string{"nas", "nas"},
+		Grants: []Grant{{Subject{SubjectLocal, "alice"}, Operator}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(g.Hosts, []string{"nas"}) {
+		t.Errorf("hosts %v", g.Hosts)
+	}
+	if _, err := s.Create(Group{Name: "Viewers", Hosts: []string{"nas"}, Grants: []Grant{{Subject{SubjectLocal, "alice"}, Viewer}}}); err != nil {
+		t.Fatal(err)
+	}
+	a := s.Access(alice)
+	for _, tt := range []struct {
+		server string
+		want   Role
+	}{
+		{"valheim", Operator},      // by name, on this host
+		{"minecraft@pi", Operator}, // by name, on another host
+		{"palworld@nas", Operator}, // by its host
+		{"anything@nas", Operator}, // added later: still
+		{"palworld@pi", None},      // another host
+		{"palworld", None},         // this host isn't in the group
+	} {
+		if got := a.Role(tt.server); got != tt.want {
+			t.Errorf("%s: %q, want %q", tt.server, got, tt.want)
+		}
+	}
+	if got := a.GroupsOf("palworld@nas"); !slices.Equal(got, []string{"NAS", "Viewers"}) {
+		t.Errorf("groups of palworld@nas: %v", got)
+	}
+	if got := a.GroupsOf("minecraft@pi"); !slices.Equal(got, []string{"NAS"}) {
+		t.Errorf("groups of minecraft@pi: %v", got)
+	}
+	if !g.Has("x@nas") || !g.Has("valheim") || g.Has("x@pi") || g.Has("x") {
+		t.Error("Has")
+	}
+	if HostOfServer("a@nas") != "nas" || HostOfServer("a") != LocalHost {
+		t.Error("HostOfServer")
+	}
+	// This host by its ID.
+	s.Update(g.ID, Group{Name: "NAS", Hosts: []string{LocalHost}, Grants: g.Grants})
+	if s.Access(alice).Role("palworld") != Operator {
+		t.Error("the local host in a group")
+	}
+	for _, bad := range []Group{
+		{Name: "x", Hosts: []string{"NAS"}},
+		{Name: "x", Hosts: []string{"a b"}},
+		{Name: "x", Servers: []string{"a@NAS"}},
+		{Name: "x", Servers: []string{"a@b@c"}},
+	} {
+		if _, err := s.Create(bad); err == nil {
+			t.Errorf("%+v accepted", bad)
+		}
+	}
+	// A removed host leaves the groups.
+	s.Update(g.ID, Group{Name: "NAS", Hosts: []string{"nas", "pi"}, Grants: g.Grants})
+	if err := s.ForgetHost("nas"); err != nil {
+		t.Fatal(err)
+	}
+	groups, _ := s.Groups()
+	for _, gr := range groups {
+		if slices.Contains(gr.Hosts, "nas") {
+			t.Errorf("%s still has nas", gr.Name)
+		}
+	}
+	if s.Access(alice).Role("x@pi") != Operator || s.Access(alice).Role("x@nas") != None {
+		t.Error("after forgetting nas")
 	}
 }

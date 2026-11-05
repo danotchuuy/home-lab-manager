@@ -9,6 +9,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -435,6 +436,17 @@ func (s *server) checkNewServers(ctx context.Context, servers, had []string) err
 	return nil
 }
 
+// checkNewHosts makes sure Docker hosts being added to a group exist, as
+// checkNewServers does for servers.
+func (s *server) checkNewHosts(hosts, had []string) error {
+	for _, h := range hosts {
+		if !slices.Contains(had, h) && (s.Manager == nil || !s.Manager.KnownHost(h)) {
+			return fmt.Errorf("there's no Docker host %q", h)
+		}
+	}
+	return nil
+}
+
 func (s *server) createGroup(w http.ResponseWriter, r *http.Request) {
 	in, ok := decodeGroup(w, r)
 	if !ok {
@@ -442,6 +454,10 @@ func (s *server) createGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	audit.Add(r.Context(), "name", in.Name)
 	if err := s.checkNewServers(r.Context(), in.Servers, nil); err != nil {
+		writeGroupError(w, err)
+		return
+	}
+	if err := s.checkNewHosts(in.Hosts, nil); err != nil {
 		writeGroupError(w, err)
 		return
 	}
@@ -465,13 +481,17 @@ func (s *server) updateGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	var had []string
+	var had, hadHosts []string
 	for _, g := range groups {
 		if g.ID == id {
-			had = g.Servers
+			had, hadHosts = g.Servers, g.Hosts
 		}
 	}
 	if err := s.checkNewServers(r.Context(), in.Servers, had); err != nil {
+		writeGroupError(w, err)
+		return
+	}
+	if err := s.checkNewHosts(in.Hosts, hadHosts); err != nil {
 		writeGroupError(w, err)
 		return
 	}

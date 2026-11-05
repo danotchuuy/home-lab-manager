@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api } from "../api";
-import type { Account, APIKeyInfo, GroupRole, GrantKind, Server, ServerGroup } from "../types";
+import type { Account, APIKeyInfo, DockerHost, GroupRole, GrantKind, Server, ServerGroup } from "../types";
 import { Spinner } from "./common";
 
 const KINDS: { kind: GrantKind; label: string }[] = [
@@ -18,6 +18,7 @@ const ROLES: { role: GroupRole; label: string }[] = [
 
 interface Lists {
   servers: Server[];
+  hosts: DockerHost[];
   accounts: Account[];
   keys: APIKeyInfo[];
 }
@@ -32,15 +33,19 @@ export function ServerGroups() {
   const [error, setError] = useState<string>();
 
   async function load() {
-    const [g, servers, accounts, keys, status] = await Promise.all([
+    const [g, servers, accounts, keys, status, hosts] = await Promise.all([
       api.groups(),
       api.servers(),
       api.accounts(),
       api.apiKeys(),
       api.authStatus(),
+      api.hosts().then(
+        (r) => r.hosts,
+        () => [] as DockerHost[],
+      ),
     ]);
-    setGroups(g);
-    setLists({ servers, accounts, keys });
+    setGroups(g.map((x) => ({ ...x, hosts: x.hosts ?? [] })));
+    setLists({ servers, accounts, keys, hosts });
     setSignInRequired(status.required || status.token);
   }
 
@@ -105,6 +110,14 @@ function GroupCard({ group, lists, busy, run }: { group: ServerGroup; lists: Lis
   const dirty = JSON.stringify(draft) !== JSON.stringify(group);
   const incomplete = !draft.name.trim() || draft.grants.some((g) => !g.subject.name.trim());
 
+  const draftHosts = draft.hosts ?? [];
+  // The host a server is on: after its @, or this one.
+  const hostOf = (server: string) => (server.includes("@") ? server.slice(server.lastIndexOf("@") + 1) : "local");
+
+  function toggleHost(id: string, on: boolean) {
+    setDraft((d) => ({ ...d, hosts: on ? [...(d.hosts ?? []), id] : (d.hosts ?? []).filter((h) => h !== id) }));
+  }
+
   function toggleServer(name: string, on: boolean) {
     setDraft((d) => ({ ...d, servers: on ? [...d.servers, name] : d.servers.filter((s) => s !== name) }));
   }
@@ -129,14 +142,39 @@ function GroupCard({ group, lists, busy, run }: { group: ServerGroup; lists: Lis
         <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} maxLength={64} required />
       </label>
 
+      {lists.hosts.length > 1 && (
+        <>
+          <span className="field-label">Whole Docker hosts</span>
+          <p className="muted small no-margin">Every server on a host, including ones added there later.</p>
+          <div className="group-servers">
+            {lists.hosts.map((h) => (
+              <label key={h.id} className="small">
+                <input type="checkbox" checked={draftHosts.includes(h.id)} onChange={(e) => toggleHost(h.id, e.target.checked)} />{" "}
+                {h.name}
+                {h.local ? "" : ` (${h.id})`}
+              </label>
+            ))}
+          </div>
+        </>
+      )}
+
       <span className="field-label">Servers</span>
       {names.length === 0 && <p className="muted small no-margin">No servers yet.</p>}
       <div className="group-servers">
-        {names.map((n) => (
-          <label key={n} className="small">
-            <input type="checkbox" checked={draft.servers.includes(n)} onChange={(e) => toggleServer(n, e.target.checked)} /> {n}
-          </label>
-        ))}
+        {names.map((n) => {
+          const byHost = draftHosts.includes(hostOf(n));
+          return (
+            <label key={n} className="small" title={byHost ? "In the group with its whole host" : undefined}>
+              <input
+                type="checkbox"
+                checked={byHost || draft.servers.includes(n)}
+                disabled={byHost}
+                onChange={(e) => toggleServer(n, e.target.checked)}
+              />{" "}
+              {n}
+            </label>
+          );
+        })}
       </div>
 
       <span className="field-label">Who has access</span>

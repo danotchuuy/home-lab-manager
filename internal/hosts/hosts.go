@@ -113,6 +113,8 @@ type Registry struct {
 
 	mu    sync.Mutex
 	conns map[string]*conn
+	// collectors sample SSH and TLS hosts' metrics, by host ID.
+	collectors map[string]*hostCollector
 }
 
 type conn struct {
@@ -133,7 +135,7 @@ func New(o Options) *Registry {
 	if o.Log == nil {
 		o.Log = slog.Default()
 	}
-	r := &Registry{opts: o, conns: map[string]*conn{}}
+	r := &Registry{opts: o, conns: map[string]*conn{}, collectors: map[string]*hostCollector{}}
 	if o.Agents != nil {
 		o.Agents.Authenticate = r.authenticateAgent
 		o.Agents.OnConnect = r.agentChanged
@@ -547,6 +549,7 @@ func (r *Registry) Delete(id string) error {
 		c.close()
 		delete(r.conns, id)
 	}
+	delete(r.collectors, id)
 	r.mu.Unlock()
 	r.opts.Log.Info("removed Docker host", "host", id)
 	r.changed()

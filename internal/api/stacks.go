@@ -22,6 +22,8 @@ type stackInput struct {
 	Name string `json:"name"`
 	YAML string `json:"yaml"`
 	Env  string `json:"env"`
+	// Host is the Docker host a new stack goes on ("" for this one).
+	Host string `json:"host,omitempty"`
 }
 
 func readStack(w http.ResponseWriter, r *http.Request) (stackInput, bool) {
@@ -60,7 +62,7 @@ func (s *server) visibleStack(r *http.Request, st stack.Stack) (stack.Stack, boo
 	}
 	var keep []stack.Member
 	for _, m := range st.Services {
-		if access.Can(m.Container, rbac.Viewer) {
+		if access.Can(m.Server, rbac.Viewer) {
 			keep = append(keep, m)
 		}
 	}
@@ -114,7 +116,7 @@ func (s *server) previewStack(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	plan, err := s.Stacks.Preview(r.Context(), in.Name, in.YAML, in.Env, in.Existing)
+	plan, err := s.Stacks.Preview(r.Context(), in.Name, in.YAML, in.Env, in.Existing, in.Host)
 	if err != nil {
 		writeStackError(w, err)
 		return
@@ -136,8 +138,11 @@ func (s *server) applyStack(w http.ResponseWriter, r *http.Request, existing boo
 		return
 	}
 	audit.Add(r.Context(), "stack", in.Name)
+	if in.Host != "" {
+		audit.Add(r.Context(), "host", in.Host)
+	}
 	s.stream(w, r, func(ctx context.Context, emit func(manager.Event)) error {
-		return s.Stacks.Apply(ctx, in.Name, in.YAML, in.Env, existing, emit)
+		return s.Stacks.Apply(ctx, in.Name, in.YAML, in.Env, existing, in.Host, emit)
 	})
 }
 
@@ -153,10 +158,10 @@ func (s *server) stackAction(w http.ResponseWriter, r *http.Request) {
 	access := s.access(r)
 	visible := false
 	for _, m := range st.Services {
-		if access.Can(m.Container, rbac.Viewer) {
+		if access.Can(m.Server, rbac.Viewer) {
 			visible = true
 		}
-		if !access.Can(m.Container, rbac.Operator) {
+		if !access.Can(m.Server, rbac.Operator) {
 			if visible {
 				writeError(w, http.StatusForbidden, errors.New("that takes being an operator of every service in the stack"))
 			} else {

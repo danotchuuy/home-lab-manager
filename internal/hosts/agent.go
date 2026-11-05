@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/danotchuuy/home-lab-manager/internal/agent"
-	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
 )
 
 // Hosts with an agent: "hlm agent" on the host connects out to hlm, which
@@ -186,50 +185,5 @@ func (r *Registry) agentDial(id string) func(ctx context.Context) (net.Conn, err
 			return nil, agent.ErrNotConnected
 		}
 		return r.opts.Agents.Dial(ctx, id)
-	}
-}
-
-// ErrNoHostMetrics is returned for a host that doesn't report its own
-// CPU, memory, network and disks: only hosts with hlm's agent do.
-var ErrNoHostMetrics = errors.New("only hosts with hlm's agent report their CPU, memory, network and disks; hlm sees other hosts through Docker alone")
-
-// HostMetrics asks a host's agent for the host's metrics.
-func (r *Registry) HostMetrics(ctx context.Context, id string) (hostmetrics.Snapshot, error) {
-	h, err := r.Get(id)
-	if err != nil {
-		return hostmetrics.Snapshot{}, err
-	}
-	if h.Kind != KindAgent || r.opts.Agents == nil {
-		return hostmetrics.Snapshot{}, ErrNoHostMetrics
-	}
-	return r.opts.Agents.HostMetrics(ctx, id)
-}
-
-// RunHostMetrics samples the hosts with an agent every interval until ctx
-// ends, passing each sample (or an unavailable one, saying why) to
-// observe.
-func (r *Registry) RunHostMetrics(ctx context.Context, every time.Duration, observe func(id string, snap hostmetrics.Snapshot)) {
-	t := time.NewTicker(every)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-		}
-		list, err := r.List()
-		if err != nil {
-			continue
-		}
-		for _, h := range list {
-			if h.Kind != KindAgent {
-				continue
-			}
-			snap, err := r.HostMetrics(ctx, h.ID)
-			if err != nil {
-				snap = hostmetrics.Snapshot{Reason: err.Error()}
-			}
-			observe(h.ID, snap)
-		}
 	}
 }

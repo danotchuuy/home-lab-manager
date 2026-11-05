@@ -17,13 +17,13 @@ import (
 // fakeManager removes containers straight through Docker.
 type fakeManager struct{ d *docker.Client }
 
-func (f fakeManager) PortConflictsOf(context.Context, docker.CreateRequest, string) ([]manager.PortConflict, error) {
+func (f fakeManager) PortConflictsOn(context.Context, string, docker.CreateRequest, string) ([]manager.PortConflict, error) {
 	return nil, nil
 }
 func (f fakeManager) Remove(ctx context.Context, id string) error {
 	return f.d.RemoveContainer(ctx, id, true)
 }
-func (f fakeManager) AppdataRoot() string { return os.TempDir() }
+func (f fakeManager) AppdataRootOf(string) string { return os.TempDir() }
 
 const testStack = `
 services:
@@ -64,7 +64,7 @@ func TestDockerStack(t *testing.T) {
 		t.Fatal(err)
 	}
 	store, _ := secrets.Open(t.TempDir(), "k")
-	s := New(store, d, fakeManager{d}, slog.New(slog.DiscardHandler))
+	s := New(store, func(string) (Docker, error) { return d, nil }, fakeManager{d}, slog.New(slog.DiscardHandler))
 	name := fmt.Sprintf("hlmtest%d", time.Now().UnixNano()%1_000_000)
 	t.Cleanup(func() { s.Delete(context.Background(), name) })
 
@@ -74,7 +74,7 @@ func TestDockerStack(t *testing.T) {
 			events = append(events, e.Stage+": "+e.Message)
 		}
 	}
-	if err := s.Apply(ctx, name, testStack, "GREETING=hi", false, emit); err != nil {
+	if err := s.Apply(ctx, name, testStack, "GREETING=hi", false, "", emit); err != nil {
 		t.Fatalf("apply: %v\n%s", err, strings.Join(events, "\n"))
 	}
 	joined := strings.Join(events, "\n")
@@ -102,7 +102,7 @@ func TestDockerStack(t *testing.T) {
 	}
 
 	// An edit recreates only what changed.
-	plan, err := s.Preview(ctx, name, strings.Replace(testStack, "${GREETING:-hello}", "changed", 1), "", true)
+	plan, err := s.Preview(ctx, name, strings.Replace(testStack, "${GREETING:-hello}", "changed", 1), "", true, "")
 	if err != nil {
 		t.Fatal(err)
 	}

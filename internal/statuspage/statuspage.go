@@ -170,7 +170,8 @@ type Options struct {
 	// (auth.HashPassword and auth.PasswordMatches).
 	HashPassword    func(string) string
 	PasswordMatches func(hash, password string) bool
-	// Groups lists the server groups: their servers by group ID.
+	// Groups lists the server groups: their servers by group ID, and
+	// "@host" for each Docker host a group holds whole.
 	Groups func() (map[string][]string, error)
 }
 
@@ -465,7 +466,7 @@ func (s *Service) Page(ctx context.Context, host string, now time.Time) (Page, e
 			in := s.groupServers(site.Groups)
 			p.Servers = []Server{}
 			for i, srv := range s.page.Servers {
-				if in[s.names[i]] {
+				if in(s.names[i]) {
 					p.Servers = append(p.Servers, srv)
 				}
 			}
@@ -477,22 +478,26 @@ func (s *Service) Page(ctx context.Context, host string, now time.Time) (Page, e
 	return p, nil
 }
 
-// groupServers are the servers in any of the groups.
-func (s *Service) groupServers(groups []string) map[string]bool {
-	out := map[string]bool{}
-	if s.opts.Groups == nil {
-		return out
-	}
-	all, err := s.opts.Groups()
-	if err != nil {
-		return out // show nothing rather than everything
-	}
-	for _, g := range groups {
-		for _, name := range all[g] {
-			out[name] = true
+// groupServers says whether a server is in any of the groups: by its
+// name, or by its Docker host (a group's "@host" entries).
+func (s *Service) groupServers(groups []string) func(name string) bool {
+	in := map[string]bool{}
+	if s.opts.Groups != nil {
+		if all, err := s.opts.Groups(); err == nil { // on error, show nothing rather than everything
+			for _, g := range groups {
+				for _, name := range all[g] {
+					in[name] = true
+				}
+			}
 		}
 	}
-	return out
+	return func(name string) bool {
+		host := "local"
+		if i := strings.LastIndexByte(name, '@'); i >= 0 {
+			host = name[i+1:]
+		}
+		return in[name] || in["@"+host]
+	}
 }
 
 // build works out every server's public view, for every host's page.

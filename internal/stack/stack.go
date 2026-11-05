@@ -1,10 +1,11 @@
 // Package stack runs Docker Compose stacks: each service is a container hlm
 // manages like a server, labelled with its stack, on the stack's own
-// networks. The Compose file and its .env are kept in the secrets store
+// networks, on one Docker host (this one, or another of hlm's). The Compose file and its .env are kept in the secrets store
 // (they often hold passwords), so they're in configuration backups too.
 package stack
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -25,6 +26,8 @@ const secretName = "stacks"
 
 // Definition is a stack's Compose file and .env.
 type Definition struct {
+	// Host is the Docker host it runs on: "" for this one. It can't change.
+	Host    string    `json:"host,omitempty"`
 	YAML    string    `json:"yaml"`
 	Env     string    `json:"env,omitempty"`
 	Created time.Time `json:"created"`
@@ -36,9 +39,10 @@ type Event = manager.Event
 
 // Manager is what the service needs from the server manager.
 type Manager interface {
-	PortConflictsOf(ctx context.Context, c docker.CreateRequest, self string) ([]manager.PortConflict, error)
+	PortConflictsOn(ctx context.Context, host string, c docker.CreateRequest, self string) ([]manager.PortConflict, error)
+	// Remove removes a server (an ID with @host on another host).
 	Remove(ctx context.Context, id string) error
-	AppdataRoot() string
+	AppdataRootOf(host string) string
 }
 
 // Docker is what the service needs from Docker.
@@ -60,10 +64,10 @@ type Docker interface {
 
 // Service manages stacks.
 type Service struct {
-	secrets *secrets.Store
-	docker  Docker
-	mgr     Manager
-	log     *slog.Logger
+	secrets   *secrets.Store
+	dockerFor func(host string) (Docker, error)
+	mgr       Manager
+	log       *slog.Logger
 
 	saveMu sync.Mutex
 	mu     sync.Mutex
@@ -72,13 +76,41 @@ type Service struct {
 	healthWait time.Duration
 }
 
-// New creates the service.
-func New(store *secrets.Store, d Docker, m Manager, log *slog.Logger) *Service {
+// New creates the service; dockerFor is a Docker host's API (manager.LocalHost
+// for this one).
+func New(store *secrets.Store, dockerFor func(host string) (Docker, error), m Manager, log *slog.Logger) *Service {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Service{secrets: store, docker: d, mgr: m, log: log, busy: map[string]bool{}, healthWait: 5 * time.Minute}
+	return &Service{secrets: store, dockerFor: dockerFor, mgr: m, log: log, busy: map[string]bool{}, healthWait: 5 * time.Minute}
 }
+
+// The host a call works on is in its context, set where a stack's
+// definition (or, for a new one, the request) says which it is.
+type hostKey struct{}
+
+func onHost(ctx context.Context, host string) context.Context {
+	return context.WithValue(ctx, hostKey{}, cmp.Or(host, manager.LocalHost))
+}
+
+func hostOf(ctx context.Context) string {
+	if h, ok := ctx.Value(hostKey{}).(string); ok {
+		return h
+	}
+	return manager.LocalHost
+}
+
+// docker is the Docker API of the context's host.
+func (s *Service) docker(ctx context.Context) Docker {
+	d, err := s.dockerFor(hostOf(ctx))
+	if err != nil {
+		return brokenDocker{err}
+	}
+	return d
+}
+
+// qualify is a container's server ID on the context's host.
+func qualify(ctx context.Context, id string) string { return manager.JoinID(hostOf(ctx), id) }
 
 func (s *Service) all() (map[string]Definition, error) {
 	m := map[string]Definition{}
@@ -142,17 +174,20 @@ func (s *Service) release(name string) {
 type Member struct {
 	Service   string `json:"service"`
 	Container string `json:"container"`
-	ID        string `json:"id"`
-	State     string `json:"state"`
-	Status    string `json:"status"`
-	Health    string `json:"health,omitempty"`
-	Image     string `json:"image"`
-	hash      string
+	// Server is the container's name as a server: name@host on another
+	// host.
+	Server string `json:"server"`
+	ID     string `json:"id"`
+	State  string `json:"state"`
+	Status string `json:"status"`
+	Health string `json:"health,omitempty"`
+	Image  string `json:"image"`
+	hash   string
 }
 
 // members lists a stack's containers, by service.
 func (s *Service) members(ctx context.Context, name string) (map[string]Member, error) {
-	list, err := s.docker.ListContainers(ctx, compose.LabelStack+"="+name)
+	list, err := s.docker(ctx).ListContainers(ctx, compose.LabelStack+"="+name)
 	if err != nil {
 		return nil, err
 	}
@@ -163,6 +198,7 @@ func (s *Service) members(ctx context.Context, name string) (map[string]Member, 
 		if len(c.Names) > 0 {
 			m.Container = strings.TrimPrefix(c.Names[0], "/")
 		}
+		m.Server = qualify(ctx, m.Container)
 		if strings.Contains(c.Status, "(healthy)") {
 			m.Health = "healthy"
 		} else if strings.Contains(c.Status, "(unhealthy)") {
@@ -178,6 +214,7 @@ func (s *Service) members(ctx context.Context, name string) (map[string]Member, 
 // Stack is a stack and its services' state.
 type Stack struct {
 	Name     string    `json:"name"`
+	Host     string    `json:"host"`
 	Services []Member  `json:"services"`
 	Created  time.Time `json:"created"`
 	Updated  time.Time `json:"updated"`
@@ -212,7 +249,8 @@ func (s *Service) Get(ctx context.Context, name string) (Stack, error) {
 }
 
 func (s *Service) get(ctx context.Context, name string, d Definition) (Stack, error) {
-	st := Stack{Name: name, Created: d.Created, Updated: d.Updated, Services: []Member{}}
+	ctx = onHost(ctx, d.Host)
+	st := Stack{Name: name, Host: hostOf(ctx), Created: d.Created, Updated: d.Updated, Services: []Member{}}
 	s.mu.Lock()
 	st.Busy = s.busy[name]
 	s.mu.Unlock()
@@ -230,6 +268,7 @@ func (s *Service) get(ctx context.Context, name string, d Definition) (Stack, er
 			m, ok := running[svc.Name]
 			if !ok {
 				m = Member{Service: svc.Name, Container: p.ContainerName(svc), State: "missing", Image: svc.Image}
+				m.Server = qualify(ctx, m.Container)
 			}
 			st.Services = append(st.Services, m)
 			seen[svc.Name] = true
@@ -282,18 +321,24 @@ type ServicePlan struct {
 	Change    string   `json:"change"`
 }
 
-// Preview reads a Compose file for a stack (new, or replacing the running
-// one) and says what applying it would do.
-func (s *Service) Preview(ctx context.Context, name, yaml, env string, existing bool) (Plan, error) {
+// Preview reads a Compose file for a stack (new, on host, or replacing the
+// running one, on its own host) and says what applying it would do.
+func (s *Service) Preview(ctx context.Context, name, yaml, env string, existing bool, host string) (Plan, error) {
 	p, err := compose.Parse([]byte(yaml), env, name)
 	if err != nil {
 		return Plan{}, err
 	}
-	if _, err := s.Definition(name); err == nil && !existing {
+	if def, err := s.Definition(name); err == nil && !existing {
 		return Plan{}, fmt.Errorf("a stack called %s exists already", name)
 	} else if errors.Is(err, ErrNotFound) && existing {
 		return Plan{}, ErrNotFound
+	} else if err == nil {
+		host = def.Host
 	}
+	if _, err := s.dockerFor(cmp.Or(host, manager.LocalHost)); err != nil {
+		return Plan{}, err
+	}
+	ctx = onHost(ctx, host)
 	running, err := s.members(ctx, name)
 	if err != nil {
 		return Plan{}, err
@@ -302,7 +347,7 @@ func (s *Service) Preview(ctx context.Context, name, yaml, env string, existing 
 	if plan.Warnings == nil {
 		plan.Warnings = []string{}
 	}
-	appdata := s.mgr.AppdataRoot()
+	appdata := s.mgr.AppdataRootOf(hostOf(ctx))
 	for _, svc := range p.Services {
 		spec, err := p.Spec(svc, appdata)
 		if err != nil {
@@ -331,12 +376,12 @@ func (s *Service) Preview(ctx context.Context, name, yaml, env string, existing 
 			if m.hash == spec.Hash {
 				sp.Change = ChangeUnchanged
 			}
-		} else if info, err := s.docker.InspectContainer(ctx, spec.Name); err == nil {
+		} else if info, err := s.docker(ctx).InspectContainer(ctx, spec.Name); err == nil {
 			return Plan{}, fmt.Errorf("service %s: a container called %s already exists and isn't part of this stack", svc.Name, strings.TrimPrefix(info.Name, "/"))
 		}
 		// Ports other containers (or programs) use.
 		if sp.Change != ChangeUnchanged {
-			if conflicts, err := s.mgr.PortConflictsOf(ctx, spec.Create, spec.Name); err == nil {
+			if conflicts, err := s.mgr.PortConflictsOn(ctx, hostOf(ctx), spec.Create, spec.Name); err == nil {
 				for _, c := range conflicts {
 					if c.UsedBy != "" && running[serviceOf(c.UsedBy, running)].Container == c.UsedBy {
 						continue // another of this stack's services, being replaced
@@ -376,20 +421,27 @@ func serviceOf(container string, running map[string]Member) string {
 // first, then each service in dependency order (only those that changed are
 // recreated), then services no longer in the file are removed (their data
 // is kept).
-func (s *Service) Apply(ctx context.Context, name, yaml, env string, existing bool, emit func(Event)) error {
+func (s *Service) Apply(ctx context.Context, name, yaml, env string, existing bool, host string, emit func(Event)) error {
 	if err := s.claim(name); err != nil {
 		return err
 	}
 	defer s.release(name)
-	plan, err := s.Preview(ctx, name, yaml, env, existing)
+	if old, err := s.Definition(name); err == nil {
+		host = old.Host
+	}
+	if host == manager.LocalHost {
+		host = ""
+	}
+	plan, err := s.Preview(ctx, name, yaml, env, existing, host)
 	if err != nil {
 		return err
 	}
+	ctx = onHost(ctx, host)
 	for _, w := range plan.Warnings {
 		emit(Event{Stage: "warning", Message: w})
 	}
 	now := time.Now().UTC()
-	def := Definition{YAML: yaml, Env: env, Created: now, Updated: now}
+	def := Definition{Host: host, YAML: yaml, Env: env, Created: now, Updated: now}
 	if old, err := s.Definition(name); err == nil {
 		def.Created = old.Created
 	}
@@ -419,7 +471,7 @@ func (s *Service) Apply(ctx context.Context, name, yaml, env string, existing bo
 		case ChangeUnchanged:
 			if m := running[sp.Service]; m.State != "running" {
 				emit(Event{Stage: "start", Message: "Starting " + spec.Name})
-				if err := s.docker.StartContainer(ctx, m.ID); err != nil {
+				if err := s.docker(ctx).StartContainer(ctx, m.ID); err != nil {
 					return fmt.Errorf("start %s: %w", spec.Name, err)
 				}
 			}
@@ -436,7 +488,7 @@ func (s *Service) Apply(ctx context.Context, name, yaml, env string, existing bo
 	for _, sp := range plan.Services {
 		if sp.Change == ChangeRemove {
 			emit(Event{Stage: "stop", Message: fmt.Sprintf("Removing %s (no longer in the file; its data is kept)", sp.Container)})
-			if err := s.mgr.Remove(ctx, running[sp.Service].ID); err != nil {
+			if err := s.mgr.Remove(ctx, qualify(ctx, running[sp.Service].ID)); err != nil {
 				return fmt.Errorf("remove %s: %w", sp.Container, err)
 			}
 		}
@@ -448,7 +500,7 @@ func (s *Service) Apply(ctx context.Context, name, yaml, env string, existing bo
 // ensureNetworks creates the stack's networks that don't exist, and checks
 // external ones do.
 func (s *Service) ensureNetworks(ctx context.Context, p *compose.Project, emit func(Event)) error {
-	nets, err := s.docker.ListNetworks(ctx)
+	nets, err := s.docker(ctx).ListNetworks(ctx)
 	if err != nil {
 		return err
 	}
@@ -465,7 +517,7 @@ func (s *Service) ensureNetworks(ctx context.Context, p *compose.Project, emit f
 			return fmt.Errorf("the external network %s doesn't exist", name)
 		}
 		emit(Event{Stage: "create", Message: "Creating network " + name})
-		if _, err := s.docker.CreateNetwork(ctx, docker.CreateNetworkRequest{Name: name, Driver: n.Driver, Internal: n.Internal,
+		if _, err := s.docker(ctx).CreateNetwork(ctx, docker.CreateNetworkRequest{Name: name, Driver: n.Driver, Internal: n.Internal,
 			Labels: map[string]string{compose.LabelStack: p.Name}}); err != nil {
 			return fmt.Errorf("create network %s: %w", name, err)
 		}
@@ -485,7 +537,7 @@ func (s *Service) waitFor(ctx context.Context, p *compose.Project, svc *compose.
 		emit(Event{Stage: "start", Message: fmt.Sprintf("Waiting for %s to be %s", name, what)})
 		deadline := time.Now().Add(s.healthWait)
 		for {
-			info, err := s.docker.InspectContainer(ctx, name)
+			info, err := s.docker(ctx).InspectContainer(ctx, name)
 			if err != nil {
 				return err
 			}
@@ -524,11 +576,11 @@ func (s *Service) waitFor(ctx context.Context, p *compose.Project, svc *compose.
 
 func (s *Service) pull(ctx context.Context, image string, emit func(Event)) error {
 	emit(Event{Stage: "pull", Message: "Pulling " + image})
-	if err := s.docker.PullImage(ctx, image, func(p docker.PullProgress) {
+	if err := s.docker(ctx).PullImage(ctx, image, func(p docker.PullProgress) {
 		emit(Event{Stage: "pull", Progress: &p})
 	}); err != nil {
 		// A local image (built on this host) can still be used.
-		if _, ierr := s.docker.InspectImage(ctx, image); ierr == nil {
+		if _, ierr := s.docker(ctx).InspectImage(ctx, image); ierr == nil {
 			emit(Event{Stage: "warning", Message: fmt.Sprintf("Couldn't pull %s (%v); using the image already here", image, err)})
 			return nil
 		}
@@ -546,7 +598,7 @@ func (s *Service) create(ctx context.Context, spec compose.ContainerSpec, pulled
 		}
 	}
 	emit(Event{Stage: "create", Message: "Creating " + spec.Name})
-	id, warnings, err := s.docker.CreateContainer(ctx, spec.Name, spec.Create)
+	id, warnings, err := s.docker(ctx).CreateContainer(ctx, spec.Name, spec.Create)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", spec.Name, err)
 	}
@@ -554,14 +606,14 @@ func (s *Service) create(ctx context.Context, spec compose.ContainerSpec, pulled
 		emit(Event{Stage: "warning", Message: w})
 	}
 	for _, a := range spec.Connect {
-		if err := s.docker.ConnectNetwork(ctx, a.Network, id, map[string]any{"Aliases": a.Aliases}); err != nil {
-			s.docker.RemoveContainer(context.WithoutCancel(ctx), id, true)
+		if err := s.docker(ctx).ConnectNetwork(ctx, a.Network, id, map[string]any{"Aliases": a.Aliases}); err != nil {
+			s.docker(ctx).RemoveContainer(context.WithoutCancel(ctx), id, true)
 			return fmt.Errorf("connect %s to %s: %w", spec.Name, a.Network, err)
 		}
 	}
 	emit(Event{Stage: "start", Message: "Starting " + spec.Name})
-	if err := s.docker.StartContainer(ctx, id); err != nil {
-		s.docker.RemoveContainer(context.WithoutCancel(ctx), id, true)
+	if err := s.docker(ctx).StartContainer(ctx, id); err != nil {
+		s.docker(ctx).RemoveContainer(context.WithoutCancel(ctx), id, true)
 		return fmt.Errorf("start %s: %w", spec.Name, err)
 	}
 	return nil
@@ -575,20 +627,20 @@ func (s *Service) replace(ctx context.Context, old Member, spec compose.Containe
 	}
 	wasRunning := old.State == "running"
 	emit(Event{Stage: "stop", Message: "Stopping " + old.Container})
-	if err := s.docker.StopContainer(ctx, old.ID, -1); err != nil {
+	if err := s.docker(ctx).StopContainer(ctx, old.ID, -1); err != nil {
 		return fmt.Errorf("stop %s: %w", old.Container, err)
 	}
 	backup := fmt.Sprintf("%s-old-%d", old.Container, time.Now().Unix())
-	if err := s.docker.RenameContainer(ctx, old.ID, backup); err != nil {
+	if err := s.docker(ctx).RenameContainer(ctx, old.ID, backup); err != nil {
 		return fmt.Errorf("rename %s: %w", old.Container, err)
 	}
 	restore := func(cause error) error {
 		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
 		defer cancel()
-		if err := s.docker.RenameContainer(rctx, old.ID, old.Container); err != nil {
+		if err := s.docker(ctx).RenameContainer(rctx, old.ID, old.Container); err != nil {
 			s.log.Error("put back the old container", "container", old.Container, "err", err)
 		} else if wasRunning {
-			s.docker.StartContainer(rctx, old.ID)
+			s.docker(ctx).StartContainer(rctx, old.ID)
 		}
 		emit(Event{Stage: "warning", Message: "Put the old " + old.Container + " back"})
 		return cause
@@ -596,7 +648,7 @@ func (s *Service) replace(ctx context.Context, old Member, spec compose.Containe
 	if err := s.create(ctx, spec, true, emit); err != nil {
 		return restore(err)
 	}
-	if err := s.docker.RemoveContainer(ctx, old.ID, true); err != nil {
+	if err := s.docker(ctx).RemoveContainer(ctx, old.ID, true); err != nil {
 		emit(Event{Stage: "warning", Message: "couldn't remove the old container " + backup + ": " + err.Error()})
 	}
 	return nil
@@ -611,6 +663,7 @@ func (s *Service) Act(ctx context.Context, name, action string, emit func(Event)
 	if err != nil {
 		return err
 	}
+	ctx = onHost(ctx, d.Host)
 	if err := s.claim(name); err != nil {
 		return err
 	}
@@ -631,7 +684,7 @@ func (s *Service) Act(ctx context.Context, name, action string, emit func(Event)
 				continue
 			}
 			emit(Event{Stage: "stop", Message: "Stopping " + m.Container})
-			if err := s.docker.StopContainer(ctx, m.ID, -1); err != nil {
+			if err := s.docker(ctx).StopContainer(ctx, m.ID, -1); err != nil {
 				return fmt.Errorf("stop %s: %w", m.Container, err)
 			}
 		}
@@ -648,7 +701,7 @@ func (s *Service) Act(ctx context.Context, name, action string, emit func(Event)
 				return err
 			}
 			emit(Event{Stage: "start", Message: "Starting " + m.Container})
-			if err := s.docker.StartContainer(ctx, m.ID); err != nil {
+			if err := s.docker(ctx).StartContainer(ctx, m.ID); err != nil {
 				return fmt.Errorf("start %s: %w", m.Container, err)
 			}
 		}
@@ -682,11 +735,12 @@ func (s *Service) Update(ctx context.Context, name string, emit func(Event)) err
 	if err != nil {
 		return err
 	}
+	ctx = onHost(ctx, d.Host)
 	if err := s.claim(name); err != nil {
 		return err
 	}
 	defer s.release(name)
-	plan, err := s.Preview(ctx, name, d.YAML, d.Env, true)
+	plan, err := s.Preview(ctx, name, d.YAML, d.Env, true, d.Host)
 	if err != nil {
 		return err
 	}
@@ -706,11 +760,11 @@ func (s *Service) Update(ctx context.Context, name string, emit func(Event)) err
 		if err := s.pull(ctx, sp.Image, emit); err != nil {
 			return err
 		}
-		img, err := s.docker.InspectImage(ctx, sp.Image)
+		img, err := s.docker(ctx).InspectImage(ctx, sp.Image)
 		if err != nil {
 			return err
 		}
-		info, err := s.docker.InspectContainer(ctx, m.ID)
+		info, err := s.docker(ctx).InspectContainer(ctx, m.ID)
 		if err != nil {
 			return err
 		}
@@ -737,6 +791,7 @@ func (s *Service) Delete(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
+	ctx = onHost(ctx, d.Host)
 	if err := s.claim(name); err != nil {
 		return err
 	}
@@ -761,18 +816,47 @@ func (s *Service) Delete(ctx context.Context, name string) error {
 		}
 	}
 	for _, svc := range order {
-		if err := s.mgr.Remove(ctx, running[svc].ID); err != nil {
+		if err := s.mgr.Remove(ctx, qualify(ctx, running[svc].ID)); err != nil {
 			return fmt.Errorf("remove %s: %w", running[svc].Container, err)
 		}
 	}
-	if nets, err := s.docker.ListNetworks(ctx); err == nil {
+	if nets, err := s.docker(ctx).ListNetworks(ctx); err == nil {
 		for _, n := range nets {
 			if n.Labels[compose.LabelStack] == name {
-				if err := s.docker.RemoveNetwork(ctx, n.ID); err != nil {
+				if err := s.docker(ctx).RemoveNetwork(ctx, n.ID); err != nil {
 					s.log.Warn("remove stack network", "network", n.Name, "err", err)
 				}
 			}
 		}
 	}
 	return s.save(name, nil)
+}
+
+// brokenDocker answers every call with the error of reaching its host.
+type brokenDocker struct{ err error }
+
+func (b brokenDocker) ListContainers(context.Context, ...string) ([]docker.ContainerSummary, error) {
+	return nil, b.err
+}
+func (b brokenDocker) InspectContainer(context.Context, string) (docker.ContainerJSON, error) {
+	return docker.ContainerJSON{}, b.err
+}
+func (b brokenDocker) CreateContainer(context.Context, string, docker.CreateRequest) (string, []string, error) {
+	return "", nil, b.err
+}
+func (b brokenDocker) StartContainer(context.Context, string) error              { return b.err }
+func (b brokenDocker) StopContainer(context.Context, string, int) error          { return b.err }
+func (b brokenDocker) RemoveContainer(context.Context, string, bool) error       { return b.err }
+func (b brokenDocker) RenameContainer(context.Context, string, string) error     { return b.err }
+func (b brokenDocker) ConnectNetwork(context.Context, string, string, any) error { return b.err }
+func (b brokenDocker) ListNetworks(context.Context) ([]docker.Network, error)    { return nil, b.err }
+func (b brokenDocker) CreateNetwork(context.Context, docker.CreateNetworkRequest) (string, error) {
+	return "", b.err
+}
+func (b brokenDocker) RemoveNetwork(context.Context, string) error { return b.err }
+func (b brokenDocker) PullImage(context.Context, string, func(docker.PullProgress)) error {
+	return b.err
+}
+func (b brokenDocker) InspectImage(context.Context, string) (docker.Image, error) {
+	return docker.Image{}, b.err
 }

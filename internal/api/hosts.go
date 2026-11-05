@@ -151,9 +151,16 @@ func (s *server) saveHost(w http.ResponseWriter, r *http.Request, create bool) {
 }
 
 func (s *server) deleteHost(w http.ResponseWriter, r *http.Request) {
-	if err := s.Hosts.Delete(r.PathValue("id")); err != nil {
+	id := r.PathValue("id")
+	if err := s.Hosts.Delete(id); err != nil {
 		writeHostError(w, err)
 		return
+	}
+	// A host added later with the same ID doesn't get its access.
+	if s.Groups != nil {
+		if err := s.Groups.ForgetHost(id); err != nil {
+			s.Log.Warn("take a removed host out of server groups", "host", id, "err", err)
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

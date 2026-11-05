@@ -103,3 +103,33 @@ func TestSites(t *testing.T) {
 		t.Error("a group that doesn't exist")
 	}
 }
+
+// A group holding a whole Docker host ("@host") brings its servers to a
+// site.
+func TestSiteGroupsWithHosts(t *testing.T) {
+	s := withPasswords(t)
+	s.opts.Groups = func() (map[string][]string, error) {
+		return map[string][]string{"g-nas": {"@nas"}, "g-here": {"@local"}}, nil
+	}
+	ctx := context.Background()
+	in := Settings{Enabled: true,
+		Servers: []Entry{{Server: "valheim"}, {Server: "mc@nas"}, {Server: "ark@pi"}},
+		Sites:   []Site{{Hostname: "nas.example.com", Groups: []string{"g-nas"}}, {Hostname: "here.example.com", Groups: []string{"g-here"}}},
+	}
+	if _, err := s.SavePasswords(in, nil, nil, []SitePasswords{{}, {}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	for host, want := range map[string][]string{"nas.example.com": {"Minecraft"}, "here.example.com": {"Valheim"}} {
+		p, err := s.Page(ctx, host, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, srv := range p.Servers {
+			got = append(got, srv.Name)
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: %q, want %q", host, got, want)
+		}
+	}
+}

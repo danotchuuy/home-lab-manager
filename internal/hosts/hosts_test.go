@@ -175,7 +175,7 @@ func serveSession(nch ssh.NewChannel, o sshOptions) {
 		}
 		if o.shell && !strings.HasPrefix(cmd.Command, "docker") {
 			c := exec.Command("sh", "-c", cmd.Command)
-			c.Stdout, c.Stderr = ch, ch.Stderr()
+			c.Stdin, c.Stdout, c.Stderr = ch, ch, ch.Stderr()
 			code := uint32(0)
 			if err := c.Run(); err != nil {
 				code = 1

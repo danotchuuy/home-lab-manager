@@ -217,6 +217,8 @@ export interface Server {
 export interface StackMember {
   service: string;
   container: string;
+  /** The container as a server: name@host on another Docker host. */
+  server: string;
   id?: string;
   /** "missing" when the file has it but there's no container. */
   state: string;
@@ -228,6 +230,8 @@ export interface StackMember {
 /** A Compose stack (GET /api/stacks). */
 export interface Stack {
   name: string;
+  /** The Docker host it runs on ("local" for this one). */
+  host: string;
   services: StackMember[];
   created: string;
   updated: string;
@@ -333,6 +337,8 @@ export interface ServerGroup {
   id: string;
   name: string;
   servers: string[];
+  /** Docker hosts whose every server is in the group ("local" for this one). */
+  hosts?: string[];
   grants: ServerGrant[];
 }
 

@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { Spinner } from "../components/common";
 import { DeployProgress } from "../components/DeployProgress";
+import { HostPicker } from "../components/HostPicker";
 import type { DeployEvent, StackPlan } from "../types";
 
 const EXAMPLE = `services:
@@ -52,6 +53,9 @@ export function StackEditorPage() {
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState<string>();
   const [events, setEvents] = useState<DeployEvent[]>([]);
+  // A new stack's Docker host; an existing one stays where it is.
+  const [host, setHost] = useState("local");
+  const [stackHost, setStackHost] = useState<string>();
 
   useEffect(() => {
     if (!existing) return;
@@ -59,6 +63,7 @@ export function StackEditorPage() {
       (r) => {
         setYaml(r.yaml ?? "");
         setEnv(r.env ?? "");
+        setStackHost(r.stack.host);
         setLoaded(true);
       },
       (e) => setError((e as Error).message),
@@ -80,7 +85,7 @@ export function StackEditorPage() {
     setBusy("preview");
     setError(undefined);
     try {
-      setPlan(await api.previewStack(name.trim(), yaml, env, !!existing));
+      setPlan(await api.previewStack(name.trim(), yaml, env, !!existing, host));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -93,11 +98,12 @@ export function StackEditorPage() {
     setEvents([]);
     let ok = false;
     try {
-      const op = existing ? api.updateStack : api.createStack;
-      await op(name.trim(), yaml, env, (e) => {
+      const onEvent = (e: DeployEvent) => {
         setEvents((prev) => [...prev, e]);
         if (e.stage === "done") ok = true;
-      });
+      };
+      if (existing) await api.updateStack(name.trim(), yaml, env, onEvent);
+      else await api.createStack(name.trim(), yaml, env, onEvent, host);
     } catch (e) {
       setEvents((prev) => [...prev, { stage: "error", message: (e as Error).message }]);
     } finally {
@@ -152,6 +158,18 @@ export function StackEditorPage() {
             />
             <span className="field-help">Lower-case letters, digits, dashes and underscores.</span>
           </label>
+        )}
+        {!existing && (
+          <HostPicker
+            value={host}
+            onChange={edit(setHost)}
+            help="The machine the stack runs on: its services, networks and data folders are there. It can't move later."
+          />
+        )}
+        {existing && stackHost && stackHost !== "local" && (
+          <p className="muted small no-margin">
+            On Docker host <strong>{stackHost}</strong>.
+          </p>
         )}
         <label className="field">
           <span className="field-label">docker-compose.yml</span>

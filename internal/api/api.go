@@ -3,6 +3,7 @@ package api
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1444,9 +1445,24 @@ func (s *server) hostMetrics(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, snap)
 }
 
-// hostStorage returns the last disk usage report per server.
+// hostStorage returns a host's last disk usage report per server
+// (?host=, this one by default).
 func (s *server) hostStorage(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.Manager.Storage())
+	host, ok := s.storageHost(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, s.Manager.Storage(host))
+}
+
+// storageHost reads ?host= for the storage report: a known Docker host.
+func (s *server) storageHost(w http.ResponseWriter, r *http.Request) (string, bool) {
+	host := cmp.Or(r.URL.Query().Get("host"), manager.LocalHost)
+	if !s.Manager.KnownHost(host) {
+		writeError(w, http.StatusNotFound, fmt.Errorf("there's no Docker host %q", host))
+		return "", false
+	}
+	return host, true
 }
 
 // deletedDataRequest names a deleted server's folder (host path) or volume.
@@ -1484,7 +1500,7 @@ func (s *server) deleteDeletedData(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.Manager.Storage())
+	writeJSON(w, http.StatusOK, s.Manager.Storage(r.URL.Query().Get("host")))
 }
 
 // forgetDeletedData stops tracking a deleted server's folder or volume, or
@@ -1502,13 +1518,13 @@ func (s *server) forgetDeletedData(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.Manager.Storage())
+	writeJSON(w, http.StatusOK, s.Manager.Storage(r.URL.Query().Get("host")))
 }
 
 // refreshStorage starts recalculating disk usage in the background.
 func (s *server) refreshStorage(w http.ResponseWriter, r *http.Request) {
 	s.Manager.RefreshStorage()
-	writeJSON(w, http.StatusAccepted, s.Manager.Storage())
+	writeJSON(w, http.StatusAccepted, s.Manager.Storage(r.URL.Query().Get("host")))
 }
 
 // listJobs returns installs and updates in progress (and those that finished

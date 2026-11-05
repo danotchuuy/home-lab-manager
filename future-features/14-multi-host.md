@@ -39,8 +39,13 @@
 >   host's history (`hosts/<id>`), the Host page has a host picker, and `/metrics` labels `hlm_host_*` (and
 >   `hlm_server_*`) with `host`. Host folder reads through the agent weren't needed: files and backups go through
 >   Docker.
-> - **Not built (yet):** host metrics for SSH and TLS hosts; disk usage by server and deleted-server data for other
->   hosts; Compose stacks on other hosts; "host" as an RBAC grant target.
+> - **Built later (branch `feature/14-remaining`):** host metrics for SSH hosts (a script over SSH) and TLS hosts (the
+>   same script in a throwaway busybox container with `/proc` and `/` mounted read-only), through a source interface
+>   in `hostmetrics`; disk usage by server and deleted servers' data per host (folders measured by one helper
+>   container per calculation); Compose stacks on any host (a stack's host is fixed when it's created); and whole hosts
+>   in server groups (`Group.Hosts`), which also fixed servers on other hosts being refused in groups (`@` wasn't
+>   allowed in a group's server names).
+> - **Not built:** hlm's WireGuard and Cloudflare Tunnel containers per host.
 
 ## Why
 
