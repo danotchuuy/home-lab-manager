@@ -109,7 +109,7 @@ export function TwoFactorCard({
   onChange,
 }: {
   username: string;
-  status: { enabled: boolean; recoveryLeft: number; required: boolean };
+  status: { enabled: boolean; recoveryLeft: number; required: boolean; passkeys?: number };
   onChange: () => void;
 }) {
   const [setup, setSetup] = useState<TwoFactorSetup>();
@@ -141,7 +141,14 @@ export function TwoFactorCard({
     run(async () => setCodes((await api.newRecoveryCodes(username)).recoveryCodes));
   };
   const disable = () => {
-    if (!confirm("Turn off two-factor? Signing in then takes only your password.")) return;
+    if (
+      !confirm(
+        (status.passkeys ?? 0) > 0
+          ? "Turn off the authenticator app? Your passkeys stay your second factor."
+          : "Turn off two-factor? Signing in then takes only your password.",
+      )
+    )
+      return;
     run(async () => {
       await api.disableTwoFactor(username);
       onChange();
@@ -150,7 +157,7 @@ export function TwoFactorCard({
 
   return (
     <div className="two-factor-card">
-      <h3>Two-factor sign-in</h3>
+      <h3>Two-factor sign-in: authenticator app</h3>
       {codes ? (
         <RecoveryCodes
           codes={codes}
@@ -181,7 +188,7 @@ export function TwoFactorCard({
             <button className="btn small" onClick={start} disabled={busy} title="Move it to a new app or phone">
               Set up again
             </button>
-            {!status.required && (
+            {(!status.required || (status.passkeys ?? 0) > 0) && (
               <button className="btn small danger" onClick={disable} disabled={busy}>
                 Turn off
               </button>

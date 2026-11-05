@@ -1252,7 +1252,7 @@ export interface AuthStatus {
   /** The caller's global role, if they're let in at all. */
   role?: Role;
   /** The signed-in local account's two-factor. */
-  twoFactor?: { enabled: boolean; recoveryLeft: number; required: boolean };
+  twoFactor?: { enabled: boolean; recoveryLeft: number; required: boolean; passkeys?: number };
 }
 
 /** Who has to use two-factor: "" (nobody), "admins" or "all". */
@@ -1284,6 +1284,8 @@ export interface Account {
   /** It uses an authenticator app; recoveryLeft of its recovery codes are unused. */
   twoFactor: boolean;
   recoveryLeft?: number;
+  /** How many passkeys it has. */
+  passkeys?: number;
 }
 
 /** A public key that can sign in as an account through the API. */
@@ -1852,6 +1854,17 @@ export interface AgentEnrolment {
   host: DockerHost;
   expires: string;
   version?: string;
+}
+
+/** A passkey on an account. */
+export interface PasskeyInfo {
+  id: string;
+  name: string;
+  /** The hostname it was added on, where it works. */
+  rpId: string;
+  synced?: boolean;
+  created: string;
+  lastUsed?: string;
 }
 
 /** A host to save: the TLS client key is only ever sent, never shown. */

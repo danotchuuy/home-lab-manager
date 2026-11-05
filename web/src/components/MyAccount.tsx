@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { PasskeysCard } from "./Passkeys";
 import { TwoFactorCard } from "./TwoFactor";
 import { api } from "../api";
 import { MySignIns } from "./ActivityLog";
@@ -63,11 +64,14 @@ export function MyAccount() {
       )}
       {result && <div className={`alert ${result.ok ? "success" : "error"}`}>{result.text}</div>}
       {user?.method === "local" && user.username && status.twoFactor && (
-        <TwoFactorCard
-          username={user.username}
-          status={status.twoFactor}
-          onChange={() => api.authStatus().then(setStatus, () => {})}
-        />
+        <>
+          <PasskeysCard username={user.username} required={status.twoFactor.required} hasApp={status.twoFactor.enabled} />
+          <TwoFactorCard
+            username={user.username}
+            status={status.twoFactor}
+            onChange={() => api.authStatus().then(setStatus, () => {})}
+          />
+        </>
       )}
       {user?.method === "local" && user.username && (
         <>

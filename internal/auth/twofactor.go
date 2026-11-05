@@ -215,14 +215,19 @@ func (s *Service) EnableTwoFactor(username, code string) ([]string, error) {
 // that has to use it.
 var ErrTwoFactorRequired = errors.New("two-factor is required for this account (System → Sign-in); an admin can reset it, and it's set up again at the next sign-in")
 
-// DisableTwoFactor turns off an account's two-factor. Unless forced (an
-// admin resetting it), an account that must use it can't.
+// DisableTwoFactor turns off an account's authenticator app. Unless forced
+// (an admin resetting it), an account that must use two-factor can't,
+// unless it has a passkey. Forced, it removes the account's passkeys too, so
+// someone locked out can set a second factor up again.
 func (s *Service) DisableTwoFactor(username string, force bool) error {
 	a, err := s.updateAccount(username, func(a *Account) error {
-		if !force && s.mustUseTwoFactor(*a) {
+		if !force && s.mustUseTwoFactor(*a) && len(a.Passkeys) == 0 {
 			return ErrTwoFactorRequired
 		}
 		a.TwoFactor, a.Pending = nil, nil
+		if force {
+			a.Passkeys = nil
+		}
 		return nil
 	})
 	if err == nil {
@@ -311,8 +316,9 @@ type half struct {
 }
 
 // TwoFactorNeeded is LocalLogin's answer to a right password for an account
-// that needs a second factor (or, with Setup, to set one up).
-type TwoFactorNeeded struct{ Setup bool }
+// that needs a second factor (or, with Setup, to set one up): Code if it has
+// an authenticator app, Passkey if it has passkeys.
+type TwoFactorNeeded struct{ Setup, Code, Passkey bool }
 
 func (e *TwoFactorNeeded) Error() string { return "enter the code from your authenticator app" }
 

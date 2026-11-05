@@ -721,9 +721,9 @@ func resetPassword(args []string) error {
 	}
 	switch {
 	case reset2FA:
-		fmt.Printf("Two-factor sign-in is off for %s; if it's required, it's set up again when signing in.\n", args[0])
-	case service.HasTwoFactor(args[0]):
-		fmt.Printf("%s still uses two-factor sign-in: add --reset-2fa if its authenticator app is lost.\n", args[0])
+		fmt.Printf("Two-factor sign-in is off for %s, and its passkeys are removed; if it's required, it's set up again when signing in.\n", args[0])
+	case service.HasTwoFactor(args[0]) || service.HasPasskeys(args[0]):
+		fmt.Printf("%s still uses two-factor sign-in: add --reset-2fa if its authenticator app or passkey is lost.\n", args[0])
 	}
 	return nil
 }

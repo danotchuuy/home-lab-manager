@@ -1,3 +1,4 @@
+import { createPasskey, getPasskey, passkeyError, passkeysUnavailable } from "./passkeys";
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { AdminContext } from "./access";
@@ -200,6 +201,9 @@ function SignInPrompt({ auth, onDone }: { auth?: AuthStatus; onDone: () => void 
   const [showToken, setShowToken] = useState(false);
   // After the password: a code, or setting two-factor up (then its recovery codes).
   const [step, setStep] = useState<"password" | "code" | "setup">("password");
+  // The account's second factors, after the password.
+  const [factors, setFactors] = useState<{ code: boolean; passkey: boolean }>({ code: true, passkey: false });
+  const passkeyProblem = passkeysUnavailable();
   const [code, setCode] = useState("");
   const [setup, setSetup] = useState<TwoFactorSetup>();
   const [recovery, setRecovery] = useState<string[]>();
@@ -220,8 +224,10 @@ function SignInPrompt({ auth, onDone }: { auth?: AuthStatus; onDone: () => void 
     e.preventDefault();
     attempt(async () => {
       const r = await api.login(username.trim(), password);
-      if (r.twoFactor) setStep("code");
-      else if (r.twoFactorSetup) {
+      if (r.twoFactor) {
+        setFactors({ code: r.code !== false, passkey: !!r.passkey });
+        setStep("code");
+      } else if (r.twoFactorSetup) {
         setSetup(await api.loginSetup());
         setStep("setup");
       } else onDone();
@@ -236,6 +242,35 @@ function SignInPrompt({ auth, onDone }: { auth?: AuthStatus; onDone: () => void 
     });
   };
 
+  // Passkeys: alone, as the second factor, or added when two-factor is required.
+  const passkeyAlone = () =>
+    attempt(async () => {
+      try {
+        await api.passkeyLogin(await getPasskey(await api.beginPasskeyLogin()));
+      } catch (e) {
+        throw new Error(passkeyError(e));
+      }
+      onDone();
+    });
+  const passkeySecond = () =>
+    attempt(async () => {
+      try {
+        await api.passkeySecond(await getPasskey(await api.beginPasskeySecond()));
+      } catch (e) {
+        throw new Error(passkeyError(e));
+      }
+      onDone();
+    });
+  const passkeySetup = () =>
+    attempt(async () => {
+      try {
+        await api.passkeySetup({ name: "Passkey", ...(await createPasskey(await api.beginPasskeySetup())) });
+      } catch (e) {
+        throw new Error(passkeyError(e));
+      }
+      onDone();
+    });
+
   const enable = (c: string) =>
     attempt(async () => {
       setRecovery((await api.loginEnable(c)).recoveryCodes);
@@ -246,7 +281,17 @@ function SignInPrompt({ auth, onDone }: { auth?: AuthStatus; onDone: () => void 
       <div className="modal-backdrop">
         <div className="card modal">
           <h2>{step === "code" ? "Two-factor sign-in" : "Set up two-factor sign-in"}</h2>
-          {step === "code" ? (
+          {step === "code" && factors.passkey && (
+            <div className="sign-in-form">
+              <button type="button" className="btn primary sign-in-button" onClick={passkeySecond} disabled={busy}>
+                {busy ? "Waiting for the passkey…" : "Use your passkey"}
+              </button>
+              {passkeyProblem && <p className="muted small no-margin">{passkeyProblem}</p>}
+              {!factors.code && error && <div className="alert error">{error}</div>}
+            </div>
+          )}
+          {step === "code" && factors.passkey && factors.code && <div className="sign-in-or">or</div>}
+          {step === "code" && !factors.code ? null : step === "code" ? (
             <form className="sign-in-form" onSubmit={sendCode}>
               <label className="field">
                 <span className="field-label">Code from your authenticator app</span>
@@ -261,7 +306,11 @@ function SignInPrompt({ auth, onDone }: { auth?: AuthStatus; onDone: () => void 
                 <span className="field-help">Lost your phone? Enter one of your recovery codes instead.</span>
               </label>
               {error && <div className="alert error">{error}</div>}
-              <button className="btn primary sign-in-button" type="submit" disabled={busy || !code.trim()}>
+              <button
+                className={`btn sign-in-button${factors.passkey ? "" : " primary"}`}
+                type="submit"
+                disabled={busy || !code.trim()}
+              >
                 {busy ? "Checking…" : "Sign in"}
               </button>
             </form>
@@ -270,8 +319,17 @@ function SignInPrompt({ auth, onDone }: { auth?: AuthStatus; onDone: () => void 
           ) : (
             <>
               <p className="muted small">
-                Your account has to use two-factor sign-in (an admin requires it), so set it up now to finish signing in.
+                Your account has to use two-factor sign-in (an admin requires it), so set it up now to finish signing in:
+                a passkey, or an authenticator app.
               </p>
+              {!passkeyProblem && (
+                <>
+                  <button type="button" className="btn primary" onClick={passkeySetup} disabled={busy}>
+                    Add a passkey
+                  </button>
+                  <div className="sign-in-or">or</div>
+                </>
+              )}
               {setup && <TwoFactorSetupForm setup={setup} onCode={enable} busy={busy} error={error} />}
             </>
           )}
@@ -316,6 +374,11 @@ function SignInPrompt({ auth, onDone }: { auth?: AuthStatus; onDone: () => void 
               {busy ? "Signing in…" : "Sign in"}
             </button>
           </form>
+        )}
+        {local && !passkeyProblem && (
+          <button type="button" className="btn sign-in-button" onClick={passkeyAlone} disabled={busy}>
+            Sign in with a passkey
+          </button>
         )}
         {local && oidc && <div className="sign-in-or">or</div>}
         {oidc && (

@@ -1,3 +1,4 @@
+import type { CreationOptionsJSON, NewPasskeyJSON, RequestOptionsJSON, UsedPasskeyJSON } from "./passkeys";
 import type {
   Account,
   AuditFilter,
@@ -90,6 +91,7 @@ import type {
   SSHKeyInfo,
   AgentEnrolment,
   DockerHost,
+  PasskeyInfo,
   DockerHostInput,
   DockerVersion,
   HostInspection,
@@ -162,7 +164,7 @@ export const UNAUTHORIZED_EVENT = "hlm:unauthorized";
  * Asks the person to confirm it's them, for changes that need it; resolves
  * true once they have, so the request can be sent again. Set by the app.
  */
-let confirmer: ((method: string, twoFactor: boolean) => Promise<boolean>) | undefined;
+let confirmer: ((method: string, twoFactor: boolean, passkey: boolean) => Promise<boolean>) | undefined;
 
 export function setConfirmer(f: typeof confirmer) {
   confirmer = f;
@@ -188,7 +190,8 @@ async function request(path: string, init: RequestInit = {}, confirmed = false):
     }
     if (res.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
     if (res.status === 403 && body?.code === "confirm_required" && confirmer && !confirmed) {
-      if (await confirmer(String(body.method ?? "local"), body.twoFactor === true)) return request(path, init, true);
+      if (await confirmer(String(body.method ?? "local"), body.twoFactor === true, body.passkey === true))
+        return request(path, init, true);
     }
     throw new ApiError(res.status, message, body);
   }
@@ -514,9 +517,38 @@ export const api = {
   /** Signs in with a local account, starting a session. */
   /** Signs in, or says a second factor (or setting one up) comes next. */
   login: (username: string, password: string) =>
-    json<AuthUser & { twoFactor?: boolean; twoFactorSetup?: boolean }>("/api/auth/login", {
+    json<AuthUser & { twoFactor?: boolean; twoFactorSetup?: boolean; code?: boolean; passkey?: boolean }>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ username, password }),
+    }),
+  // Passkeys: each ceremony is a begin (options for the browser) and a finish.
+  beginPasskeyLogin: () => json<RequestOptionsJSON>("/api/auth/login/passkey/begin", { method: "POST" }),
+  passkeyLogin: (p: UsedPasskeyJSON) => json<AuthUser>("/api/auth/login/passkey", { method: "POST", body: JSON.stringify(p) }),
+  beginPasskeySecond: () => json<RequestOptionsJSON>("/api/auth/login/2fa/passkey/begin", { method: "POST" }),
+  passkeySecond: (p: UsedPasskeyJSON) =>
+    json<AuthUser>("/api/auth/login/2fa/passkey", { method: "POST", body: JSON.stringify(p) }),
+  beginPasskeySetup: () => json<CreationOptionsJSON>("/api/auth/login/2fa/setup/passkey/begin", { method: "POST" }),
+  passkeySetup: (p: NewPasskeyJSON & { name: string }) =>
+    json<AuthUser>("/api/auth/login/2fa/setup/passkey", { method: "POST", body: JSON.stringify(p) }),
+  beginPasskeyConfirm: () => json<RequestOptionsJSON>("/api/auth/confirm/passkey/begin", { method: "POST" }),
+  passkeyConfirm: (p: UsedPasskeyJSON) =>
+    json<{ confirmedUntil: string }>("/api/auth/confirm/passkey", { method: "POST", body: JSON.stringify(p) }),
+  passkeys: (username: string) => json<PasskeyInfo[]>(`/api/auth/accounts/${encodeURIComponent(username)}/passkeys`),
+  beginAddPasskey: (username: string) =>
+    json<CreationOptionsJSON>(`/api/auth/accounts/${encodeURIComponent(username)}/passkeys/begin`, { method: "POST" }),
+  addPasskey: (username: string, p: NewPasskeyJSON & { name: string }) =>
+    json<PasskeyInfo>(`/api/auth/accounts/${encodeURIComponent(username)}/passkeys`, {
+      method: "POST",
+      body: JSON.stringify(p),
+    }),
+  renamePasskey: (username: string, id: string, name: string) =>
+    json<void>(`/api/auth/accounts/${encodeURIComponent(username)}/passkeys/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify({ name }),
+    }),
+  removePasskey: (username: string, id: string) =>
+    json<void>(`/api/auth/accounts/${encodeURIComponent(username)}/passkeys/${encodeURIComponent(id)}`, {
+      method: "DELETE",
     }),
   loginCode: (code: string) => json<AuthUser>("/api/auth/login/2fa", { method: "POST", body: JSON.stringify({ code }) }),
   loginSetup: () => json<TwoFactorSetup>("/api/auth/login/2fa/setup", { method: "POST" }),
