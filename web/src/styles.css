@@ -2135,6 +2135,36 @@ progress {
   font-size: 0.78rem;
 }
 
+/* A new host's agent: the command to run there. */
+.agent-command {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.agent-command-box {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.agent-command-box pre {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .import-key {
   display: flex;
   flex-direction: column;
@@ -4207,4 +4237,10 @@ pre .muted {
 .status-tls {
   max-width: 46rem;
   margin-top: 0.75rem;
+}
+
+/* Which host's metrics the Host page shows. */
+.host-picker {
+  width: auto;
+  max-width: 16rem;
 }

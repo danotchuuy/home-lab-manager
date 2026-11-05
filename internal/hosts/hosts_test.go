@@ -500,7 +500,8 @@ func TestValidate(t *testing.T) {
 		{"bad CA", Host{ID: "nas", Kind: KindTCP, URL: "tcp://nas", CA: "nope", AppdataRoot: "/a"}, "", "PEM"},
 		{"no ssh user", Host{ID: "nas", Kind: KindSSH, SSH: &remote.Target{Host: "nas"}, AppdataRoot: "/a"}, "", "user"},
 		{"relative socket", Host{ID: "nas", Kind: KindSSH, SSH: ssh, Socket: "docker.sock", AppdataRoot: "/a"}, "", "absolute"},
-		{"unknown kind", Host{ID: "nas", Kind: "agent", AppdataRoot: "/a"}, "", "connect over"},
+		{"unknown kind", Host{ID: "nas", Kind: "ftp", AppdataRoot: "/a"}, "", "connect over"},
+		{"agent without an address", Host{ID: "nas", Kind: KindAgent, AppdataRoot: "/a"}, "", "address on your network"},
 	} {
 		h := tt.h
 		if err := validate(&h, tt.key); err == nil || !strings.Contains(err.Error(), tt.want) {

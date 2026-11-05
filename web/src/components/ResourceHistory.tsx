@@ -81,8 +81,19 @@ function stepWords(h: MetricHistory) {
 const EMPTY = "Nothing recorded in this range yet: history starts when hlm does, and fills in a minute at a time.";
 
 /** The host's history charts, for the Host page. */
-export function HostHistory({ range, memTotal, cores }: { range: HistoryRange; memTotal: number; cores: number }) {
-  const { history: h, error } = useHistory(api.hostHistory, range, "host");
+export function HostHistory({
+  range,
+  memTotal,
+  cores,
+  host = "local",
+}: {
+  range: HistoryRange;
+  memTotal: number;
+  cores: number;
+  /** Which host: "local", or another's ID. */
+  host?: string;
+}) {
+  const { history: h, error } = useHistory((r) => api.hostHistory(r, host), range, `host:${host}`);
   const mounts = h
     ? Object.keys(h.series)
         .filter((k) => k.startsWith("fs:"))

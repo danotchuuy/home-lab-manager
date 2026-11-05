@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/danotchuuy/home-lab-manager/internal/agent"
 	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"github.com/danotchuuy/home-lab-manager/internal/auth"
 	"github.com/danotchuuy/home-lab-manager/internal/autoupdate"
@@ -107,6 +108,8 @@ type Options struct {
 	Stacks *stack.Service
 	// Hosts are the other Docker hosts servers can be on.
 	Hosts *hosts.Registry
+	// Agents are the connections of hosts' agents.
+	Agents *agent.Hub
 	// Cleanup keeps the disk cleanup settings.
 	Cleanup *cleanup.Service
 	// Prefs keeps servers' tags and users' favourites.
@@ -169,8 +172,10 @@ func (s *server) auth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// The public status page (which answers 404 unless it's on).
-		if !strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api/status-page" || strings.HasPrefix(r.URL.Path, "/api/status-page/") {
+		// The public status page (which answers 404 unless it's on), and
+		// hosts' agents, which have their own credentials.
+		if !strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api/status-page" || strings.HasPrefix(r.URL.Path, "/api/status-page/") ||
+			strings.HasPrefix(r.URL.Path, "/api/agent/") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -1416,9 +1421,27 @@ func (s *server) dismissSelfUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 // hostMetrics returns the host's CPU, memory, network and filesystem usage,
-// with up to 30 minutes of history.
+// with up to 30 minutes of history: this host's, or (?host=) another's,
+// from its agent. When they can't be had, the snapshot says why.
 func (s *server) hostMetrics(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.Host.Snapshot())
+	id := r.URL.Query().Get("host")
+	if id == "" || id == manager.LocalHost {
+		writeJSON(w, http.StatusOK, s.Host.Snapshot())
+		return
+	}
+	if s.Hosts == nil {
+		writeError(w, http.StatusNotFound, hosts.ErrNotFound)
+		return
+	}
+	snap, err := s.Hosts.HostMetrics(r.Context(), id)
+	switch {
+	case errors.Is(err, hosts.ErrNotFound):
+		writeError(w, http.StatusNotFound, err)
+		return
+	case err != nil:
+		snap = hostmetrics.Snapshot{Reason: err.Error()}
+	}
+	writeJSON(w, http.StatusOK, snap)
 }
 
 // hostStorage returns the last disk usage report per server.

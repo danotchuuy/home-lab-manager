@@ -1,7 +1,17 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, ApiError } from "../api";
-import type { DeployEvent, DockerHost, DockerHostInput, DockerVersion, HostInspection, SSHKeyInfo } from "../types";
-import { Spinner } from "./common";
+import type {
+  AgentEnrolment,
+  AgentStatus,
+  DeployEvent,
+  DockerHost,
+  DockerHostInput,
+  DockerVersion,
+  HostInspection,
+  SSHKeyInfo,
+} from "../types";
+import { Ago, Spinner } from "./common";
+import { CopyButton } from "./ConnectInfo";
 
 const EMPTY: DockerHostInput = {
   id: "",
@@ -54,7 +64,10 @@ export function DockerHosts() {
   async function remove(h: DockerHost) {
     if (
       !confirm(
-        `Remove ${h.name}? hlm stops managing its servers; they keep running there, with their data. Their backups, tasks and other settings in hlm are kept, for if you add the host again.`,
+        `Remove ${h.name}? hlm stops managing its servers; they keep running there, with their data. Their backups, tasks and other settings in hlm are kept, for if you add the host again.` +
+          (h.kind === "agent"
+            ? " Its agent is disconnected and its credential stops working; remove the hlm-agent container there too."
+            : ""),
       )
     )
       return;
@@ -74,8 +87,9 @@ export function DockerHosts() {
       <p className="muted small no-margin">
         Other machines hlm runs servers on, such as a NAS or a mini-PC. Their servers are listed with this host&apos;s,
         named <code>name@host</code>, with their console, files, backups and updates. hlm reaches their Docker over SSH
-        (as a user in the <code>docker</code> group) or Docker&apos;s API over TCP with TLS. The CPU, memory and disks
-        on this page are this host&apos;s only.
+        (as a user in the <code>docker</code> group) or Docker&apos;s API over TCP with TLS, or through hlm&apos;s agent
+        on the host, which connects out to hlm, so nothing has to be opened there. Hosts with the agent also report
+        their CPU, memory, network and disks: choose one at the top of this page.
       </p>
       {error && <div className="alert error small">{error}</div>}
       {!hosts ? (
@@ -115,7 +129,9 @@ export function DockerHosts() {
                     {h.address && <div className="muted small">at {h.address}</div>}
                   </td>
                   <td className="small">
-                    {h.kind === "ssh" ? (
+                    {h.kind === "agent" ? (
+                      <AgentState agent={h.agent} />
+                    ) : h.kind === "ssh" ? (
                       <>
                         SSH{" "}
                         <code>
@@ -213,6 +229,8 @@ function HostForm({
   // For a TCP host: hlm sets TLS up over SSH, rather than being given the certificates.
   const [auto, setAuto] = useState(!initial);
   const [tlsPort, setTLSPort] = useState(2376);
+  // The enrolment made for a new host's agent.
+  const [enrolment, setEnrolment] = useState<AgentEnrolment>();
 
   const set = <K extends keyof DockerHostInput>(k: K, v: DockerHostInput[K]) => {
     setForm((f) => ({ ...f, [k]: v }));
@@ -229,7 +247,18 @@ function HostForm({
   const payload = (f: DockerHostInput): DockerHostInput =>
     f.kind === "ssh"
       ? { ...f, url: undefined, ca: undefined, cert: undefined, key: undefined }
-      : { ...f, ssh: undefined, socket: undefined };
+      : f.kind === "agent"
+        ? {
+            ...f,
+            url: undefined,
+            ca: undefined,
+            cert: undefined,
+            key: undefined,
+            ssh: undefined,
+            socket: undefined,
+            agent: undefined,
+          }
+        : { ...f, ssh: undefined, socket: undefined };
 
   // The host as hlm signs in to it over SSH (to check it, or set Docker or TLS up).
   const sshPayload = (f: DockerHostInput): DockerHostInput => ({
@@ -334,11 +363,25 @@ function HostForm({
     }
   }
 
-  function submit(e: FormEvent) {
-    e.preventDefault();
-    run("save");
+  async function enrol() {
+    setBusy("enrol");
+    setError(undefined);
+    try {
+      setEnrolment(await api.agentEnrolment(payload(form)));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(undefined);
+    }
   }
 
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    if (agentKind && !initial) enrol();
+    else run("save");
+  }
+
+  const agentKind = form.kind === "agent";
   const ssh = form.kind === "ssh";
   // Signing in over SSH: to use the host, or to set TLS up on it.
   const viaSSH = ssh || auto;
@@ -450,7 +493,7 @@ function HostForm({
           <input
             value={form.id}
             onChange={(e) => set("id", e.target.value.toLowerCase())}
-            disabled={!!initial}
+            disabled={!!initial || !!enrolment}
             placeholder="nas"
             spellCheck={false}
             required
@@ -465,14 +508,33 @@ function HostForm({
         </label>
         <label className="field">
           <span className="field-label">Connect with</span>
-          <select value={form.kind} onChange={(e) => set("kind", e.target.value as "ssh" | "tcp")}>
+          <select
+            value={form.kind}
+            onChange={(e) => set("kind", e.target.value as "ssh" | "tcp" | "agent")}
+            disabled={initial?.kind === "agent" || !!enrolment}
+          >
             <option value="ssh">SSH (recommended)</option>
             <option value="tcp">Docker&apos;s API over TCP with TLS</option>
+            {(!initial || initial.kind === "agent") && (
+              <option value="agent">hlm&apos;s agent on the host (it connects to hlm)</option>
+            )}
           </select>
         </label>
       </div>
 
-      {ssh ? (
+      {agentKind ? (
+        initial ? (
+          <p className="small no-margin">
+            Agent: <AgentState agent={initial.agent} />
+          </p>
+        ) : (
+          <p className="muted small no-margin">
+            The host runs hlm&apos;s agent, a small container that connects out to this hlm over HTTPS and passes hlm
+            the Docker calls it makes there, and nothing else. Nothing has to be opened on the host or forwarded to it,
+            so it works behind NAT or another network. hlm makes a one-time command to run there.
+          </p>
+        )
+      ) : ssh ? (
         <>{sshFields}</>
       ) : (
         <>
@@ -582,16 +644,19 @@ function HostForm({
             placeholder="/mnt/user/appdata"
             spellCheck={false}
             required
+            disabled={!!enrolment}
           />
           <span className="field-help">Where servers&apos; data folders go there, like HLM_APPDATA_ROOT here.</span>
         </label>
         <label className="field">
-          <span className="field-label">LAN address (optional)</span>
+          <span className="field-label">LAN address{agentKind ? "" : " (optional)"}</span>
           <input
             value={form.address ?? ""}
             onChange={(e) => set("address", e.target.value)}
-            placeholder={viaSSH ? form.ssh?.host : "the address's host"}
+            placeholder={agentKind ? "192.168.1.20" : viaSSH ? form.ssh?.host : "the address's host"}
             spellCheck={false}
+            required={agentKind}
+            disabled={!!enrolment}
           />
           <span className="field-help">
             Where its servers&apos; ports are reached: for Web UI links, status checks, port forwards and tunnels. An IP
@@ -610,34 +675,45 @@ function HostForm({
           Connected: Docker {version.version} (API {version.apiVersion}, {version.os}/{version.arch}).
         </div>
       )}
+      {enrolment && <AgentCommand enrolment={enrolment} onConnected={onDone} />}
       <div className="btn-row">
-        {!(auto && !ssh) && (
-          <button type="button" className="btn" onClick={() => run("test")} disabled={!!busy}>
-            {busy === "test" ? "Testing…" : "Test connection"}
-          </button>
-        )}
-        {viaSSH && (
-          <button type="button" className="btn" onClick={() => run("check")} disabled={!!busy}>
-            {busy === "check" ? "Checking…" : "Check for Docker"}
-          </button>
-        )}
-        {auto && !ssh ? (
-          <button
-            type="button"
-            className="btn primary"
-            onClick={setUpTLS}
-            disabled={!!busy || !form.ssh?.hostKey || !inspection?.ready}
-            title={!inspection?.ready ? "Check for Docker first: it has to be installed and running" : undefined}
-          >
-            {busy === "tls" ? "Setting up…" : initial ? "Set TLS up and save" : "Set TLS up and add host"}
-          </button>
+        {agentKind ? (
+          !enrolment && (
+            <button type="submit" className="btn primary" disabled={!!busy}>
+              {initial ? (busy === "save" ? "Saving…" : "Save") : busy === "enrol" ? "Making it…" : "Make the command"}
+            </button>
+          )
         ) : (
-          <button type="submit" className="btn primary" disabled={!!busy || (ssh && !form.ssh?.hostKey)}>
-            {busy === "save" ? "Saving…" : initial ? "Save" : "Add host"}
-          </button>
+          <>
+            {!(auto && !ssh) && (
+              <button type="button" className="btn" onClick={() => run("test")} disabled={!!busy}>
+                {busy === "test" ? "Testing…" : "Test connection"}
+              </button>
+            )}
+            {viaSSH && (
+              <button type="button" className="btn" onClick={() => run("check")} disabled={!!busy}>
+                {busy === "check" ? "Checking…" : "Check for Docker"}
+              </button>
+            )}
+            {auto && !ssh ? (
+              <button
+                type="button"
+                className="btn primary"
+                onClick={setUpTLS}
+                disabled={!!busy || !form.ssh?.hostKey || !inspection?.ready}
+                title={!inspection?.ready ? "Check for Docker first: it has to be installed and running" : undefined}
+              >
+                {busy === "tls" ? "Setting up…" : initial ? "Set TLS up and save" : "Set TLS up and add host"}
+              </button>
+            ) : (
+              <button type="submit" className="btn primary" disabled={!!busy || (ssh && !form.ssh?.hostKey)}>
+                {busy === "save" ? "Saving…" : initial ? "Save" : "Add host"}
+              </button>
+            )}
+          </>
         )}
         <button type="button" className="btn ghost" onClick={onCancel}>
-          Cancel
+          {enrolment ? "Close" : "Cancel"}
         </button>
       </div>
     </form>
@@ -729,6 +805,93 @@ function SetupLog({ events }: { events: DeployEvent[] }) {
         {lines.join("\n")}
       </pre>
       {end && <div className={`alert ${end.stage === "done" ? "success" : "error"} small`}>{end.message}</div>}
+    </div>
+  );
+}
+
+/** A host's agent's connection, in a few words. */
+function AgentState({ agent }: { agent?: AgentStatus }) {
+  if (agent?.connected)
+    return (
+      <span className="host-ok">
+        Agent connected <Ago iso={agent.since} />
+        {agent.version && <span className="muted"> (version {agent.version})</span>}
+      </span>
+    );
+  return (
+    <span className="host-down">
+      Agent not connected
+      {agent?.lastSeen ? (
+        <>
+          {" "}
+          (last seen <Ago iso={agent.lastSeen} />)
+        </>
+      ) : (
+        " since hlm started"
+      )}
+    </span>
+  );
+}
+
+/** The command to run on a new host, and then waiting for its agent to connect. */
+function AgentCommand({ enrolment, onConnected }: { enrolment: AgentEnrolment; onConnected: () => void }) {
+  const [connected, setConnected] = useState(false);
+  const server = window.location.origin;
+  const http = window.location.protocol === "http:";
+  const args = `agent --server ${server}${http ? " --allow-http" : ""} --token ${enrolment.token}`;
+  const docker = [
+    "docker run -d --name hlm-agent --restart unless-stopped \\",
+    "  -v /var/run/docker.sock:/var/run/docker.sock -v hlm-agent:/data \\",
+    "  -v /proc:/host/proc:ro -v /:/host/rootfs:ro \\",
+    `  danotchuuy/home-lab-manager:latest ${args}`,
+  ].join("\n");
+  const id = enrolment.host.id;
+  useEffect(() => {
+    if (connected) return;
+    const t = setInterval(() => {
+      api.hosts().then(
+        (r) => {
+          if (r.hosts.some((h) => h.id === id && h.agent?.connected)) setConnected(true);
+        },
+        () => {},
+      );
+    }, 3000);
+    return () => clearInterval(t);
+  }, [id, connected]);
+  useEffect(() => {
+    if (!connected) return;
+    const t = setTimeout(onConnected, 2500);
+    return () => clearTimeout(t);
+  }, [connected, onConnected]);
+  return (
+    <div className="agent-command">
+      <p className="small no-margin">
+        Run this on <strong>{enrolment.host.name || id}</strong> (as root, or a user in the <code>docker</code> group):
+      </p>
+      <div className="agent-command-box">
+        <pre>{docker}</pre>
+        <CopyButton text={docker} label="Copy the command" />
+      </div>
+      <p className="muted small no-margin">
+        Or, with the <code>hlm</code> binary there: <code>hlm {args.replace(enrolment.token, "…")} --data DIR</code>.
+        The token works once, until {new Date(enrolment.expires).toLocaleTimeString([], { timeStyle: "short" })}, and
+        isn&apos;t shown again; the agent trades it for its own credential, kept in the <code>hlm-agent</code> volume.
+        Running the same command again later (to update the agent) keeps that credential. The read-only{" "}
+        <code>/proc</code> and <code>/</code> mounts are for the host&apos;s CPU, memory, network and disk figures;
+        without them, only its Docker is used.
+      </p>
+      {http && (
+        <div className="alert warn small">
+          hlm is open over plain HTTP here, so the agent&apos;s connection isn&apos;t encrypted: anyone who can see or
+          change the traffic between the host and hlm could control its Docker. Use it on a network you trust, or open
+          hlm over HTTPS and make the command there.
+        </div>
+      )}
+      {connected ? (
+        <div className="alert success small">Connected: {enrolment.host.name || id} is added.</div>
+      ) : (
+        <p className="small no-margin muted">Waiting for the agent to connect…</p>
+      )}
     </div>
   );
 }

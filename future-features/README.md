@@ -18,7 +18,7 @@ the API and UI it needs, who may use it, how to test it, and a task list. They'r
 | 11 | [Backup improvements](11-backup-improvements.md) | Medium | 01 for alerts | Done |
 | 12 | [Two-factor sign-in](12-two-factor.md) | Medium | — | Done (TOTP); passkeys later |
 | 13 | [Docker Compose stacks](13-compose-stacks.md) | Low | — | Done |
-| 14 | [Multiple Docker hosts](14-multi-host.md) | Low | — | Done (SSH/TLS hosts); agent later |
+| 14 | [Multiple Docker hosts](14-multi-host.md) | Low | — | Done |
 | 15 | [Image and disk cleanup](15-cleanup.md) | Low | — | Done |
 | 16 | [UI improvements](16-ui-improvements.md) | Low | — | Done |
 | 17 | [Public status page](17-public-status-page.md) | Low | 05 | Done |

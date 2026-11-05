@@ -271,6 +271,51 @@ alerts as usual.
 
   Setting TLS up again replaces all three certificates. To undo it, delete the drop-in and `/etc/docker/hlm-tls`, then
   `systemctl daemon-reload && systemctl restart docker`.
+- **hlm's agent.** For a host hlm can't reach, or where you'd rather not open SSH or Docker's API to it (behind NAT,
+  on another network, at a friend's): the host runs `hlm agent`, which connects *out* to hlm and serves it the host's
+  Docker over that one connection. Choose **hlm's agent on the host**, give the host's ID, data folder and LAN address,
+  and **Make the command**. Run the command there:
+
+  ```sh
+  docker run -d --name hlm-agent --restart unless-stopped \
+    -v /var/run/docker.sock:/var/run/docker.sock -v hlm-agent:/data \
+    -v /proc:/host/proc:ro -v /:/host/rootfs:ro \
+    danotchuuy/home-lab-manager:latest agent --server https://hlm.example.com --token hlme_…
+  ```
+
+  (or `hlm agent --server … --token … --data DIR` with the binary). The host appears as soon as the agent connects;
+  the form waits for it.
+  - **Enrolment.** The token is single-use and lasts an hour; making another for the same host replaces it. The agent
+    trades it for its own credential (only its hash is kept in hlm), saved in `agent.json` in its data folder (the
+    `hlm-agent` volume, readable by its owner only). Running the same command again (to update the agent) keeps the
+    credential; given a new token, the agent enrols again. Making a token needs a
+    [confirmed](#confirming-its-you) admin session, like adding any host: `HLM_TOKEN` and API keys can't.
+  - **The connection.** A WebSocket to `/api/agent/connect`, so it passes through reverse proxies and
+    [Cloudflare Tunnel](#web-addresses-with-cloudflare-tunnel), carrying many streams at once (yamux); hlm's Docker
+    calls, log and event streams and console input all go over it. The agent pings every 25 seconds and reconnects by
+    itself (backing off up to a minute) when it drops or hlm restarts.
+  - **Only hlm's Docker calls.** The agent passes on only the Docker API calls hlm makes (containers, images, networks,
+    volumes, exec and archives for files and backups, events) and refuses the rest (swarm, plugins, secrets, image
+    builds, exports, commits…), so even something that got hold of the connection couldn't use those. Starting
+    containers is still allowed, which on any Docker host amounts to root there: only enrol hosts you'd give hlm that
+    much.
+  - **HTTPS.** The agent checks hlm's certificate (the system's authorities, plus `--ca FILE` for your own). It
+    refuses a plain `http://` address unless given `--allow-http`, which the command includes when hlm is open over
+    HTTP; then anyone who can see or change the traffic between them could take the host's Docker over, so only do
+    that on a network you trust.
+  - **Host metrics.** The agent also reports the host's CPU, memory, load, network and disks, read from the host's
+    `/proc` and root filesystem (the two read-only mounts in the command, as for hlm itself; leave them out and only
+    its Docker is used). hlm asks every 15 seconds: the **Host** page has a picker for this host or an agent's host,
+    with the live charts and the kept history (by the minute for a day, by the quarter hour for 30 days), and
+    [`/metrics`](#prometheus-metrics) has its `hlm_host_*` series with a `host` label. Disk usage by server and deleted
+    servers' data stay this host's only ([cleanup](#disk-cleanup) already works on every host). Hosts reached over SSH or TLS don't report these: nothing of hlm's runs
+    there to read them.
+  - **Removing the host** disconnects its agent and its credential stops working; the agent says so and exits. Remove
+    the `hlm-agent` container there too. The table shows each agent's connection: since when, and its version.
+  - The agent's settings can also be given as `HLM_AGENT_SERVER`, `HLM_AGENT_TOKEN`, `HLM_AGENT_DATA` (default
+    `/data`), `HLM_AGENT_SOCKET` (default `/var/run/docker.sock`), `HLM_AGENT_CA` and `HLM_AGENT_ALLOW_HTTP`, and the
+    host's procfs and root as `--proc`/`HLM_HOST_PROC` and `--root`/`HLM_HOST_ROOT` (by default `/host/proc` and
+    `/host/rootfs` when they're mounted, otherwise the agent's own `/proc`).
 - **TCP with TLS.** For a daemon started with `--tlsverify`: its address (`tcp://nas.lan:2376`), the CA that signed its
   certificate and a client certificate and key. The daemon's certificate is always checked, and plain TCP isn't
   accepted. The client key is kept encrypted with hlm's settings and never shown again.
@@ -285,7 +330,8 @@ hlm are kept. Removing a host stops hlm managing its servers: they keep running 
 
 Limits for now:
 
-- The Host page's CPU, memory, disks, disk usage by server and the data of deleted servers are this host's only.
+- The Host page's CPU, memory, network and disks are this host's and those of hosts with the agent; not those of hosts
+  reached over SSH or TLS. Disk usage by server and the data of deleted servers are this host's only.
 - [Compose stacks](#compose-stacks), hlm's own WireGuard and Cloudflare Tunnel containers, and self-update run on this
   host.
 - Container IP addresses on another host's bridge networks can't be reached from here; hlm uses the host's published
@@ -1263,14 +1309,14 @@ hlm keeps a month of resource history itself, without a database, so "why was it
 
 `GET /metrics` serves hlm's state in Prometheus' text format, for Grafana dashboards and alerts:
 
-- **Servers** (labels `server`, `app`, `image`): `hlm_server_up`, `hlm_server_cpu_ratio` (in cores),
+- **Servers** (labels `server`, `app`, `image`, `host`: `local` or the [Docker host](#more-docker-hosts)'s ID): `hlm_server_up`, `hlm_server_cpu_ratio` (in cores),
   `hlm_server_memory_bytes`, `hlm_server_memory_limit_bytes`, `hlm_server_network_{receive,transmit}_bytes_total`,
   `hlm_server_block_{read,write}_bytes_total`, `hlm_server_restarts_total`, `hlm_server_update_available`, and from the
   [game status](#is-the-game-up-players-and-status) `hlm_server_query_up`, `hlm_server_players` and `hlm_server_players_max`.
 - **Backups** (label `server`): `hlm_backup_last_success_timestamp_seconds`, `hlm_backup_last_size_bytes`,
   `hlm_backup_last_duration_seconds`.
-- **Host:** `hlm_host_cpu_ratio`, `hlm_host_cpu_cores`, `hlm_host_load1`, `hlm_host_memory_{used,total}_bytes`,
-  `hlm_host_filesystem_{size,avail}_bytes` (labels `mount`, `device`) and `hlm_host_network_{receive,transmit}_bytes_total`
+- **Hosts** (label `host`: `local`, or the ID of a host with [hlm's agent](#more-docker-hosts)): `hlm_host_cpu_ratio`,
+  `hlm_host_cpu_cores`, `hlm_host_load1`, `hlm_host_memory_{used,total}_bytes`, `hlm_host_filesystem_{size,avail}_bytes` (labels `mount`, `device`) and `hlm_host_network_{receive,transmit}_bytes_total`
   (label `interface`), when [host metrics](#host-metrics) are available.
 - **hlm:** `hlm_build_info{version}`, and `hlm_https_cert_expiry_timestamp_seconds` with [HTTPS](#https) on.
 
@@ -1959,7 +2005,10 @@ when the `HLM_*` one isn't set.
 | `GET /api/system/status-page/suggest?server=`  | Public addresses hlm can suggest for a server (from the proxy and UniFi). Admins. |
 | `GET /api/hosts`                               | [Docker hosts](#more-docker-hosts) and whether they could be reached. Admins also get how each is reached (never a client key) and hlm's SSH public key. |
 | `POST /api/hosts/test`                         | Connect to a host as given, without saving it: its Docker version, or (for SSH) the host key to confirm (`hostKey`, `hostKeyFingerprint`). Admins. |
-| `POST /api/hosts`, `PUT /api/hosts/{id}`       | `{id, name, kind: "ssh"\|"tcp", ssh?: {host, port, user, hostKey}, socket?, url?, ca?, cert?, key?, appdataRoot, address?}`: add or change a host, after connecting to it. An empty `key` keeps the saved one. [Confirmed](#confirming-its-you) session. |
+| `POST /api/hosts`, `PUT /api/hosts/{id}`       | `{id, name, kind: "ssh"\|"tcp"\|"agent" (PUT only; agents' hosts are added by enrolment), ssh?: {host, port, user, hostKey}, socket?, url?, ca?, cert?, key?, appdataRoot, address?}`: add or change a host, after connecting to it. An empty `key` keeps the saved one. [Confirmed](#confirming-its-you) session. |
+| `POST /api/hosts/agent-enrolment`              | `{id, name, appdataRoot, address}`: a single-use, one-hour token for a new host's [agent](#more-docker-hosts) (`token`, `host`, `expires`). Confirmed session. |
+| `POST /api/agent/enrol`                        | Called by `hlm agent`: `{token, version}` → `{host, credential}`. No sign-in; the token is the proof. Rate-limited. |
+| `GET /api/agent/connect`                       | The agent's WebSocket, signed in with `Authorization: Bearer <credential>`. |
 | `DELETE /api/hosts/{id}`                       | Stop managing a host's servers (they keep running there). Confirmed session.      |
 | `POST /api/hosts/{id}/check`                   | Connect to a saved host now. Admins.                                              |
 | `POST /api/hosts/ssh-key`                      | Make hlm's SSH key, if there isn't one. Admins.                                   |
@@ -2047,8 +2096,8 @@ when the `HLM_*` one isn't set.
 | `POST /api/system/update/check`                | Check GitHub for a newer hlm release.                                             |
 | `POST /api/system/update/apply`                | Install the latest release. Streams NDJSON; hlm restarts afterwards.             |
 | `POST /api/system/update/dismiss`              | Clear the result of the last update.                                              |
-| `GET /api/host`                                | Host CPU, memory, network, filesystems and disk I/O, with 30 minutes of history.  |
-| `GET /api/host/history?range=1h\|6h\|24h\|7d\|30d` | The host's [resource history](#resource-history): `{step, times, series: {name: {avg, max}}}`, `null` where nothing was recorded. Admins only. |
+| `GET /api/host?host=`                          | Host CPU, memory, network, filesystems and disk I/O, with 30 minutes of history: this host's, or (`host=`) a host's with [hlm's agent](#more-docker-hosts). When they can't be had, `available` is false and `reason` says why. |
+| `GET /api/host/history?range=1h\|6h\|24h\|7d\|30d&host=` | The host's (or, with `host=`, an agent host's) [resource history](#resource-history): `{step, times, series: {name: {avg, max}}}`, `null` where nothing was recorded. Admins only. |
 | `GET /api/servers/{id}/history?range=…`        | A server's resource history (a viewer).                                           |
 | `GET /metrics`                                 | [Prometheus](#prometheus) metrics: a metrics or admin key, or an allowed address. |
 | `GET/PUT /api/system/metrics`                  | `{allowFrom}`: who may scrape without a key; `PUT` needs a [confirmed](#confirming-its-you) session. |

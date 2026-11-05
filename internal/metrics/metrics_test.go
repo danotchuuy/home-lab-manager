@@ -139,3 +139,32 @@ newline`)
 }
 
 func nan() float64 { var z float64; return z / z }
+
+// Other hosts' samples (from their agents) go in their own groups, and are
+// kept for /metrics until one isn't available.
+func TestOtherHosts(t *testing.T) {
+	store, err := metricstore.Open(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(store, &fakeServers{}, nil, nil)
+	snap := hostmetrics.Snapshot{Available: true, SampledAt: time.Now(), CPU: hostmetrics.CPU{Percent: 42, Cores: 4},
+		Memory: hostmetrics.Memory{Used: 1 << 30, Total: 4 << 30}, History: []hostmetrics.Point{{CPU: 1}}}
+	s.ObserveHostOn("nas", snap)
+	if got := store.Query(HostGroupOf("nas"), time.Hour).Series[CPU].Max; len(got) == 0 || float64(got[len(got)-1]) != 42 {
+		t.Errorf("nas cpu %v", got)
+	}
+	if len(store.Query(HostGroup, time.Hour).Series[CPU].Max) != 0 {
+		t.Error("recorded as this host")
+	}
+	if o := s.OtherHosts(); len(o) != 1 || o["nas"].CPU.Percent != 42 || o["nas"].History != nil {
+		t.Errorf("others %+v", o)
+	}
+	if HostGroupOf("") != HostGroup || HostGroupOf("local") != HostGroup || HostGroupOf("nas") != "hosts/nas" {
+		t.Error("groups")
+	}
+	s.ObserveHostOn("nas", hostmetrics.Snapshot{Reason: "the host's agent isn't connected"})
+	if len(s.OtherHosts()) != 0 {
+		t.Error("kept after it went")
+	}
+}

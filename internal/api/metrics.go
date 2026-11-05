@@ -12,6 +12,8 @@ import (
 
 	"github.com/danotchuuy/home-lab-manager/internal/auth"
 	"github.com/danotchuuy/home-lab-manager/internal/gamequery"
+	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
+	"github.com/danotchuuy/home-lab-manager/internal/hosts"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
 	"github.com/danotchuuy/home-lab-manager/internal/metrics"
 	"github.com/danotchuuy/home-lab-manager/internal/metricstore"
@@ -33,7 +35,18 @@ func (s *server) hostHistory(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, s.History.Query(metrics.HostGroup, metricstore.Ranges[rng]))
+	id := r.URL.Query().Get("host")
+	if id != "" && id != manager.LocalHost {
+		if s.Hosts == nil {
+			writeError(w, http.StatusNotFound, hosts.ErrNotFound)
+			return
+		}
+		if _, err := s.Hosts.Get(id); err != nil {
+			writeError(w, http.StatusNotFound, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, s.History.Query(metrics.HostGroupOf(id), metricstore.Ranges[rng]))
 }
 
 func (s *server) serverHistory(w http.ResponseWriter, r *http.Request) {
@@ -113,7 +126,7 @@ func (s *server) prometheus(w http.ResponseWriter, r *http.Request) {
 	slices.Sort(names)
 	for _, name := range names {
 		smp := latest[name]
-		l := []string{"server", name, "app", smp.Server.App, "image", smp.Server.Image}
+		l := []string{"server", name, "app", smp.Server.App, "image", smp.Server.Image, "host", cmp.Or(smp.Server.Host, manager.LocalHost)}
 		e.Gauge("hlm_server_up", "1 if the server's container is running.", b2f(smp.Server.State == "running"), l...)
 		update := 0.0
 		if smp.Server.Update != nil && smp.Server.Update.State == manager.UpdateAvailable {
@@ -159,22 +172,31 @@ func (s *server) prometheus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// The host.
+	// The hosts: this one, and those with an agent, by ID.
+	hostSnaps := map[string]hostmetrics.Snapshot{}
 	if s.Host != nil {
-		if h := s.Host.Snapshot(); h.Available {
-			e.Gauge("hlm_host_cpu_ratio", "Host CPU used, as a fraction of all cores.", h.CPU.Percent/100)
-			e.Gauge("hlm_host_cpu_cores", "Host CPU cores.", float64(h.CPU.Cores))
-			e.Gauge("hlm_host_load1", "Host load average over 1 minute.", h.CPU.Load1)
-			e.Gauge("hlm_host_memory_used_bytes", "Host memory used.", float64(h.Memory.Used))
-			e.Gauge("hlm_host_memory_total_bytes", "Host memory.", float64(h.Memory.Total))
-			for _, fs := range h.Disks {
-				e.Gauge("hlm_host_filesystem_size_bytes", "Filesystem size.", float64(fs.Total), "mount", fs.Mount, "device", fs.Device)
-				e.Gauge("hlm_host_filesystem_avail_bytes", "Filesystem space available.", float64(fs.Free), "mount", fs.Mount, "device", fs.Device)
-			}
-			for _, i := range h.Network {
-				e.Counter("hlm_host_network_receive_bytes_total", "Bytes received on a host interface.", float64(i.RxTotal), "interface", i.Name)
-				e.Counter("hlm_host_network_transmit_bytes_total", "Bytes sent on a host interface.", float64(i.TxTotal), "interface", i.Name)
-			}
+		hostSnaps[manager.LocalHost] = s.Host.Snapshot()
+	}
+	if s.Sampler != nil {
+		maps.Copy(hostSnaps, s.Sampler.OtherHosts())
+	}
+	for _, id := range slices.Sorted(maps.Keys(hostSnaps)) {
+		h := hostSnaps[id]
+		if !h.Available {
+			continue
+		}
+		e.Gauge("hlm_host_cpu_ratio", "Host CPU used, as a fraction of all cores.", h.CPU.Percent/100, "host", id)
+		e.Gauge("hlm_host_cpu_cores", "Host CPU cores.", float64(h.CPU.Cores), "host", id)
+		e.Gauge("hlm_host_load1", "Host load average over 1 minute.", h.CPU.Load1, "host", id)
+		e.Gauge("hlm_host_memory_used_bytes", "Host memory used.", float64(h.Memory.Used), "host", id)
+		e.Gauge("hlm_host_memory_total_bytes", "Host memory.", float64(h.Memory.Total), "host", id)
+		for _, fs := range h.Disks {
+			e.Gauge("hlm_host_filesystem_size_bytes", "Filesystem size.", float64(fs.Total), "host", id, "mount", fs.Mount, "device", fs.Device)
+			e.Gauge("hlm_host_filesystem_avail_bytes", "Filesystem space available.", float64(fs.Free), "host", id, "mount", fs.Mount, "device", fs.Device)
+		}
+		for _, i := range h.Network {
+			e.Counter("hlm_host_network_receive_bytes_total", "Bytes received on a host interface.", float64(i.RxTotal), "host", id, "interface", i.Name)
+			e.Counter("hlm_host_network_transmit_bytes_total", "Bytes sent on a host interface.", float64(i.TxTotal), "host", id, "interface", i.Name)
 		}
 	}
 	if s.HTTPS != nil {

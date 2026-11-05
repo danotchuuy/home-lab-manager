@@ -88,6 +88,7 @@ import type {
   WireGuardResult,
   WireGuardStatus,
   SSHKeyInfo,
+  AgentEnrolment,
   DockerHost,
   DockerHostInput,
   DockerVersion,
@@ -470,6 +471,9 @@ export const api = {
   updateHost: (h: DockerHostInput) =>
     json<DockerHost>(`/api/hosts/${encodeURIComponent(h.id)}`, { method: "PUT", body: JSON.stringify(h) }),
   deleteHost: (id: string) => json<void>(`/api/hosts/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  /** A single-use token for a new host's agent (confirmed admins). */
+  agentEnrolment: (h: DockerHostInput) =>
+    json<AgentEnrolment>("/api/hosts/agent-enrolment", { method: "POST", body: JSON.stringify(h) }),
   checkHost: (id: string) => json<DockerVersion>(`/api/hosts/${encodeURIComponent(id)}/check`, { method: "POST" }),
   /** Signs in to an SSH host: is Docker there, and how would hlm set it up? */
   inspectHost: (h: DockerHostInput) =>
@@ -669,7 +673,9 @@ export const api = {
     stream("/api/system/update/apply", { method: "POST" }, onEvent),
   dismissSelfUpdate: () => json<void>("/api/system/update/dismiss", { method: "POST" }),
 
-  host: () => json<HostSnapshot>("/api/host"),
+  /** A host's CPU, memory, network and disks: this host's, or another's (with hlm's agent). */
+  host: (id?: string) =>
+    json<HostSnapshot>(id && id !== "local" ? `/api/host?host=${encodeURIComponent(id)}` : "/api/host"),
   storage: () => json<StorageReport>("/api/host/storage"),
   refreshStorage: () => json<StorageReport>("/api/host/storage/refresh", { method: "POST" }),
   /** Deletes a deleted server's folder or volume from disk. */
@@ -745,7 +751,10 @@ export const api = {
   auditSettings: () => json<AuditSettings>("/api/system/audit"),
   setAuditSettings: (retentionMonths: number, mirror: boolean) =>
     json<AuditSettings>("/api/system/audit", { method: "PUT", body: JSON.stringify({ retentionMonths, mirror }) }),
-  hostHistory: (range: HistoryRange) => json<MetricHistory>(`/api/host/history?range=${range}`),
+  hostHistory: (range: HistoryRange, host?: string) =>
+    json<MetricHistory>(
+      `/api/host/history?range=${range}${host && host !== "local" ? `&host=${encodeURIComponent(host)}` : ""}`,
+    ),
   serverHistory: (id: string, range: HistoryRange) =>
     json<MetricHistory>(`/api/servers/${encodeURIComponent(id)}/history?range=${range}`),
   metricsSettings: () => json<MetricsSettings>("/api/system/metrics"),

@@ -22,6 +22,15 @@ const Interval = 15 * time.Second
 // HostGroup is the history group of the host's series.
 const HostGroup = "host"
 
+// HostGroupOf is the history group of a host's series: HostGroup for
+// this one (manager.LocalHost, or ""), hosts/<id> for another.
+func HostGroupOf(id string) string {
+	if id == "" || id == manager.LocalHost {
+		return HostGroup
+	}
+	return "hosts/" + id
+}
+
 // ServerGroup is the history group of a server's series.
 func ServerGroup(name string) string { return "servers/" + name }
 
@@ -75,6 +84,8 @@ type Sampler struct {
 	latest map[string]ServerSample // by server name
 	prev   map[string]counters     // by container ID
 	host   hostmetrics.Snapshot
+	// others are other hosts' latest samples (from their agents), by ID.
+	others map[string]hostmetrics.Snapshot
 }
 
 // counters are a container's totals at a sample, to make rates from.
@@ -89,7 +100,7 @@ func New(store *metricstore.Store, servers Servers, players PlayerCounter, log *
 		log = slog.New(slog.DiscardHandler)
 	}
 	return &Sampler{store: store, servers: servers, players: players, log: log,
-		latest: map[string]ServerSample{}, prev: map[string]counters{}}
+		latest: map[string]ServerSample{}, prev: map[string]counters{}, others: map[string]hostmetrics.Snapshot{}}
 }
 
 // ObserveHost records a host sample; pass it to hostmetrics' Observe.
@@ -97,8 +108,42 @@ func (s *Sampler) ObserveHost(snap hostmetrics.Snapshot) {
 	s.mu.Lock()
 	s.host = snap
 	s.mu.Unlock()
+	s.record(HostGroup, snap)
+}
+
+// ObserveHostOn records a sample of another host (from its agent). A
+// sample that isn't available forgets the host's latest one.
+func (s *Sampler) ObserveHostOn(id string, snap hostmetrics.Snapshot) {
+	if id == "" || id == manager.LocalHost {
+		s.ObserveHost(snap)
+		return
+	}
+	snap.History = nil
+	s.mu.Lock()
+	if !snap.Available {
+		delete(s.others, id)
+		s.mu.Unlock()
+		return
+	}
+	s.others[id] = snap
+	s.mu.Unlock()
+	s.record(HostGroupOf(id), snap)
+}
+
+// OtherHosts are the other hosts' latest samples, by ID.
+func (s *Sampler) OtherHosts() map[string]hostmetrics.Snapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]hostmetrics.Snapshot, len(s.others))
+	for id, snap := range s.others {
+		out[id] = snap
+	}
+	return out
+}
+
+func (s *Sampler) record(group string, snap hostmetrics.Snapshot) {
 	t := snap.SampledAt
-	add := func(name string, v float64) { s.store.Add(HostGroup, name, t, v) }
+	add := func(name string, v float64) { s.store.Add(group, name, t, v) }
 	add(CPU, snap.CPU.Percent)
 	add(Memory, float64(snap.Memory.Used))
 	var rx, tx, read, write float64
