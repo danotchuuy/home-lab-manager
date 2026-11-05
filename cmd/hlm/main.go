@@ -10,6 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -80,6 +81,12 @@ func main() {
 				if !errors.Is(err, flag.ErrHelp) {
 					fmt.Fprintln(os.Stderr, "hlm ssh-login:", err)
 				}
+				os.Exit(1)
+			}
+			return
+		case "decrypt-backup":
+			if err := decryptBackup(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "hlm decrypt-backup:", err)
 				os.Exit(1)
 			}
 			return
@@ -438,6 +445,13 @@ func run(log *slog.Logger) error {
 		Players: queries.Players, Audit: auditLog, Log: log,
 	})
 	go sched.Run(ctx)
+	// Backups' console commands before and after, and their schedules and
+	// retention in hlm's time zone.
+	backups.UseConsole(func(ctx context.Context, server, command string) error {
+		_, err := consoles.Send(ctx, server, "hlm (backup)", command)
+		return err
+	})
+	backups.UseLocation(sched.Location)
 	// Updates applied automatically, for servers (and hlm) that want them.
 	autoUpdates := autoupdate.New(autoupdate.Options{
 		Secrets: store, Servers: mgr, Backups: backups, Console: consoles, Tasks: sched, Self: updater,
@@ -636,4 +650,52 @@ func httpsAddress(certs *tlscert.Service, listen string) string {
 		host = net.JoinHostPort(host, port)
 	}
 	return "https://" + host
+}
+
+// decryptBackup decrypts an encrypted backup: hlm decrypt-backup KEY < in > out,
+// or with -key-file and file names.
+func decryptBackup(args []string) error {
+	fs := flag.NewFlagSet("decrypt-backup", flag.ContinueOnError)
+	keyFile := fs.String("key-file", "", "read the key from this file instead of the first argument")
+	fs.Usage = func() {
+		fmt.Fprintln(fs.Output(), "usage: hlm decrypt-backup [-key-file FILE | KEY] [IN [OUT]]")
+		fmt.Fprintln(fs.Output(), "Decrypts a backup from encrypted backup storage (stdin to stdout by default).")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	rest := fs.Args()
+	key := ""
+	if *keyFile != "" {
+		data, err := os.ReadFile(*keyFile)
+		if err != nil {
+			return err
+		}
+		key = string(data)
+	} else {
+		if len(rest) == 0 {
+			fs.Usage()
+			return errors.New("give the key")
+		}
+		key, rest = rest[0], rest[1:]
+	}
+	in, out := io.Reader(os.Stdin), io.Writer(os.Stdout)
+	if len(rest) > 0 {
+		f, err := os.Open(rest[0])
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		in = f
+	}
+	if len(rest) > 1 {
+		f, err := os.OpenFile(rest[1], os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		out = f
+	}
+	return backup.Decrypt(out, in, key)
 }

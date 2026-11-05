@@ -41,7 +41,7 @@ func TestNotifications(t *testing.T) {
 		!strings.Contains(ok.Message, "world.sav changed") {
 		t.Errorf("success = %+v", ok)
 	}
-	if len(n.cleared) != 1 || n.cleared[0] != "backup.failed/valheim" {
+	if len(n.cleared) != 2 || n.cleared[0] != "backup.failed/valheim" || n.cleared[1] != "backup.stale/valheim" {
 		t.Errorf("success didn't clear the failure: %v", n.cleared)
 	}
 	cfg := n.events[2]

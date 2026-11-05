@@ -3,6 +3,34 @@
 **Priority:** Medium · **Depends on:** [01](01-notifications.md) for alerts, [03](03-scheduled-tasks.md) time helpers
 (optional)
 
+> **Status: done** (branch `feature/11-backup-improvements`). See the README's
+> [Backups to S3](../README.md#backups-to-s3-seaweedfs-minio-). Where the result differs from this plan:
+>
+> - **Checksum:** stored beside each backup as `<backup>.sha256` (in `sha256sum`'s format), not as object metadata. S3
+>   metadata is set when an upload starts, and the checksum is only known once it ends; setting it afterwards needs a
+>   server-side copy of the whole object. The sidecar also lets anyone check a download by hand. Pruning and deleting
+>   remove it too.
+> - **Verify modes:** under 5 GB (default), always, or off. "Only the newest weekly" was left out: **Verify** on any
+>   listed backup covers checking older ones. A backup that fails its check counts as failed.
+> - **Schedule at a time:** a time of day and weekdays (`At`), in hlm's time zone. Not 03's `When` type: `schedule`
+>   imports `backup`, so `backup` can't import it, and cron or "every N minutes" add nothing for backups. Failed
+>   backups are retried after an hour, as before.
+> - **Copy to another target:** always streamed from the primary through hlm (decrypting and re-encrypting as each
+>   target says), rather than a server-side copy when the endpoint is the same. That's simpler, works between any two
+>   targets, and keys differ per target anyway. One copy target per plan.
+> - **Targets:** the existing settings endpoints still manage the primary (now `targets[0]`, migrated from the old
+>   single settings on first save). New `/api/integrations/backup/targets` endpoints manage the rest. Adding or
+>   changing a target needs a confirmed session (it holds credentials); reading a key does too.
+> - **Encryption:** chunked AES-256-GCM from Go's standard library (no age dependency), with a final-chunk flag
+>   against truncation. The checksum is of the stored (encrypted) bytes. Download, restore and verify decrypt;
+>   `hlm decrypt-backup` decrypts without hlm. Configuration backups go to the primary and are encrypted if it is.
+> - **Exclude patterns:** applied while archiving, from the host or through Docker's archive API. The rules are in
+>   `files/exclude.go`.
+> - **Hooks:** several commands per hook (one per line). They're sent only while the server runs, and a failure is a
+>   warning, not a failed backup.
+> - **Stale backups:** no setting. A scheduled plan is stale after twice its schedule's longest gap (at least 36
+>   hours); checked hourly, and cleared by the next success.
+
 Builds on `internal/backup` (plans keyed by server name, minute scheduler, multipart upload to S3, `prune` keeping the
 newest N). Backup storage is S3-compatible, typically SeaweedFS; keep path-style addressing the default.
 
@@ -81,13 +109,13 @@ Gives consistent Minecraft backups without stopping the server.
 
 ## Tasks
 
-- [ ] Streaming SHA-256 + metadata; verify reader; Verify button
-- [ ] GFS retention + migration of `Keep`
-- [ ] Time-of-day schedules
-- [ ] Multiple targets + copy-to
-- [ ] Client-side encryption option
-- [ ] Exclude patterns
-- [ ] Pre/post console hooks
-- [ ] Notifications incl. stale backups
-- [ ] UI changes on Backups tab and System → Backup storage
-- [ ] README updates
+- [x] Streaming SHA-256 + metadata; verify reader; Verify button
+- [x] GFS retention + migration of `Keep`
+- [x] Time-of-day schedules
+- [x] Multiple targets + copy-to
+- [x] Client-side encryption option
+- [x] Exclude patterns
+- [x] Pre/post console hooks
+- [x] Notifications incl. stale backups
+- [x] UI changes on Backups tab and System → Backup storage
+- [x] README updates

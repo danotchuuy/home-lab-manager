@@ -40,7 +40,7 @@ func TestDue(t *testing.T) {
 		{"failed retries after an hour", Plan{Folders: folders, IntervalHours: 24, Last: failed(time.Hour)}, true},
 		{"failed, not yet", Plan{Folders: folders, IntervalHours: 24, Last: failed(59 * time.Minute)}, false},
 	} {
-		if got := due(tc.p, now); got != tc.want {
+		if got := due(tc.p, now, time.UTC); got != tc.want {
 			t.Errorf("%s: due = %v, want %v", tc.name, got, tc.want)
 		}
 	}
@@ -104,7 +104,7 @@ func (f *fakeServers) Inspect(ctx context.Context, id string) (docker.ContainerJ
 	return info, nil
 }
 
-func (f *fakeServers) ArchiveFolders(ctx context.Context, id string, folders []string, tw *tar.Writer, progress func(files.ArchiveStats)) (files.ArchiveStats, error) {
+func (f *fakeServers) ArchiveFolders(ctx context.Context, id string, folders, exclude []string, tw *tar.Writer, progress func(files.ArchiveStats)) (files.ArchiveStats, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, "archive "+strings.Join(folders, ","))
@@ -298,7 +298,7 @@ func TestSeaweedFS(t *testing.T) {
 	servers.mu.Unlock()
 
 	// Download and read the newest backup back.
-	rc, _, err := s.Download(ctx, "srv", o.Backups[0].Key)
+	rc, _, err := s.Download(ctx, "srv", o.Backups[0].Key, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +334,7 @@ func TestSeaweedFS(t *testing.T) {
 	servers.calls = nil
 	servers.mu.Unlock()
 	nextSecond()
-	if err := s.Restore(ctx, "srv", restored, true); err != nil {
+	if err := s.Restore(ctx, "srv", restored, "", true); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Start(ctx, "srv"); !errors.Is(err, ErrRunning) {
@@ -359,21 +359,21 @@ func TestSeaweedFS(t *testing.T) {
 	}
 
 	// The restore can be undone by restoring that backup, without one first.
-	if err := s.Restore(ctx, "srv", r.Before, false); err != nil {
+	if err := s.Restore(ctx, "srv", r.Before, "", false); err != nil {
 		t.Fatal(err)
 	}
 	o = wait(t, s)
 	if got := servers.file("data/world.sav"); got != "day 2" || o.Plan.LastRestore.Before != "" {
 		t.Errorf("after undo, world.sav = %q, restore = %+v", got, o.Plan.LastRestore)
 	}
-	if err := s.Restore(ctx, "srv", "homelab/srv/srv-nope.tar.gz", false); !errors.Is(err, ErrBadKey) {
+	if err := s.Restore(ctx, "srv", "homelab/srv/srv-nope.tar.gz", "", false); !errors.Is(err, ErrBadKey) {
 		t.Errorf("bad key: err = %v", err)
 	}
 
-	if _, _, err := s.Download(ctx, "srv", "homelab/other/other-20260101-000000.tar.gz"); !errors.Is(err, ErrBadKey) {
+	if _, _, err := s.Download(ctx, "srv", "homelab/other/other-20260101-000000.tar.gz", ""); !errors.Is(err, ErrBadKey) {
 		t.Errorf("another server's key: err = %v", err)
 	}
-	if err := s.DeleteBackup(ctx, "srv", o.Backups[1].Key); err != nil {
+	if err := s.DeleteBackup(ctx, "srv", o.Backups[1].Key, ""); err != nil {
 		t.Fatal(err)
 	}
 	if after, _ := s.Overview(ctx, "srv"); len(after.Backups) != len(o.Backups)-1 {
@@ -437,4 +437,47 @@ type zeroReader struct{}
 func (zeroReader) Read(p []byte) (int, error) {
 	clear(p)
 	return len(p), nil
+}
+
+// Verifying, damage, and copies to encrypted storage, against SeaweedFS.
+func TestSeaweedFSVerifyAndCopy(t *testing.T) {
+	endpoint := seaweed(t)
+	ctx := context.Background()
+	store, _ := secrets.Open(t.TempDir(), "test-key")
+	servers := &fakeServers{running: true, files: map[string]string{"data/world.sav": strings.Repeat("day 1 ", 100000)}}
+	s := New(store, servers, slog.New(slog.DiscardHandler))
+	set := func(prefix string) Settings {
+		return Settings{Settings: s3.Settings{Endpoint: endpoint, Bucket: "games", AccessKey: "hlmkey", SecretKey: "hlmsecret"}, Prefix: prefix}
+	}
+	if _, err := s.Save(ctx, set("main")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SaveTarget(ctx, Target{Name: "Offsite", Settings: set("offsite"), Encrypt: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetPlan(ctx, "srv", Plan{Folders: []string{"/data"}, CopyTo: &CopyPlan{Target: "offsite"}}); err != nil {
+		t.Fatal(err)
+	}
+	run, err := s.BackupNow(ctx, "srv", "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Verify == nil || !run.Verify.OK || !run.Verify.Checksum || run.Copy == nil || run.Copy.Error != "" {
+		t.Fatalf("run = %+v, verify %+v, copy %+v", run, run.Verify, run.Copy)
+	}
+	if v, err := s.VerifyBackup(ctx, "srv", run.Copy.Key, "offsite"); err != nil || !v.OK || v.Files != 1 {
+		t.Errorf("verify the encrypted copy = %+v, %v", v, err)
+	}
+	// Damage the stored backup: verifying it fails.
+	cl, _ := s3.New(set("main").Settings)
+	rc, _, _ := cl.Get(ctx, run.Key)
+	data, _ := io.ReadAll(rc)
+	rc.Close()
+	data[len(data)/2] ^= 0xff
+	if err := cl.Put(ctx, run.Key, data, "application/gzip"); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := s.VerifyBackup(ctx, "srv", run.Key, ""); err != nil || v.OK {
+		t.Errorf("verify damaged = %+v, %v", v, err)
+	}
 }

@@ -3460,3 +3460,98 @@ ul.transfer-warnings {
 ul.transfer-warnings li {
   margin-bottom: 0.35rem;
 }
+
+/* Backup options */
+input.tiny-number {
+  width: 4.5rem;
+  display: inline-block;
+  margin: 0 0.35rem;
+}
+
+.retention-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+  gap: 0.35rem 1rem;
+  margin: 0.25rem 0 0.35rem 1.6rem;
+}
+
+.retention-grid input {
+  width: 4.5rem;
+}
+
+.at-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.4rem;
+}
+
+.at-fields input[type="time"] {
+  width: auto;
+}
+
+.backup-more {
+  margin: 0.75rem 0;
+}
+
+.backup-more summary {
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+}
+
+.badge.verify-ok {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  color: var(--success);
+  text-transform: none;
+}
+
+.badge.verify-failed {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  color: var(--danger);
+  text-transform: none;
+}
+
+h3.backup-copies-title {
+  margin-top: 1.25rem;
+  font-size: 1rem;
+}
+
+.backup-targets h3 {
+  font-size: 1rem;
+  margin: 1.25rem 0 0.35rem;
+}
+
+ul.target-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.75rem;
+}
+
+ul.target-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+ul.target-list .btn-row {
+  margin-left: auto;
+}
+
+.key-notice code.key {
+  display: block;
+  font-size: 0.95rem;
+  padding: 0.5rem;
+  margin: 0.5rem 0;
+  word-break: break-all;
+  user-select: all;
+}
+
+.target-form {
+  margin-top: 0.75rem;
+}

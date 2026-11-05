@@ -4,6 +4,7 @@ import { api } from "../api";
 import { Overview, Spinner } from "../components/common";
 import { DeployProgress } from "../components/DeployProgress";
 import { BackupSettings } from "../components/BackupSettings";
+import { BackupTargets } from "../components/BackupTargets";
 import { ConfigBackups } from "../components/ConfigBackups";
 import { LinodeSettings } from "../components/LinodeSettings";
 import { MyAccount } from "../components/MyAccount";
@@ -270,6 +271,7 @@ export function SystemPage() {
       <section className="card" id="backup">
         <h2>Backup storage</h2>
         <BackupSettings onChange={() => setStorageVersion((v) => v + 1)} />
+        <BackupTargets version={storageVersion} onChange={() => setStorageVersion((v) => v + 1)} />
       </section>
 
       <section className="card" id="config-backup">

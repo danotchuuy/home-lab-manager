@@ -20,6 +20,7 @@ import (
 	"io"
 	"log/slog"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -73,15 +74,36 @@ type PublicSettings struct {
 type Plan struct {
 	Folders []string `json:"folders"`
 	// IntervalHours is how often to back up automatically; 0 means only
-	// when asked.
+	// when asked (unless At is set).
 	IntervalHours int `json:"intervalHours"`
+	// At backs up at a time of day instead of every IntervalHours.
+	At *At `json:"at,omitempty"`
+	// Since is when the schedule was last changed; At's first backup is
+	// the first time after it.
+	Since time.Time `json:"since,omitzero"`
 	// Keep is how many backups to keep; older ones are deleted after each
-	// successful backup. 0 keeps them all.
-	Keep int `json:"keep"`
+	// successful backup. 0 keeps them all. Retention, if set, keeps by age
+	// instead.
+	Keep      int        `json:"keep"`
+	Retention *Retention `json:"retention,omitempty"`
 	// StopServer stops a running server for the backup, so its saves aren't
 	// copied halfway through being written, and starts it again afterwards.
 	StopServer bool `json:"stopServer"`
-	Last       *Run `json:"last,omitempty"`
+	// PreCommand and PostCommand are console commands (one per line) sent
+	// before and after a running server is backed up, e.g. Minecraft's
+	// save-off and save-all flush, then save-on.
+	PreCommand  string `json:"preCommand,omitempty"`
+	PostCommand string `json:"postCommand,omitempty"`
+	// Exclude leaves files out; see files.Excluded.
+	Exclude []string `json:"exclude,omitempty"`
+	// Verify reads each backup back after it's stored: VerifyAuto (those
+	// under 5 GB), VerifyAlways or VerifyOff.
+	Verify string `json:"verify,omitempty"`
+	// CopyTo also copies each backup to another backup storage.
+	CopyTo *CopyPlan `json:"copyTo,omitempty"`
+	// Checks are backups' latest verifications, by target and key.
+	Checks map[string]Verification `json:"checks,omitempty"`
+	Last   *Run                    `json:"last,omitempty"`
 	// LastOK is the last backup that succeeded.
 	LastOK *Run `json:"lastOk,omitempty"`
 	// LastRestore is the last restore from a backup.
@@ -101,7 +123,41 @@ type Run struct {
 	Warnings []string  `json:"warnings,omitempty"`
 	// Before is, for a restore, the backup of the files it replaced.
 	Before string `json:"before,omitempty"`
+	// SHA256 is the stored backup's checksum.
+	SHA256 string `json:"sha256,omitempty"`
+	// Excluded counts the files and folders exclude patterns left out.
+	Excluded int `json:"excluded,omitempty"`
+	// Verify is how reading the backup back went, if it was.
+	Verify *Verification `json:"verify,omitempty"`
+	// Copy is how copying it to the plan's other storage went.
+	Copy *CopyResult `json:"copy,omitempty"`
 }
+
+// Verify modes.
+const (
+	VerifyAuto   = ""
+	VerifyAlways = "always"
+	VerifyOff    = "off"
+)
+
+// verifyAutoLimit is the largest backup VerifyAuto reads back.
+const verifyAutoLimit = 5 << 30
+
+// CopyPlan copies a plan's backups to another backup storage, kept there
+// by its own rules.
+type CopyPlan struct {
+	Target string `json:"target"`
+	Keeping
+}
+
+// CopyResult is how copying a backup to another storage went.
+type CopyResult struct {
+	Target string `json:"target"`
+	Key    string `json:"key,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+func (p Plan) keeping() Keeping { return Keeping{Keep: p.Keep, Retention: p.Retention} }
 
 // Progress is a backup or restore in progress.
 type Progress struct {
@@ -123,7 +179,7 @@ type Progress struct {
 // Servers is what the service needs from the server manager.
 type Servers interface {
 	Inspect(ctx context.Context, id string) (docker.ContainerJSON, error)
-	ArchiveFolders(ctx context.Context, id string, folders []string, tw *tar.Writer, progress func(files.ArchiveStats)) (files.ArchiveStats, error)
+	ArchiveFolders(ctx context.Context, id string, folders, exclude []string, tw *tar.Writer, progress func(files.ArchiveStats)) (files.ArchiveStats, error)
 	RestoreArchive(ctx context.Context, id string, r io.Reader, progress func(files.ArchiveStats)) (files.ArchiveStats, error)
 	Start(ctx context.Context, id string) error
 	Stop(ctx context.Context, id string) error
@@ -143,6 +199,29 @@ type Service struct {
 	notifier notify.Notifier
 	// audit records scheduled backups; see UseAudit.
 	audit audit.Recorder
+	// console sends plans' pre and post commands; see UseConsole.
+	console func(ctx context.Context, server, command string) error
+	// location is hlm's time zone, for schedules and retention.
+	location func() *time.Location
+	// staleNotified is when each server was last reported as having no
+	// recent backup, so it's checked once an hour.
+	staleChecked time.Time
+}
+
+// UseConsole sets how plans' pre and post commands are sent.
+func (s *Service) UseConsole(send func(ctx context.Context, server, command string) error) {
+	s.console = send
+}
+
+// UseLocation sets hlm's time zone, for schedules at times of day and
+// keeping one backup a day, week or month.
+func (s *Service) UseLocation(loc func() *time.Location) { s.location = loc }
+
+func (s *Service) loc() *time.Location {
+	if s.location == nil {
+		return time.Local
+	}
+	return s.location()
 }
 
 // UseAudit sets where scheduled backups are recorded (backups people start
@@ -187,6 +266,9 @@ func (s *Service) notifyBackup(server string, run Run) {
 		return
 	}
 	s.notifier.Clear(failKey)
+	if server != "" {
+		s.notifier.Clear(notify.DedupeKey(notify.KindBackupStale, server))
+	}
 	fields["Size"] = humanBytes(run.Size)
 	fields["Files"] = strconv.Itoa(run.Files)
 	msg := "Saved as " + run.Key + "."
@@ -196,6 +278,80 @@ func (s *Service) notifyBackup(server string, run Run) {
 	s.notifier.Notify(notify.Event{
 		Kind: notify.KindBackupSucceeded, Title: "Backed up " + what, Message: msg, Server: server, Link: link, Fields: fields,
 	})
+}
+
+// notifyVerifyFailed reports a backup that couldn't be read back.
+func (s *Service) notifyVerifyFailed(server, key string, v Verification) {
+	if s.notifier == nil {
+		return
+	}
+	s.notifier.Notify(notify.Event{
+		Kind: notify.KindBackupVerifyFailed, Title: "A backup of " + server + " is damaged",
+		Message: fmt.Sprintf("Reading %s back failed: %s. Back up again, and check the backup storage.", key, v.Error),
+		Server:  server, Link: "/servers/" + server + "?tab=backups", Fields: map[string]string{"Backup": key},
+		Key: notify.DedupeKey(notify.KindBackupVerifyFailed, server) + "/" + key,
+	})
+}
+
+// staleCheckEvery is how often servers are checked for backups that are
+// overdue.
+const staleCheckEvery = time.Hour
+
+// staleAfter is how long after its last successful backup a scheduled
+// plan counts as having none recently: twice its schedule's gap, and at
+// least a day and a half.
+func (p Plan) staleAfter(loc *time.Location, now time.Time) time.Duration {
+	gap := time.Duration(p.IntervalHours) * time.Hour
+	if p.At != nil {
+		// The longest gap between its next runs (weekday schedules have
+		// longer ones now and then).
+		t := p.At.next(now, loc)
+		for i := 0; i < 8 && !t.IsZero(); i++ {
+			n := p.At.next(t, loc)
+			if !n.IsZero() && n.Sub(t) > gap {
+				gap = n.Sub(t)
+			}
+			t = n
+		}
+	}
+	if gap <= 0 {
+		return 0
+	}
+	return max(2*gap, 36*time.Hour)
+}
+
+// checkStale reports scheduled plans whose last successful backup is
+// overdue.
+func (s *Service) checkStale(plans map[string]Plan, now time.Time) {
+	if s.notifier == nil || now.Sub(s.staleChecked) < staleCheckEvery {
+		return
+	}
+	s.staleChecked = now
+	for name, p := range plans {
+		after := p.staleAfter(s.loc(), now)
+		if after == 0 || len(p.Folders) == 0 {
+			continue
+		}
+		since := p.Since
+		if p.LastOK != nil {
+			since = p.LastOK.Started
+		}
+		if since.IsZero() || now.Sub(since) < after {
+			continue
+		}
+		what := "No backup of " + name + " has worked since " + since.In(s.loc()).Format("Mon 2 Jan 15:04")
+		if p.LastOK == nil {
+			what = "No backup of " + name + " has worked since its schedule was set on " + since.In(s.loc()).Format("Mon 2 Jan 15:04")
+		}
+		msg := what + "."
+		if p.Last != nil && p.Last.Error != "" {
+			msg += "\n\nThe last one failed: " + p.Last.Error
+		}
+		s.notifier.Notify(notify.Event{
+			Kind: notify.KindBackupStale, Title: "No recent backup of " + name, Message: msg, Server: name,
+			Link: "/servers/" + name + "?tab=backups",
+		})
+	}
 }
 
 // notifyRestore reports a restore's result.
@@ -239,39 +395,26 @@ var ErrNotConfigured = errors.New("backup storage isn't set up yet; add it under
 // running.
 var ErrRunning = errors.New("already running")
 
-func (s *Service) settings() (Settings, bool, error) {
-	var c Settings
-	ok, err := s.secrets.Get(secretSettings, &c)
-	return c, ok, err
-}
-
-func (s *Service) client() (*s3.Client, Settings, error) {
-	c, ok, err := s.settings()
-	if err != nil {
-		return nil, c, err
-	}
-	if !ok {
-		return nil, c, ErrNotConfigured
-	}
-	cl, err := s3.New(c.Settings)
-	return cl, c, err
-}
-
-// Configured reports whether a bucket has been set up.
+// Configured reports whether backup storage has been set up.
 func (s *Service) Configured() bool {
-	_, ok, err := s.settings()
-	return ok && err == nil
+	ts, err := s.targets()
+	return err == nil && len(ts) > 0
 }
 
-// PublicSettings returns the settings without the secret key.
+// PublicSettings returns the primary storage's settings, without the
+// secret key.
 func (s *Service) PublicSettings() PublicSettings {
-	c, ok, err := s.settings()
+	t, err := s.target("")
+	if errors.Is(err, ErrNotConfigured) {
+		return PublicSettings{}
+	}
 	if err != nil {
 		return PublicSettings{Error: err.Error()}
 	}
-	if !ok {
-		return PublicSettings{}
-	}
+	return publicSettings(t.Settings)
+}
+
+func publicSettings(c Settings) PublicSettings {
 	return PublicSettings{
 		Configured: true, Endpoint: c.Endpoint, Region: c.Region, Bucket: c.Bucket, AccessKey: c.AccessKey,
 		HasSecret: c.SecretKey != "", VirtualHost: c.VirtualHost, Prefix: c.prefix(),
@@ -288,13 +431,9 @@ func (c Settings) prefix() string {
 	return c.Prefix
 }
 
-// merge keeps the saved secret key when in leaves it empty for the same
-// endpoint and access key, and tidies the rest.
-func (s *Service) merge(in Settings) (Settings, error) {
-	saved, _, err := s.settings()
-	if err != nil {
-		return in, err
-	}
+// mergeSettings keeps the saved secret key when in leaves it empty for the
+// same endpoint and access key, and tidies the rest.
+func mergeSettings(in, saved Settings) (Settings, error) {
 	in.Endpoint = strings.TrimRight(strings.TrimSpace(in.Endpoint), "/")
 	in.AccessKey = strings.TrimSpace(in.AccessKey)
 	if in.SecretKey == "" && in.Endpoint == saved.Endpoint && in.AccessKey == saved.AccessKey {
@@ -311,6 +450,15 @@ func (s *Service) merge(in Settings) (Settings, error) {
 		return in, errors.New("the folder in the bucket can't contain empty parts (//)")
 	}
 	return in, nil
+}
+
+// merge is mergeSettings with the primary's saved settings.
+func (s *Service) merge(in Settings) (Settings, error) {
+	saved, err := s.target("")
+	if err != nil && !errors.Is(err, ErrNotConfigured) {
+		return in, err
+	}
+	return mergeSettings(in, saved.Settings)
 }
 
 // Test checks the given (possibly unsaved) settings by listing the bucket
@@ -350,25 +498,34 @@ func test(ctx context.Context, c Settings) (int, error) {
 	return n, nil
 }
 
-// Save stores the settings after checking that they work.
+// Save stores the primary storage's settings after checking that they
+// work.
 func (s *Service) Save(ctx context.Context, in Settings) (PublicSettings, error) {
-	c, err := s.merge(in)
-	if err != nil {
+	t, err := s.target("")
+	if err != nil && !errors.Is(err, ErrNotConfigured) {
 		return PublicSettings{}, err
 	}
-	if _, err := test(ctx, c); err != nil {
-		return PublicSettings{}, err
+	t.Settings = in
+	if t.Name == "" {
+		t.Name = "Primary"
 	}
-	if err := s.secrets.Set(secretSettings, c); err != nil {
+	if _, err := s.SaveTarget(ctx, t); err != nil {
 		return PublicSettings{}, err
 	}
 	return s.PublicSettings(), nil
 }
 
-// Delete forgets the bucket settings. Servers' plans and the backups in the
-// bucket are kept.
+// Delete forgets the primary storage's settings, when it's the only one.
+// Servers' plans and the backups in the bucket are kept.
 func (s *Service) Delete() error {
-	return s.secrets.Delete(secretSettings)
+	t, err := s.target("")
+	if errors.Is(err, ErrNotConfigured) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return s.DeleteTarget(t.ID)
 }
 
 func (s *Service) plans() (map[string]Plan, error) {
@@ -412,6 +569,26 @@ type Overview struct {
 	Backups    []s3.Object `json:"backups"`
 	// Error is set when the bucket couldn't be listed.
 	Error string `json:"error,omitempty"`
+	// Target is the primary storage's ID and name.
+	Target TargetRef `json:"target"`
+	// Copies are the backups in the storage the plan copies to.
+	Copies *CopiesOverview `json:"copies,omitempty"`
+	// Targets are the other storage a plan can copy to.
+	Targets []TargetRef `json:"targets"`
+}
+
+// TargetRef names a backup storage.
+type TargetRef struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Encrypt bool   `json:"encrypt,omitempty"`
+}
+
+// CopiesOverview is a plan's copies in another storage.
+type CopiesOverview struct {
+	Target  TargetRef   `json:"target"`
+	Backups []s3.Object `json:"backups"`
+	Error   string      `json:"error,omitempty"`
 }
 
 // Overview returns a server's plan, its running backup and the backups in
@@ -436,23 +613,49 @@ func (s *Service) Overview(ctx context.Context, id string) (Overview, error) {
 	}
 	s.mu.Unlock()
 
-	cl, c, err := s.client()
-	if errors.Is(err, ErrNotConfigured) {
+	o.Targets = []TargetRef{}
+	ts, err := s.targets()
+	if err != nil || len(ts) == 0 {
+		if err != nil {
+			o.Error = err.Error()
+		}
 		return o, nil
 	}
 	o.Configured = true
-	if err != nil {
-		o.Error = err.Error()
-		return o, nil
+	o.Target = TargetRef{ts[0].ID, ts[0].Name, ts[0].Encrypt}
+	for _, t := range ts[1:] {
+		o.Targets = append(o.Targets, TargetRef{t.ID, t.Name, t.Encrypt})
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	objs, err := serverSeries(c, name).list(ctx, cl)
-	if err != nil {
-		o.Error = err.Error()
-		return o, nil
+	list := func(id string) ([]s3.Object, error) {
+		st, err := s.store(id)
+		if err != nil {
+			return nil, err
+		}
+		objs, err := serverSeries(st.t.Settings, name).list(ctx, st.cl)
+		return newestFirst(objs), err
 	}
-	o.Backups = newestFirst(objs)
+	if o.Backups, err = list(""); err != nil {
+		o.Error = err.Error()
+	}
+	if o.Backups == nil {
+		o.Backups = []s3.Object{}
+	}
+	if cp := o.Plan.CopyTo; cp != nil {
+		c := &CopiesOverview{Target: TargetRef{ID: cp.Target, Name: cp.Target}, Backups: []s3.Object{}}
+		for _, t := range ts {
+			if t.ID == cp.Target {
+				c.Target = TargetRef{t.ID, t.Name, t.Encrypt}
+			}
+		}
+		if objs, err := list(cp.Target); err != nil {
+			c.Error = err.Error()
+		} else if objs != nil {
+			c.Backups = objs
+		}
+		o.Copies = c
+	}
 	return o, nil
 }
 
@@ -522,7 +725,7 @@ func newestFirst(objs []s3.Object) []s3.Object {
 	return out
 }
 
-// SetPlan saves a server's plan. The last run is kept.
+// SetPlan saves a server's plan. Its history is kept.
 func (s *Service) SetPlan(ctx context.Context, id string, in Plan) (Plan, error) {
 	_, name, err := s.serverName(ctx, id)
 	if err != nil {
@@ -535,21 +738,79 @@ func (s *Service) SetPlan(ctx context.Context, id string, in Plan) (Plan, error)
 	if in.IntervalHours < 0 || in.IntervalHours > 24*365 {
 		return Plan{}, errors.New("the interval must be between 0 (off) and 8760 hours")
 	}
-	if in.Keep < 0 {
-		return Plan{}, errors.New("the number of backups to keep can't be negative")
+	if in.At != nil {
+		at, err := in.At.check()
+		if err != nil {
+			return Plan{}, err
+		}
+		in.At, in.IntervalHours = &at, 0
 	}
-	if in.IntervalHours > 0 && len(folders) == 0 {
+	if err := in.keeping().check(); err != nil {
+		return Plan{}, err
+	}
+	if (in.IntervalHours > 0 || in.At != nil) && len(folders) == 0 {
 		return Plan{}, errors.New("choose at least one folder before turning on scheduled backups")
+	}
+	exclude, err := files.CheckExclude(in.Exclude)
+	if err != nil {
+		return Plan{}, err
+	}
+	switch in.Verify {
+	case VerifyAuto, VerifyAlways, VerifyOff:
+	default:
+		return Plan{}, fmt.Errorf("unknown verify setting %q", in.Verify)
+	}
+	pre, post := cleanCommands(in.PreCommand), cleanCommands(in.PostCommand)
+	if (pre != "" || post != "") && s.console == nil {
+		return Plan{}, errors.New("commands before and after a backup need the console")
+	}
+	if in.CopyTo != nil {
+		if in.CopyTo.Target == "" {
+			in.CopyTo = nil
+		} else {
+			t, err := s.target(in.CopyTo.Target)
+			if err != nil {
+				return Plan{}, err
+			}
+			if primary, _ := s.target(""); primary.ID == t.ID {
+				return Plan{}, errors.New("backups already go to the primary storage: choose another to copy them to")
+			}
+			if err := in.CopyTo.check(); err != nil {
+				return Plan{}, fmt.Errorf("copies: %w", err)
+			}
+		}
 	}
 	var out Plan
 	err = s.updatePlan(name, func(p *Plan) {
-		p.Folders, p.IntervalHours, p.Keep, p.StopServer = folders, in.IntervalHours, in.Keep, in.StopServer
+		if p.IntervalHours != in.IntervalHours || !sameAt(p.At, in.At) {
+			p.Since = time.Now()
+		}
+		p.Folders, p.IntervalHours, p.At, p.Keep, p.Retention, p.StopServer = folders, in.IntervalHours, in.At, in.Keep, in.Retention, in.StopServer
+		p.PreCommand, p.PostCommand, p.Exclude, p.Verify, p.CopyTo = pre, post, exclude, in.Verify, in.CopyTo
 		out = *p
 	})
 	if out.Folders == nil {
 		out.Folders = []string{}
 	}
 	return out, err
+}
+
+func sameAt(a, b *At) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Time == b.Time && slices.Equal(a.Weekdays, b.Weekdays)
+}
+
+// cleanCommands trims each line of console commands and drops empty ones.
+func cleanCommands(s string) string {
+	var out []string
+	for _, l := range strings.Split(s, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 // Start begins a backup of a server in the background.
@@ -673,36 +934,150 @@ func (s *Service) setStage(prog *Progress, stage string) {
 	s.mu.Unlock()
 }
 
-// run performs one backup and reports how it went. The result is named so
-// that restarting the server, deferred, can add a warning to it.
+// run performs one backup and reports how it went.
 func (s *Service) run(ctx context.Context, name string, plan Plan, prog *Progress) (run Run) {
 	run = Run{Trigger: prog.Trigger, Started: prog.Started}
 	fail := func(err error) Run {
 		run.Finished, run.Error = time.Now(), err.Error()
 		return run
 	}
-	cl, c, err := s.client()
+	st, err := s.store("")
 	if err != nil {
 		return fail(err)
 	}
-	if plan.StopServer {
-		resume, err := s.pause(ctx, name, prog, &run)
-		if err != nil {
-			return fail(err)
-		}
-		defer resume()
-	}
-	if err := s.upload(ctx, cl, c, name, plan.Folders, prog, &run); err != nil {
+	if err := s.capture(ctx, st, name, plan, prog, &run); err != nil {
 		return fail(err)
 	}
-	if plan.Keep > 0 {
+	if plan.verifies(run.Size) {
+		s.setStage(prog, "verifying")
+		v := st.verify(ctx, run.Key, run.SHA256, run.Size, run.Files)
+		run.Verify = &v
+		s.recordCheck(name, st.t.ID, run.Key, v)
+		if !v.OK {
+			s.notifyVerifyFailed(name, run.Key, v)
+			return fail(fmt.Errorf("the backup was stored, but reading it back failed: %s", v.Error))
+		}
+	}
+	if plan.CopyTo != nil {
+		s.setStage(prog, "copying")
+		run.Copy = s.copyTo(ctx, st, name, run.Key, *plan.CopyTo)
+		if run.Copy.Error != "" {
+			run.Warnings = append(run.Warnings, "copying it to "+run.Copy.Target+" failed: "+run.Copy.Error)
+		}
+	}
+	if plan.keeping().prunes() {
 		s.setStage(prog, "cleaning")
-		if err := prune(ctx, cl, serverSeries(c, name), plan.Keep); err != nil {
+		if err := prune(ctx, st, serverSeries(st.t.Settings, name), plan.keeping(), s.loc()); err != nil {
 			run.Warnings = append(run.Warnings, "couldn't delete old backups: "+err.Error())
 		}
 	}
 	run.Finished = time.Now()
 	return run
+}
+
+// verifies reports whether a backup of this size is read back.
+func (p Plan) verifies(size int64) bool {
+	switch p.Verify {
+	case VerifyOff:
+		return false
+	case VerifyAlways:
+		return true
+	}
+	return size < verifyAutoLimit
+}
+
+// capture stores the backup itself: the pre commands, stopping the server,
+// the upload, starting it again and the post commands.
+func (s *Service) capture(ctx context.Context, st *store, name string, plan Plan, prog *Progress, run *Run) error {
+	if plan.PreCommand != "" || plan.PostCommand != "" {
+		if info, err := s.servers.Inspect(ctx, name); err == nil && info.State.Running && s.console != nil {
+			s.setStage(prog, "commands")
+			s.commands(ctx, name, plan.PreCommand, "before", run)
+			defer s.commands(context.WithoutCancel(ctx), name, plan.PostCommand, "after", run)
+		}
+	}
+	if plan.StopServer {
+		resume, err := s.pause(ctx, name, prog, run)
+		if err != nil {
+			return err
+		}
+		defer resume()
+	}
+	return s.upload(ctx, st, name, plan.Folders, plan.Exclude, prog, run)
+}
+
+// commands sends console commands, one per line, adding a warning for each
+// that fails: the backup goes ahead anyway.
+func (s *Service) commands(ctx context.Context, name, lines, when string, run *Run) {
+	for _, c := range strings.Split(lines, "\n") {
+		if c == "" {
+			continue
+		}
+		cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		err := s.console(cctx, name, c)
+		cancel()
+		if err != nil {
+			run.Warnings = append(run.Warnings, fmt.Sprintf("the command %q %s the backup failed: %v", c, when, err))
+		}
+	}
+}
+
+// copyTo copies a stored backup to another storage, and prunes the copies
+// there by the copy's own rules.
+func (s *Service) copyTo(ctx context.Context, from *store, name, key string, cp CopyPlan) *CopyResult {
+	res := &CopyResult{Target: cp.Target}
+	to, err := s.store(cp.Target)
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	res.Target = to.t.Name
+	t, ok := keyTime(key)
+	if !ok {
+		res.Error = "unexpected key " + key
+		return res
+	}
+	r := serverSeries(to.t.Settings, name)
+	dst := r.newKey(t)
+	rc, _, err := from.open(ctx, key)
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	defer rc.Close()
+	if _, _, err := to.put(ctx, dst, rc, map[string]string{"Hlm-Server": name}); err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	res.Key = dst
+	if cp.prunes() {
+		if err := prune(ctx, to, r, cp.Keeping, s.loc()); err != nil {
+			res.Error = "copied, but deleting old copies failed: " + err.Error()
+		}
+	}
+	return res
+}
+
+// recordCheck keeps a backup's latest verification, for the Backups tab.
+func (s *Service) recordCheck(name, target, key string, v Verification) {
+	if err := s.updatePlan(name, func(p *Plan) {
+		if p.Checks == nil {
+			p.Checks = map[string]Verification{}
+		}
+		p.Checks[target+":"+key] = v
+		// Keep the newest checks.
+		for len(p.Checks) > 200 {
+			oldest := ""
+			for k, c := range p.Checks {
+				if oldest == "" || c.At.Before(p.Checks[oldest].At) {
+					oldest = k
+				}
+			}
+			delete(p.Checks, oldest)
+		}
+	}); err != nil {
+		s.log.Warn("record verification", "server", name, "err", err)
+	}
 }
 
 // pause stops the server if it is running, and returns a function that
@@ -731,10 +1106,10 @@ func (s *Service) pause(ctx context.Context, name string, prog *Progress, run *R
 }
 
 // upload archives folders into a new backup, filling in run's key, size,
-// counts and warnings.
-func (s *Service) upload(ctx context.Context, cl *s3.Client, c Settings, name string, folders []string, prog *Progress, run *Run) error {
+// checksum, counts and warnings.
+func (s *Service) upload(ctx context.Context, st *store, name string, folders, exclude []string, prog *Progress, run *Run) error {
 	s.setStage(prog, "uploading")
-	key := serverSeries(c, name).newKey(time.Now())
+	key := serverSeries(st.t.Settings, name).newKey(time.Now())
 	pr, pw := io.Pipe()
 	type result struct {
 		stats files.ArchiveStats
@@ -744,7 +1119,7 @@ func (s *Service) upload(ctx context.Context, cl *s3.Client, c Settings, name st
 	go func() {
 		gz := gzip.NewWriter(pw)
 		tw := tar.NewWriter(gz)
-		st, err := s.servers.ArchiveFolders(ctx, name, folders, tw, func(st files.ArchiveStats) {
+		st, err := s.servers.ArchiveFolders(ctx, name, folders, exclude, tw, func(st files.ArchiveStats) {
 			s.mu.Lock()
 			prog.Files, prog.Bytes = st.Files, st.Bytes
 			s.mu.Unlock()
@@ -764,12 +1139,17 @@ func (s *Service) upload(ctx context.Context, cl *s3.Client, c Settings, name st
 		prog.Transferred += int64(n)
 		s.mu.Unlock()
 	}}
-	size, err := cl.Upload(ctx, key, counted, "application/gzip", map[string]string{"Hlm-Server": name})
+	size, sum, err := st.put(ctx, key, counted, map[string]string{"Hlm-Server": name})
 	// Unblock the archiver if the upload stopped reading.
 	pr.CloseWithError(errors.New("upload stopped"))
 	res := <-done
 	run.Warnings = append(run.Warnings, res.stats.Warnings...)
-	run.Files, run.Bytes = res.stats.Files, res.stats.Bytes
+	run.Files, run.Bytes, run.Excluded = res.stats.Files, res.stats.Bytes, res.stats.Excluded
+	var noSum *sumError
+	if errors.As(err, &noSum) {
+		run.Warnings = append(run.Warnings, err.Error())
+		err = nil
+	}
 	// A failed archive also fails the upload, with the same error; a failed
 	// upload makes the archive fail only because nothing reads it anymore.
 	if err != nil {
@@ -778,7 +1158,7 @@ func (s *Service) upload(ctx context.Context, cl *s3.Client, c Settings, name st
 	if res.err != nil {
 		return res.err
 	}
-	run.Key, run.Size = key, size
+	run.Key, run.Size, run.SHA256 = key, size, sum
 	return nil
 }
 
@@ -787,8 +1167,8 @@ func (s *Service) upload(ctx context.Context, cl *s3.Client, c Settings, name st
 // again afterwards if it was running. With backupFirst, the server's chosen
 // folders are backed up first (without deleting old backups), so the
 // restore can be undone; if that fails, nothing is restored.
-func (s *Service) Restore(ctx context.Context, id, key string, backupFirst bool) error {
-	cl, name, err := s.backupKey(ctx, id, key)
+func (s *Service) Restore(ctx context.Context, id, key, target string, backupFirst bool) error {
+	src, name, err := s.backupKey(ctx, id, key, target)
 	if err != nil {
 		return err
 	}
@@ -806,7 +1186,7 @@ func (s *Service) Restore(ctx context.Context, id, key string, backupFirst bool)
 	}
 	prog.Key = key
 	go func() {
-		run := s.restore(context.Background(), cl, name, key, plan, backupFirst, prog)
+		run := s.restore(context.Background(), src, name, key, plan, backupFirst, prog)
 		s.release(name)
 		if run.Error != "" {
 			s.log.Warn("restore failed", "server", name, "key", key, "err", run.Error)
@@ -823,13 +1203,13 @@ func (s *Service) Restore(ctx context.Context, id, key string, backupFirst bool)
 
 // restore performs a restore; see Restore. The result is named for the
 // same reason as run's.
-func (s *Service) restore(ctx context.Context, cl *s3.Client, name, key string, plan Plan, backupFirst bool, prog *Progress) (run Run) {
+func (s *Service) restore(ctx context.Context, src *store, name, key string, plan Plan, backupFirst bool, prog *Progress) (run Run) {
 	run = Run{Trigger: "restore", Started: prog.Started}
 	fail := func(err error) Run {
 		run.Finished, run.Error = time.Now(), err.Error()
 		return run
 	}
-	_, c, err := s.client()
+	primary, err := s.store("")
 	if err != nil {
 		return fail(err)
 	}
@@ -841,7 +1221,7 @@ func (s *Service) restore(ctx context.Context, cl *s3.Client, name, key string, 
 
 	if backupFirst {
 		var before Run
-		if err := s.upload(ctx, cl, c, name, plan.Folders, prog, &before); err != nil {
+		if err := s.upload(ctx, primary, name, plan.Folders, plan.Exclude, prog, &before); err != nil {
 			return fail(fmt.Errorf("back up the current files first: %w", err))
 		}
 		run.Before = before.Key
@@ -851,7 +1231,7 @@ func (s *Service) restore(ctx context.Context, cl *s3.Client, name, key string, 
 	}
 
 	s.setStage(prog, "restoring")
-	rc, _, err := cl.Get(ctx, key)
+	rc, _, err := src.cl.Get(ctx, key)
 	if err != nil {
 		return fail(err)
 	}
@@ -861,7 +1241,11 @@ func (s *Service) restore(ctx context.Context, cl *s3.Client, name, key string, 
 		prog.Transferred += int64(n)
 		s.mu.Unlock()
 	}}
-	gz, err := gzip.NewReader(counted)
+	plain, err := src.plain(counted)
+	if err != nil {
+		return fail(err)
+	}
+	gz, err := gzip.NewReader(plain)
 	if err != nil {
 		return fail(fmt.Errorf("read the backup: %w", err))
 	}
@@ -880,8 +1264,8 @@ func (s *Service) restore(ctx context.Context, cl *s3.Client, name, key string, 
 
 // IsBackupOf reports whether key is one of server name's backups.
 func (s *Service) IsBackupOf(name, key string) bool {
-	_, c, err := s.client()
-	return err == nil && serverSeries(c, name).has(key)
+	t, err := s.target("")
+	return err == nil && serverSeries(t.Settings, name).has(key)
 }
 
 // RestoreInto extracts one of server from's backups into another server's
@@ -889,11 +1273,11 @@ func (s *Service) IsBackupOf(name, key string) bool {
 // target should be stopped. progress, if not nil, is called as files are
 // written.
 func (s *Service) RestoreInto(ctx context.Context, from, key, toID string, progress func(files.ArchiveStats)) (Run, error) {
-	cl, c, err := s.client()
+	src, err := s.store("")
 	if err != nil {
 		return Run{}, err
 	}
-	if !serverSeries(c, from).has(key) {
+	if !serverSeries(src.t.Settings, from).has(key) {
 		return Run{}, ErrBadKey
 	}
 	_, to, err := s.serverName(ctx, toID)
@@ -908,7 +1292,7 @@ func (s *Service) RestoreInto(ctx context.Context, from, key, toID string, progr
 	prog.Key = key
 	run := Run{Trigger: "restore", Started: prog.Started, Key: key}
 	s.setStage(prog, "restoring")
-	rc, _, err := cl.Get(ctx, key)
+	rc, _, err := src.open(ctx, key)
 	if err != nil {
 		return run, err
 	}
@@ -932,17 +1316,25 @@ func (s *Service) RestoreInto(ctx context.Context, from, key, toID string, progr
 	return run, err
 }
 
-// prune deletes all but the newest keep backups of a series.
-func prune(ctx context.Context, cl *s3.Client, r series, keep int) error {
+// prune deletes the backups of a series that k doesn't keep.
+func prune(ctx context.Context, st *store, r series, k Keeping, loc *time.Location) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	objs, err := r.list(ctx, cl)
+	objs, err := r.list(ctx, st.cl)
 	if err != nil {
 		return err
 	}
-	for i := 0; i < len(objs)-keep; i++ {
-		if err := cl.Delete(ctx, objs[i].Key); err != nil {
-			return err
+	objs = newestFirst(objs)
+	times := make([]time.Time, len(objs))
+	for i, o := range objs {
+		times[i], _ = keyTime(o.Key)
+	}
+	keep := k.keepSet(times, loc)
+	for i, o := range objs {
+		if !keep[i] {
+			if err := st.remove(ctx, o.Key); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -963,35 +1355,44 @@ func (c *countingReader) Read(p []byte) (int, error) {
 // about (a server's, or hlm's configuration).
 var ErrBadKey = errors.New("that isn't one of these backups")
 
-// backupKey checks that key is one of the server's backups, and returns a
-// client and the server's name.
-func (s *Service) backupKey(ctx context.Context, id, key string) (*s3.Client, string, error) {
+// backupKey checks that key is one of the server's backups in a target
+// ("" is the primary), and returns the target's store and the server's
+// name.
+func (s *Service) backupKey(ctx context.Context, id, key, target string) (*store, string, error) {
 	_, name, err := s.serverName(ctx, id)
 	if err != nil {
 		return nil, "", err
 	}
-	cl, c, err := s.client()
+	st, err := s.store(target)
 	if err != nil {
 		return nil, "", err
 	}
-	if !serverSeries(c, name).has(key) {
+	if !serverSeries(st.t.Settings, name).has(key) {
 		return nil, "", ErrBadKey
 	}
-	return cl, name, nil
+	return st, name, nil
 }
 
-// Download opens one of a server's backups.
-func (s *Service) Download(ctx context.Context, id, key string) (io.ReadCloser, int64, error) {
-	cl, _, err := s.backupKey(ctx, id, key)
+// Download opens one of a server's backups, decrypted. size is -1 when
+// it's decrypted (and so isn't known).
+func (s *Service) Download(ctx context.Context, id, key, target string) (io.ReadCloser, int64, error) {
+	st, _, err := s.backupKey(ctx, id, key, target)
 	if err != nil {
 		return nil, 0, err
 	}
-	return cl.Get(ctx, key)
+	rc, size, err := st.open(ctx, key)
+	if err != nil {
+		return nil, 0, err
+	}
+	if st.key != nil {
+		size = -1 // maybe decrypted
+	}
+	return rc, size, nil
 }
 
 // DeleteBackup deletes one of a server's backups.
-func (s *Service) DeleteBackup(ctx context.Context, id, key string) error {
-	cl, name, err := s.backupKey(ctx, id, key)
+func (s *Service) DeleteBackup(ctx context.Context, id, key, target string) error {
+	st, name, err := s.backupKey(ctx, id, key, target)
 	if err != nil {
 		return err
 	}
@@ -1001,7 +1402,31 @@ func (s *Service) DeleteBackup(ctx context.Context, id, key string) error {
 	if restoring {
 		return fmt.Errorf("this backup is being restored; %w", ErrRunning)
 	}
-	return cl.Delete(ctx, key)
+	return st.remove(ctx, key)
+}
+
+// VerifyBackup reads one of a server's backups back, and records how it
+// went.
+func (s *Service) VerifyBackup(ctx context.Context, id, key, target string) (Verification, error) {
+	st, name, err := s.backupKey(ctx, id, key, target)
+	if err != nil {
+		return Verification{}, err
+	}
+	// The file count is known for backups this plan's history has.
+	files := -1
+	if plans, err := s.plans(); err == nil {
+		for _, r := range []*Run{plans[name].Last, plans[name].LastOK} {
+			if r != nil && r.Key == key && target == "" {
+				files = r.Files
+			}
+		}
+	}
+	v := st.verify(ctx, key, "", 0, files)
+	s.recordCheck(name, st.t.ID, key, v)
+	if !v.OK {
+		s.notifyVerifyFailed(name, key, v)
+	}
+	return v, nil
 }
 
 // retryAfter is how soon a failed scheduled backup is tried again, unless
@@ -1009,8 +1434,27 @@ func (s *Service) DeleteBackup(ctx context.Context, id, key string) error {
 const retryAfter = time.Hour
 
 // due reports whether a plan's scheduled backup should run now.
-func due(p Plan, now time.Time) bool {
-	return len(p.Folders) > 0 && dueEvery(p.IntervalHours, p.Last, now)
+func due(p Plan, now time.Time, loc *time.Location) bool {
+	if len(p.Folders) == 0 {
+		return false
+	}
+	if p.At == nil {
+		return dueEvery(p.IntervalHours, p.Last, now)
+	}
+	// The first time of day after the last backup (or since the schedule
+	// was set); a failed one is tried again after retryAfter.
+	from := p.Since
+	if p.Last != nil {
+		if p.Last.Error != "" && !now.Before(p.Last.Started.Add(retryAfter)) {
+			return true
+		}
+		from = p.Last.Started
+	}
+	if from.IsZero() {
+		from = now.Add(-time.Minute)
+	}
+	next := p.At.next(from, loc)
+	return !next.IsZero() && !now.Before(next)
 }
 
 // dueEvery reports whether a backup every intervalHours (0: never), last
@@ -1055,8 +1499,9 @@ func (s *Service) RunScheduler(ctx context.Context) {
 				}
 			}
 		}
+		s.checkStale(plans, now)
 		for name, p := range plans {
-			if !due(p, now) {
+			if !due(p, now, s.loc()) {
 				continue
 			}
 			if _, err := s.servers.Inspect(ctx, name); err != nil {

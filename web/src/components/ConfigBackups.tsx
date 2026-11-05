@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { KeepingFields } from "./BackupOptions";
 import { api, download } from "../api";
 import type { ConfigBackupOverview, ConfigBackupPlan } from "../types";
 import { usePoll } from "../usePoll";
@@ -24,7 +25,10 @@ export function ConfigBackups({ storageVersion }: { storageVersion: number }) {
     try {
       const o = await api.configBackups();
       setOverview(o);
-      setDraft((d) => d ?? { intervalHours: o.plan.intervalHours, keep: o.plan.keep, includeKey: o.plan.includeKey });
+      setDraft(
+        (d) =>
+          d ?? { intervalHours: o.plan.intervalHours, keep: o.plan.keep, retention: o.plan.retention, includeKey: o.plan.includeKey },
+      );
     } catch (e) {
       setError((e as Error).message);
     }
@@ -60,12 +64,15 @@ export function ConfigBackups({ storageVersion }: { storageVersion: number }) {
   const plan = overview.plan;
   const prog = overview.running;
   const dirty =
-    draft.intervalHours !== plan.intervalHours || draft.keep !== plan.keep || draft.includeKey !== plan.includeKey;
+    draft.intervalHours !== plan.intervalHours ||
+    draft.keep !== plan.keep ||
+    JSON.stringify(draft.retention ?? null) !== JSON.stringify(plan.retention ?? null) ||
+    draft.includeKey !== plan.includeKey;
 
   const save = () =>
     run("save", async () => {
       const p = await api.setConfigBackupPlan(draft);
-      setDraft({ intervalHours: p.intervalHours, keep: p.keep, includeKey: p.includeKey });
+      setDraft({ intervalHours: p.intervalHours, keep: p.keep, retention: p.retention, includeKey: p.includeKey });
       await load();
       setNotice("Saved.");
     });
@@ -108,16 +115,11 @@ export function ConfigBackups({ storageVersion }: { storageVersion: number }) {
             ))}
           </select>
         </label>
-        <label className="field">
-          <span className="field-label">Backups to keep</span>
-          <input
-            type="number"
-            min={0}
-            value={draft.keep}
-            onChange={(e) => setDraft({ ...draft, keep: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
-          />
-          <span className="field-help">0 keeps them all.</span>
-        </label>
+        <KeepingFields
+          keep={draft.keep}
+          retention={draft.retention}
+          onChange={(keep, retention) => setDraft({ ...draft, keep, retention })}
+        />
       </div>
       {overview.keyFromEnv ? (
         <p className="muted small no-margin">

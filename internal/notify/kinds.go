@@ -15,28 +15,30 @@ type Kind struct {
 
 // Event kinds.
 const (
-	KindServerCrashed     = "server.crashed"
-	KindServerUnhealthy   = "server.unhealthy"
-	KindServerCrashLoop   = "server.restart_loop"
-	KindServerOnline      = "server.online"
-	KindNotResponding     = "server.not_responding"
-	KindUpdateAvailable   = "server.update_available"
-	KindServerUpdated     = "server.updated"
-	KindServerUpdateFail  = "server.update_failed"
-	KindBackupFailed      = "backup.failed"
-	KindBackupSucceeded   = "backup.succeeded"
-	KindRestoreFinished   = "restore.finished"
-	KindRestoreFailed     = "restore.failed"
-	KindTunnelDown        = "tunnel.down"
-	KindWANChanged        = "wan.changed"
-	KindProxyUpdateFailed = "proxy.update_failed"
-	KindHTTPSRenewFailed  = "https.renew_failed"
-	KindHTTPSExpiring     = "https.expiring"
-	KindHLMUpdate         = "hlm.update_available"
-	KindHLMUpdateFailed   = "hlm.update_failed"
-	KindDiskLow           = "disk.low"
-	KindLockedOut         = "auth.locked_out"
-	KindTaskFailed        = "task.failed"
+	KindServerCrashed      = "server.crashed"
+	KindServerUnhealthy    = "server.unhealthy"
+	KindServerCrashLoop    = "server.restart_loop"
+	KindServerOnline       = "server.online"
+	KindNotResponding      = "server.not_responding"
+	KindUpdateAvailable    = "server.update_available"
+	KindServerUpdated      = "server.updated"
+	KindServerUpdateFail   = "server.update_failed"
+	KindBackupFailed       = "backup.failed"
+	KindBackupSucceeded    = "backup.succeeded"
+	KindBackupVerifyFailed = "backup.verify_failed"
+	KindBackupStale        = "backup.stale"
+	KindRestoreFinished    = "restore.finished"
+	KindRestoreFailed      = "restore.failed"
+	KindTunnelDown         = "tunnel.down"
+	KindWANChanged         = "wan.changed"
+	KindProxyUpdateFailed  = "proxy.update_failed"
+	KindHTTPSRenewFailed   = "https.renew_failed"
+	KindHTTPSExpiring      = "https.expiring"
+	KindHLMUpdate          = "hlm.update_available"
+	KindHLMUpdateFailed    = "hlm.update_failed"
+	KindDiskLow            = "disk.low"
+	KindLockedOut          = "auth.locked_out"
+	KindTaskFailed         = "task.failed"
 	// KindTest is the test message; targets can't choose it.
 	KindTest = "notify.test"
 )
@@ -60,6 +62,8 @@ var Kinds = []Kind{
 	{KindHLMUpdate, "Updates", Info, "A new version of hlm is available", sentOnce},
 	{KindHLMUpdateFailed, "Updates", Error, "hlm couldn't update itself automatically", 0},
 	{KindBackupFailed, "Backups", Error, "A backup (of a server or of hlm's configuration) failed", 6 * time.Hour},
+	{KindBackupVerifyFailed, "Backups", Error, "A backup was stored, but reading it back showed it's damaged", 0},
+	{KindBackupStale, "Backups", Warning, "A server with scheduled backups hasn't had one work for twice its schedule's gap", 24 * time.Hour},
 	{KindBackupSucceeded, "Backups", Info, "A backup finished", 0},
 	{KindRestoreFinished, "Backups", Info, "A restore finished", 0},
 	{KindRestoreFailed, "Backups", Error, "A restore failed", 0},

@@ -1007,18 +1007,81 @@ export interface BackupRun {
   warnings?: string[];
   /** For a restore: the backup of the files it replaced. */
   before?: string;
+  sha256?: string;
+  /** Files and folders exclude patterns left out. */
+  excluded?: number;
+  /** Reading the backup back after it was stored. */
+  verify?: BackupVerification;
+  /** Copying it to the plan's other storage. */
+  copy?: { target: string; key?: string; error?: string };
+}
+
+/** How reading a backup back went. */
+export interface BackupVerification {
+  ok: boolean;
+  at: string;
+  seconds: number;
+  files: number;
+  bytes: number;
+  /** A stored checksum was compared (older backups have none). */
+  checksum: boolean;
+  error?: string;
+}
+
+/** Keeping backups by age: the newest `last`, and one a day, week and month for that many. */
+export interface BackupRetention {
+  last: number;
+  daily: number;
+  weekly: number;
+  monthly: number;
+}
+
+/** Backing up at a time of day; weekdays are 0 (Sunday) to 6, empty for every day. */
+export interface BackupAt {
+  time: string;
+  weekdays?: number[];
 }
 
 /** What to back up for a server, and when. */
 export interface BackupPlan {
   folders: string[];
-  /** 0 means only when asked. */
+  /** 0 means only when asked (unless at is set). */
   intervalHours: number;
-  /** How many backups to keep; 0 keeps them all. */
+  at?: BackupAt;
+  /** How many backups to keep; 0 keeps them all. retention, if set, keeps by age instead. */
   keep: number;
+  retention?: BackupRetention;
   stopServer: boolean;
+  /** Console commands before and after, one per line. */
+  preCommand?: string;
+  postCommand?: string;
+  exclude?: string[];
+  /** "" (backups under 5 GB), "always" or "off". */
+  verify?: "" | "always" | "off";
+  copyTo?: { target: string; keep: number; retention?: BackupRetention };
+  /** Latest verifications, by "<storage id>:<key>". */
+  checks?: Record<string, BackupVerification>;
   last?: BackupRun;
+  lastOk?: BackupRun;
   lastRestore?: BackupRun;
+}
+
+/** A backup storage, by ID. */
+export interface BackupTargetRef {
+  id: string;
+  name: string;
+  encrypt?: boolean;
+}
+
+/** A backup storage (System → Backup storage). The primary is first. */
+export interface BackupTarget extends BackupSettings {
+  id: string;
+  name: string;
+  encrypt: boolean;
+  /** An encryption key exists, so encrypted backups there can be read. */
+  hasKey: boolean;
+  /** The new encryption key, only in the answer to the save that made it. */
+  newKey?: string;
 }
 
 /** A backup or restore in progress. */
@@ -1026,7 +1089,16 @@ export interface BackupProgress {
   kind: "backup" | "restore";
   trigger: "manual" | "schedule" | "restore";
   started: string;
-  stage: "preparing" | "stopping" | "uploading" | "restoring" | "cleaning" | "starting";
+  stage:
+    | "preparing"
+    | "commands"
+    | "stopping"
+    | "uploading"
+    | "verifying"
+    | "copying"
+    | "restoring"
+    | "cleaning"
+    | "starting";
   files: number;
   bytes: number;
   /** Compressed bytes uploaded or downloaded so far. */
@@ -1048,14 +1120,21 @@ export interface BackupOverview {
   /** Newest first. */
   backups: BackupObject[];
   error?: string;
+  /** The primary storage. */
+  target: BackupTargetRef;
+  /** The backups in the storage the plan copies to. */
+  copies?: { target: BackupTargetRef; backups: BackupObject[]; error?: string };
+  /** The other storage the plan can copy to. */
+  targets: BackupTargetRef[];
 }
 
 /** When hlm backs up its own configuration. */
 export interface ConfigBackupPlan {
   /** 0 means only when asked. */
   intervalHours: number;
-  /** How many backups to keep; 0 keeps them all. */
+  /** How many backups to keep; 0 keeps them all. retention, if set, keeps by age instead. */
   keep: number;
+  retention?: BackupRetention;
   /** Adds the key that decrypts the stored credentials. */
   includeKey: boolean;
   last?: BackupRun;
