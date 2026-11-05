@@ -8,9 +8,14 @@ import (
 	"net"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 )
+
+// labelDirectIP marks containers with their own address on the LAN
+// (deploy.LabelDirectIP).
+const labelDirectIP = "io.hlm.directip"
 
 // Addresses lists host:port addresses for a container's port (proto is tcp
 // or udp), best first. hostAddrs are where the Docker host's published
@@ -32,13 +37,19 @@ func Addresses(info docker.ContainerJSON, port int, proto string, hostAddrs []st
 		}
 		return out
 	}
-	// Straight to the container, on each of its networks.
+	// Straight to the container, on each of its networks. A container on
+	// another Docker host (its ID ends in @host) is only reachable that way
+	// with its own address on the LAN.
+	otherHost := strings.Contains(info.ID, "@")
 	nets := make([]string, 0, len(info.NetworkSettings.Networks))
 	for n := range info.NetworkSettings.Networks {
 		nets = append(nets, n)
 	}
 	slices.Sort(nets)
 	for _, n := range nets {
+		if otherHost && info.Config.Labels[labelDirectIP] != "true" {
+			break
+		}
 		add(info.NetworkSettings.Networks[n].IPAddress, p)
 	}
 	// Or through the port published on the host.

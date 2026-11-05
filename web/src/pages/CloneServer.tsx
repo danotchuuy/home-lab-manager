@@ -4,9 +4,10 @@ import { api } from "../api";
 import { Spinner } from "../components/common";
 import { ConfigForm } from "../components/ConfigForm";
 import { DeployProgress } from "../components/DeployProgress";
+import { HostPicker } from "../components/HostPicker";
 import { TransferNotes } from "../components/TransferNotes";
 import type { BackupObject, CopyData, DeployEvent, DeployRequest, Server, TransferPreview } from "../types";
-import { formatBytes, timeAgo } from "../util";
+import { bareName, formatBytes, hostOf, timeAgo } from "../util";
 
 /**
  * Makes a copy of a server: its settings under a new name, with its own data
@@ -18,7 +19,9 @@ export function CloneServerPage() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const [server, setServer] = useState<Server>();
-  const [newName, setNewName] = useState(`${name}-copy`);
+  const [newName, setNewName] = useState(`${bareName(name)}-copy`);
+  // The copy goes on the original's host, or another one.
+  const [host, setHost] = useState(hostOf(name));
   const [preview, setPreview] = useState<TransferPreview>();
   const [previewing, setPreviewing] = useState(false);
   const [copyData, setCopyData] = useState<CopyData>(params.get("backup") ? "backup" : "now");
@@ -43,7 +46,9 @@ export function CloneServerPage() {
     setError(undefined);
     setPreview(undefined);
     try {
-      setPreview(await api.previewClone(name, newName.trim()));
+      const p = await api.previewClone(name, newName.trim(), host);
+      // The form takes the name without its host, which is chosen above.
+      setPreview({ ...p, request: { ...p.request, name: bareName(p.request.name) } });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -60,6 +65,7 @@ export function CloneServerPage() {
         name,
         {
           name: req.name,
+          host,
           request: req,
           copyData,
           backupKey: copyData === "backup" ? backupKey : undefined,
@@ -111,6 +117,14 @@ export function CloneServerPage() {
                 disabled={running}
               />
             </label>
+            <HostPicker
+              value={host}
+              onChange={(h) => {
+                setHost(h);
+                setPreview(undefined);
+              }}
+              help="The machine the copy runs on. On another host it can keep the same name and ports; its data is copied across."
+            />
           </div>
           <div className="field">
             <span className="field-label">Data</span>
@@ -210,10 +224,11 @@ export function CloneServerPage() {
           )}
           {events.length > 0 && <DeployProgress events={events} />}
           <ConfigForm
-            key={preview.request.name}
+            key={preview.request.name + host}
             app={preview.app}
             initial={preview.request}
             isNew
+            host={host}
             submitLabel={running ? "Cloning…" : fromBackup ? "Create and restore" : "Clone"}
             busy={running || (copyData === "backup" && !backupKey)}
             onSubmit={clone}

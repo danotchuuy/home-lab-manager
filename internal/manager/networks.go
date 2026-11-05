@@ -30,8 +30,9 @@ type NetworkRequest struct {
 
 var networkName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`)
 
-// CreateNetwork creates a network servers can join with fixed addresses.
-func (m *Manager) CreateNetwork(ctx context.Context, req NetworkRequest) (NetworkInfo, error) {
+// CreateNetwork creates a network on a host, which servers can join with
+// fixed addresses.
+func (m *Manager) CreateNetwork(ctx context.Context, host string, req NetworkRequest) (NetworkInfo, error) {
 	if err := validateNetwork(&req); err != nil {
 		return NetworkInfo{}, err
 	}
@@ -45,11 +46,11 @@ func (m *Manager) CreateNetwork(ctx context.Context, req NetworkRequest) (Networ
 	if req.Parent != "" {
 		create.Options = map[string]string{"parent": req.Parent}
 	}
-	if _, err := m.docker.CreateNetwork(ctx, create); err != nil {
+	if _, err := m.docker.CreateNetwork(ctx, host, create); err != nil {
 		return NetworkInfo{}, err
 	}
-	m.log.Info("created network", "name", req.Name, "driver", req.Driver, "subnet", req.Subnet, "parent", req.Parent)
-	nets, err := m.Networks(ctx)
+	m.log.Info("created network", "host", host, "name", req.Name, "driver", req.Driver, "subnet", req.Subnet, "parent", req.Parent)
+	nets, err := m.Networks(ctx, host)
 	if err != nil {
 		return NetworkInfo{}, err
 	}
@@ -107,9 +108,10 @@ func validateNetwork(req *NetworkRequest) error {
 	return nil
 }
 
-// RemoveNetwork deletes a network hlm created, if no container uses it.
-func (m *Manager) RemoveNetwork(ctx context.Context, name string) error {
-	n, err := m.docker.InspectNetwork(ctx, name)
+// RemoveNetwork deletes a network hlm created on a host, if no container
+// uses it.
+func (m *Manager) RemoveNetwork(ctx context.Context, host, name string) error {
+	n, err := m.docker.InspectNetwork(ctx, host, name)
 	if docker.IsNotFound(err) {
 		return ErrNotFound
 	}
@@ -126,7 +128,7 @@ func (m *Manager) RemoveNetwork(ctx context.Context, name string) error {
 		}
 		return fmt.Errorf("network %s is still used by %s", name, strings.Join(names, ", "))
 	}
-	return m.docker.RemoveNetwork(ctx, n.ID)
+	return m.docker.RemoveNetwork(ctx, host, n.ID)
 }
 
 // HostInterfaces lists the Docker host's network interfaces and their

@@ -113,16 +113,17 @@ type Manager interface {
 	Inspect(ctx context.Context, id string) (docker.ContainerJSON, error)
 	List(ctx context.Context) ([]manager.Server, error)
 	Config(ctx context.Context, id string) (*catalog.App, deploy.Request, error)
-	App(id string) (*catalog.App, bool)
-	AppdataRoot() string
+	AppOn(id, host string) (*catalog.App, bool)
+	AppdataRootOf(host string) string
 	Install(ctx context.Context, req deploy.Request, emit func(manager.Event)) (manager.Server, error)
 	Create(ctx context.Context, req deploy.Request, emit func(manager.Event)) (manager.Server, error)
 	Start(ctx context.Context, id string) error
 	Stop(ctx context.Context, id string) error
 	Remove(ctx context.Context, id string) error
 	CopyData(ctx context.Context, fromID, toID string, folders []string, progress func(files.ArchiveStats)) (files.ArchiveStats, error)
-	HostPortsInUse(ctx context.Context) (map[string]bool, error)
-	Networks(ctx context.Context) ([]manager.NetworkInfo, error)
+	HostPortsInUse(ctx context.Context, host string) (map[string]bool, error)
+	KnownHost(host string) bool
+	Networks(ctx context.Context, host string) ([]manager.NetworkInfo, error)
 }
 
 // Catalog is where templates come from.
@@ -205,6 +206,13 @@ func New(o Options) *Service {
 // ValidName matches server (container) names.
 var ValidName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
 
+// validServer checks a new server's name, which ends in @host for another
+// Docker host.
+func validServer(name string) bool {
+	host, bare := manager.SplitID(name)
+	return ValidName.MatchString(bare) && host != ""
+}
+
 // --- Export ---
 
 // Export collects a server's settings. Without secrets, settings that look
@@ -216,6 +224,8 @@ func (s *Service) Export(ctx context.Context, id string, secrets bool) (Export, 
 		return Export{}, err
 	}
 	name := strings.TrimPrefix(info.Name, "/")
+	// The file names the server without its host: it can go on any.
+	host, bare := manager.SplitID(name)
 	app, req, err := s.opts.Manager.Config(ctx, id)
 	if err != nil {
 		return Export{}, err
@@ -227,12 +237,12 @@ func (s *Service) Export(ctx context.Context, id string, secrets bool) (Export, 
 	if !ok {
 		return Export{}, fmt.Errorf("template %q is no longer in the catalog", req.TemplateID)
 	}
-	req.Name = name
+	req.Name = bare
 	// The live restart policy: start on boot may have been switched since.
 	if p := info.HostConfig.RestartPolicy.Name; p != "" {
 		req.RestartPolicy = p
 	}
-	exp := Export{HLMExport: Version, Exported: time.Now().UTC(), HLMVersion: s.opts.Version, Server: name,
+	exp := Export{HLMExport: Version, Exported: time.Now().UTC(), HLMVersion: s.opts.Version, Server: bare,
 		Template: raw, Secrets: secrets}
 	if !secrets {
 		hadExtraParams, hadPostArgs := req.ExtraParams != nil, req.PostArgs != nil
@@ -245,7 +255,7 @@ func (s *Service) Export(ctx context.Context, id string, secrets bool) (Export, 
 			exp.Omitted = append(exp.Omitted, h)
 		}
 	}
-	req, err = relativePaths(app, req, s.opts.Manager.AppdataRoot())
+	req, err = relativePaths(app, req, s.opts.Manager.AppdataRootOf(host))
 	if err != nil {
 		return Export{}, err
 	}
@@ -469,16 +479,16 @@ func (e Export) check() error {
 	return nil
 }
 
-// template returns the template to install with, localized, and whether
-// it has to be added to the catalog.
-func (s *Service) template(e Export) (*catalog.App, bool, error) {
-	if app, ok := s.opts.Manager.App(e.Request.TemplateID); ok {
+// template returns the template to install with, localized for a host,
+// and whether it has to be added to the catalog.
+func (s *Service) template(e Export, host string) (*catalog.App, bool, error) {
+	if app, ok := s.opts.Manager.AppOn(e.Request.TemplateID, host); ok {
 		return app, false, nil
 	}
 	if e.Template == nil || len(e.Template.Config) == 0 && e.Template.Repository == "" {
 		return nil, false, fmt.Errorf("template %q isn't in the catalog, and the file doesn't include it", e.Request.TemplateID)
 	}
-	return e.Template.Localize(s.opts.Manager.AppdataRoot()), true, nil
+	return e.Template.Localize(s.opts.Manager.AppdataRootOf(host)), true, nil
 }
 
 // localPaths puts the appdata root back into a request's paths.
@@ -499,16 +509,17 @@ func localPaths(req deploy.Request, root string) deploy.Request {
 	return req
 }
 
-// PreviewImport reads an export for the import form.
-func (s *Service) PreviewImport(ctx context.Context, e Export) (Preview, error) {
+// PreviewImport reads an export for the import form, for a server on a
+// host.
+func (s *Service) PreviewImport(ctx context.Context, e Export, host string) (Preview, error) {
 	if err := e.check(); err != nil {
 		return Preview{}, err
 	}
-	app, missing, err := s.template(e)
+	app, missing, err := s.template(e, host)
 	if err != nil {
 		return Preview{}, err
 	}
-	root := s.opts.Manager.AppdataRoot()
+	root := s.opts.Manager.AppdataRootOf(host)
 	req := localPaths(e.Request, root)
 	p := Preview{App: app, Request: req, TemplateMissing: missing, Warnings: []string{}, Settings: e.Settings.Summary()}
 	if p.Settings == nil {
@@ -533,7 +544,7 @@ func (s *Service) PreviewImport(ctx context.Context, e Export) (Preview, error) 
 		p.Warnings = append(p.Warnings, fmt.Sprintf("It has the fixed address %s on the %s network: make sure that's free here, or clear it.",
 			req.IPAddress, req.Network))
 	}
-	used := s.pathsInUse(ctx)
+	used := s.pathsInUse(ctx, host)
 	if items, err := deploy.Items(app, req); err == nil {
 		for _, it := range items {
 			if it.Type != catalog.TypePath || it.Disabled || it.Effective == "" {
@@ -547,21 +558,24 @@ func (s *Service) PreviewImport(ctx context.Context, e Export) (Preview, error) 
 			}
 		}
 	}
-	if _, err := s.opts.Manager.Inspect(ctx, req.Name); err == nil {
-		p.Warnings = append(p.Warnings, fmt.Sprintf("A server named %s already exists here: choose another name.", req.Name))
+	if _, err := s.opts.Manager.Inspect(ctx, manager.JoinID(host, req.Name)); err == nil {
+		p.Warnings = append(p.Warnings, fmt.Sprintf("A server named %s already exists there: choose another name.", req.Name))
 	}
 	return p, nil
 }
 
-// pathsInUse maps the host folders servers here have as data folders to
+// pathsInUse maps the folders servers on a host have as data folders to
 // their servers.
-func (s *Service) pathsInUse(ctx context.Context) map[string]string {
+func (s *Service) pathsInUse(ctx context.Context, host string) map[string]string {
 	out := map[string]string{}
 	list, err := s.opts.Manager.List(ctx)
 	if err != nil {
 		return out
 	}
 	for _, srv := range list {
+		if manager.HostOf(srv.ID) != host {
+			continue
+		}
 		info, err := s.opts.Manager.Inspect(ctx, srv.ID)
 		if err != nil {
 			continue
@@ -587,12 +601,12 @@ func itemNames(app *catalog.App, req deploy.Request) map[string]string {
 
 // Import installs a server from an export, with req as the settings (the
 // import form's, starting from PreviewImport's), and gives it the export's
-// other settings.
+// other settings. req.Name ends in @host for another host.
 func (s *Service) Import(ctx context.Context, e Export, req deploy.Request, emit func(manager.Event)) (manager.Server, error) {
 	if err := e.check(); err != nil {
 		return manager.Server{}, err
 	}
-	if _, missing, err := s.template(e); err != nil {
+	if _, missing, err := s.template(e, manager.HostOf(req.Name)); err != nil {
 		return manager.Server{}, err
 	} else if missing {
 		if err := s.opts.Catalog.AddCustom(e.Template); err != nil {
@@ -601,7 +615,7 @@ func (s *Service) Import(ctx context.Context, e Export, req deploy.Request, emit
 		emit(manager.Event{Stage: "template", Message: "Added the template " + e.Template.Name + " to the catalog"})
 	}
 	req.TemplateID = e.Request.TemplateID
-	if !ValidName.MatchString(req.Name) {
+	if !validServer(req.Name) {
 		return manager.Server{}, errors.New("invalid server name")
 	}
 	srv, err := s.opts.Manager.Install(ctx, req, emit)

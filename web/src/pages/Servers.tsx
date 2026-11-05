@@ -4,6 +4,7 @@ import { can, useAdmin } from "../access";
 import { api } from "../api";
 import { AppIcon, CONNECTION_GLYPH, CrashLoopBadge, HealthBadge, Spinner, StateBadge } from "../components/common";
 import { GameStatusBadge } from "../components/GameStatus";
+import { HostBadge, useHosts } from "../components/HostPicker";
 import { InstallCard, JobStatus } from "../components/JobProgress";
 import { ResourceSummary } from "../components/Resources";
 import { StackList } from "../components/StackList";
@@ -22,11 +23,13 @@ import type {
   UpdateStatus,
 } from "../types";
 import { usePoll } from "../usePoll";
-import { formatInZone, formatNetwork, formatPorts, timeAgo, timeUntil, webUILink } from "../util";
+import { bareName, formatInZone, hostOf, formatNetwork, formatPorts, timeAgo, timeUntil, webUILink } from "../util";
 
 export function ServersPage() {
   const admin = useAdmin();
   const [servers, setServers] = useState<Server[] | null>(null);
+  const hosts = useHosts();
+  const unreachable = hosts?.filter((h) => h.status && !h.status.ok) ?? [];
   const [connections, setConnections] = useState<Connection[]>([]);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState<string>();
@@ -232,7 +235,14 @@ export function ServersPage() {
   const available = updatable.length;
   const names = new Set(servers?.map((s) => s.name));
   // Installs whose server isn't in the list yet, plus failed ones for a minute.
-  const installs = jobs.filter((j) => j.kind === "install" && (j.error || !names.has(j.server) || !j.finished));
+  // A finished install's server is missing from the list while its host
+  // can't be reached; that's not an install still going.
+  const offline = (server: string) => unreachable.some((h) => h.id === hostOf(server));
+  const installs = jobs.filter(
+    (j) =>
+      j.kind === "install" &&
+      (j.error || !j.finished || (!names.has(j.server) && !offline(j.server))),
+  );
   const jobFor = (name: string) => jobs.find((j) => j.server === name && j.kind !== "install" && !j.finished);
   const checkingNow = checking || !!updateInfo?.checking;
 
@@ -290,6 +300,11 @@ export function ServersPage() {
       )}
 
       {error && <div className="alert error">{error}</div>}
+      {unreachable.map((h) => (
+        <div key={h.id} className="alert warn">
+          {h.name} can&apos;t be reached, so its servers aren&apos;t listed{h.status?.error ? `: ${h.status.error}` : "."}
+        </div>
+      ))}
       {servers === null && !error && <Spinner />}
       {servers?.length === 0 && installs.length === 0 && (
         <div className="empty">
@@ -320,7 +335,8 @@ export function ServersPage() {
                 <AppIcon src={s.icon} />
                 <div>
                   <div className="server-name">
-                    {s.name}{" "}
+                    {bareName(s.name)}
+                    <HostBadge host={s.host} hosts={hosts} />{" "}
                     <UpdateBadge
                       update={s.update}
                       auto={(auto?.servers[s.name] || auto?.default) === "auto"}

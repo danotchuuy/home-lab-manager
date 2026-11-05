@@ -68,7 +68,8 @@ type Connection struct {
 func (m *Manager) Connections(ctx context.Context) ([]Connection, error) {
 	out := []Connection{}
 	for label, k := range m.connections {
-		list, err := m.docker.ListContainers(ctx, label)
+		// hlm runs its connections' containers on the local host only.
+		list, err := m.docker.ListContainersOn(ctx, LocalHost, label)
 		if err != nil {
 			return nil, err
 		}
@@ -133,6 +134,9 @@ func (m *Manager) connection(c docker.ContainerSummary, info docker.ContainerJSO
 // connectionKind looks up a connection container by name or ID and checks
 // it's one hlm runs.
 func (m *Manager) connectionKind(ctx context.Context, id string) (docker.ContainerJSON, ConnectionKind, error) {
+	if HostOf(id) != LocalHost {
+		return docker.ContainerJSON{}, ConnectionKind{}, ErrNotFound
+	}
 	info, err := m.docker.InspectContainer(ctx, id)
 	if docker.IsNotFound(err) {
 		return info, ConnectionKind{}, ErrNotFound
@@ -231,7 +235,7 @@ func (m *Manager) UpdateConnection(ctx context.Context, id string, emit func(Eve
 	// Pull first, so a registry that can't be reached fails the update
 	// rather than recreating the container on the image it already has.
 	emit(Event{Stage: "pull", Message: "Pulling " + info.Config.Image})
-	if err := m.docker.PullImage(ctx, info.Config.Image, func(p docker.PullProgress) {
+	if err := m.docker.PullImage(ctx, LocalHost, info.Config.Image, func(p docker.PullProgress) {
 		emit(Event{Stage: "pull", Progress: &p})
 	}); err != nil {
 		return fmt.Errorf("pull %s: %w", info.Config.Image, err)
@@ -242,7 +246,7 @@ func (m *Manager) UpdateConnection(ctx context.Context, id string, emit func(Eve
 	}
 	m.updates.forget(info.ID)
 	if n, err := m.docker.InspectContainer(ctx, name); err == nil {
-		imageID, st := m.checkImage(ctx, n.Config.Image)
+		imageID, st := m.checkImage(ctx, LocalHost, n.Config.Image)
 		if st.State == UpdateCurrent && imageID != "" && imageID != n.Image {
 			st = UpdateStatus{State: UpdateAvailable, Reason: "the container still runs an older image"}
 		}

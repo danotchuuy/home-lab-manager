@@ -24,7 +24,8 @@ import { StatTiles } from "../components/Resources";
 import { ServerHistory } from "../components/ResourceHistory";
 import type { App, DeployEvent, DeployRequest, Server, Stats } from "../types";
 import { usePoll } from "../usePoll";
-import { formatNetwork, formatPorts, timeAgo, webUILink } from "../util";
+import { bareName, formatNetwork, formatPorts, timeAgo, webUILink } from "../util";
+import { HostBadge, useHosts } from "../components/HostPicker";
 
 type Tab = "logs" | "files" | "backups" | "schedule" | "ports" | "settings";
 
@@ -32,6 +33,7 @@ export function ServerDetailPage() {
   const { name = "" } = useParams();
   const navigate = useNavigate();
   const admin = useAdmin();
+  const hosts = useHosts();
   const [server, setServer] = useState<Server>();
   const [stats, setStats] = useState<Stats>();
   // Bumped when internet ports change, so port forwarding reloads.
@@ -141,7 +143,8 @@ export function ServerDetailPage() {
         <AppIcon src={server.icon} size={72} />
         <div className="grow">
           <h1>
-            {server.name} <StateBadge state={server.state} /> <HealthBadge state={server.state} health={server.health} />{" "}
+            {bareName(server.name)}
+            <HostBadge host={server.host} hosts={hosts} /> <StateBadge state={server.state} /> <HealthBadge state={server.state} health={server.health} />{" "}
             <CrashLoopBadge crashLoop={server.crashLoop} />
           </h1>
           <div className="muted">

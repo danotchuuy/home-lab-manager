@@ -176,7 +176,14 @@ type Service struct {
 	apiBase string // overrides Cloudflare's API address (for tests)
 	log     *slog.Logger
 	mu      sync.Mutex // one change at a time
+	// hostAddress is where a server on another Docker host publishes its
+	// ports; "" for the local host. See UseHostAddress.
+	hostAddress func(id string) string
 }
+
+// UseHostAddress says where servers on other Docker hosts publish their
+// ports (by server ID; "" for local servers), for routes to them.
+func (s *Service) UseHostAddress(f func(id string) string) { s.hostAddress = f }
 
 // New creates the service. image is cloudflared's image; empty for
 // DefaultImage.
@@ -954,7 +961,9 @@ func webPorts(info docker.ContainerJSON) []WebPort {
 }
 
 // origin is where cloudflared sends a route's requests.
-func origin(info docker.ContainerJSON, r Route, t Tunnel) (string, error) {
+// remoteHost is where the server's Docker host publishes its ports, if
+// that's not the local one.
+func origin(info docker.ContainerJSON, r Route, t Tunnel, remoteHost string) (string, error) {
 	var port *WebPort
 	ports := webPorts(info)
 	for i := range ports {
@@ -980,6 +989,11 @@ func origin(info docker.ContainerJSON, r Route, t Tunnel) (string, error) {
 		if host == "" {
 			return "", fmt.Errorf("the server has no address on %s (%s), the LAN network cloudflared reaches; is it running?", t.LANNetwork, t.LANSubnet)
 		}
+	case remoteHost != "":
+		if port.HostIP != "" && netip.MustParseAddr(port.HostIP).IsLoopback() {
+			return "", fmt.Errorf("port %d is only published on %s of its host, which cloudflared here can't reach", r.Port, port.HostIP)
+		}
+		host = remoteHost
 	case port.HostIP != "":
 		if ip := netip.MustParseAddr(port.HostIP); ip.IsLoopback() && t.LANNetwork != "" {
 			return "", fmt.Errorf("port %d is only published on %s, which cloudflared on a LAN network can't reach", r.Port, port.HostIP)
@@ -1002,7 +1016,11 @@ func (s *Service) resolve(ctx context.Context, r Route, t Tunnel) (string, error
 	if err != nil {
 		return "", err
 	}
-	return origin(info, r, t)
+	remoteHost := ""
+	if s.hostAddress != nil {
+		remoteHost = s.hostAddress(info.ID)
+	}
+	return origin(info, r, t, remoteHost)
 }
 
 // normalizeAddress turns what the user typed as another server's address

@@ -2,6 +2,35 @@
 
 **Priority:** Low (large) · **Depends on:** nothing, but touches almost everything
 
+> **Status: done (phases 1–3; the agent is a follow-up)** (branch `feature/14-multi-host`). See the README's
+> [More Docker hosts](../README.md#more-docker-hosts). Where the result differs from this plan:
+>
+> - **IDs are `name@host`, not `host/name`,** and servers on the local host keep their plain names. Docker doesn't allow
+>   `@` in container names, so the two can't be confused, and unlike `/` it's safe in URL path segments, file names
+>   and S3 keys. Because local names don't change, **no migration** was needed: per-server settings (backup plans,
+>   groups, tasks, …) of existing servers keep their keys, and those of other hosts' servers are keyed by `name@host`.
+> - **One manager, not one per host:** `manager.Manager` routes Docker calls by the server ID's host (`internal/manager/hosts.go`)
+>   and lists every host's containers together (a host that can't be reached is left out, with its status kept for
+>   the UI). Everything built on the manager (backups, schedule, health, console, game query, transfer) works for any
+>   host unchanged.
+> - **Connections (A):** SSH and TCP with TLS (`internal/hosts`). SSH forwards to Docker's socket over hlm's existing
+>   SSH key (shared with the proxy), with the host key pinned on first use; where the SSH server refuses forwarding it
+>   falls back to `docker system dial-stdio`, as the docker CLI does. TCP always verifies the daemon's certificate;
+>   plain TCP isn't accepted. Hosts are kept in the secrets store (`"hosts"`, client keys apart in `"host-tls-key-<id>"`).
+> - **Per-host networking (3):** a host's LAN address is used for Web UI links, game queries and console connections,
+>   UniFi port forwards and Cloudflare Tunnel routes from the local `cloudflared`. A `cloudflared` or WireGuard per host
+>   wasn't built.
+> - **Clone between hosts:** the clone page has a host picker; data is copied through hlm (archive from one host,
+>   restore on the other), ports stay when they're free on the target.
+> - **Added: setting Docker up on an SSH host.** "Check for Docker" reports the host's OS and Docker state; hlm can
+>   install Docker CE following Docker's install pages (Ubuntu, Debian, Raspberry Pi OS, Fedora, CentOS Stream, RHEL),
+>   start it on boot and add the user to the `docker` group, as root (root or passwordless sudo).
+> - **Added: TLS set up over SSH.** For a TCP host, hlm can make a per-host CA (key discarded after signing), a server
+>   and a client certificate, install the server's, and start dockerd with `--tlsverify` on port 2376 through a
+>   systemd drop-in (rolled back if Docker doesn't start), then save the host with its client certificate.
+> - **Not built (yet):** the `hlm agent` mode (B) and enrolment tokens; host metrics, disk usage and deleted-server data
+>   for other hosts (the Host page is the local host's); Compose stacks on other hosts; "host" as an RBAC grant target.
+
 ## Why
 
 hlm manages one Docker daemon (local socket or one remote host over TLS via `DOCKER_HOST`). Home labs often have two or
@@ -64,11 +93,11 @@ does TLS.
 
 ## Tasks
 
-- [ ] Design review of ID scheme and migration
-- [ ] Host registry + migration
-- [ ] Aggregating manager + API IDs
-- [ ] Extra hosts over TLS/SSH
-- [ ] UI host picker and badges
-- [ ] Per-host network features
+- [x] Design review of ID scheme and migration (`name@host`; no migration needed)
+- [x] Host registry
+- [x] Aggregating manager + API IDs
+- [x] Extra hosts over TLS/SSH
+- [x] UI host picker and badges
+- [x] Per-host network features (links, queries, UniFi, Cloudflare Tunnel; not a cloudflared/WireGuard per host)
 - [ ] Agent mode + enrolment
-- [ ] README section
+- [x] README section

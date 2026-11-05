@@ -126,31 +126,33 @@ func (m *Manager) CheckUpdates(ctx context.Context) error {
 		started = map[string]bool{}
 		sem     = make(chan struct{}, 4)
 	)
+	// Each host has its own copy of an image.
+	key := func(srv Server) string { return HostOf(srv.ID) + " " + srv.Image }
 	for _, srv := range servers {
-		if started[srv.Image] {
+		if started[key(srv)] {
 			continue
 		}
-		started[srv.Image] = true
+		started[key(srv)] = true
 		wg.Add(1)
-		go func(ref string) {
+		go func(k, host, ref string) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
-			localID, st := m.checkImage(cctx, ref)
+			localID, st := m.checkImage(cctx, host, ref)
 			st.CheckedAt = time.Now()
 			mu.Lock()
-			results[ref] = result{localID, st}
+			results[k] = result{localID, st}
 			mu.Unlock()
-		}(srv.Image)
+		}(key(srv), HostOf(srv.ID), srv.Image)
 	}
 	wg.Wait()
 
 	live := map[string]bool{}
 	for _, srv := range servers {
 		live[srv.ID] = true
-		r := results[srv.Image]
+		r := results[key(srv)]
 		st := r.status
 		// The registry may match the local image while the container still
 		// runs an older one, e.g. after a manual `docker pull`.
@@ -180,7 +182,7 @@ func (m *Manager) CheckUpdates(ctx context.Context) error {
 
 // checkImage compares the local image for ref with the registry. It returns
 // the local image ID (if the image is present) and the status.
-func (m *Manager) checkImage(ctx context.Context, ref string) (string, UpdateStatus) {
+func (m *Manager) checkImage(ctx context.Context, host, ref string) (string, UpdateStatus) {
 	if strings.Contains(ref, "@") {
 		return "", UpdateStatus{State: UpdateCurrent, Reason: "pinned to a digest"}
 	}
@@ -188,7 +190,7 @@ func (m *Manager) checkImage(ctx context.Context, ref string) (string, UpdateSta
 		return "", UpdateStatus{State: UpdateUnknown, Reason: "the server was created from an image ID, not a tag"}
 	}
 
-	img, err := m.docker.InspectImage(ctx, ref)
+	img, err := m.docker.InspectImage(ctx, host, ref)
 	if docker.IsNotFound(err) {
 		return "", UpdateStatus{State: UpdateAvailable, Reason: "the image is no longer present locally"}
 	}
@@ -199,7 +201,7 @@ func (m *Manager) checkImage(ctx context.Context, ref string) (string, UpdateSta
 		return img.ID, UpdateStatus{State: UpdateUnknown, Reason: "the image wasn't pulled from a registry"}
 	}
 
-	remote, err := m.docker.RemoteDigest(ctx, ref)
+	remote, err := m.docker.RemoteDigest(ctx, host, ref)
 	if err != nil {
 		var apiErr *docker.APIError
 		if errors.As(err, &apiErr) {
@@ -311,7 +313,7 @@ func (m *Manager) CheckUpdate(ctx context.Context, id string) (UpdateStatus, err
 	}
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	localID, st := m.checkImage(cctx, srv.Image)
+	localID, st := m.checkImage(cctx, HostOf(srv.ID), srv.Image)
 	st.CheckedAt = time.Now()
 	if st.State == UpdateCurrent && localID != "" && srv.imageID != "" && localID != srv.imageID {
 		st = UpdateStatus{

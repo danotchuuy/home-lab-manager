@@ -36,7 +36,7 @@ var ErrNotFound = errors.New("server not found")
 
 // Manager creates and controls game server containers.
 type Manager struct {
-	docker      *docker.Client
+	docker      *router
 	catalog     *catalog.Catalog
 	appdataRoot string
 	// remoteHost is the Docker host's name when it is reached over TCP. Game
@@ -65,6 +65,10 @@ type Manager struct {
 	// beforeStop saves a running server's world before hlm stops it; see
 	// UseBeforeStop.
 	beforeStop func(ctx context.Context, id string)
+	// Event watchers for other hosts; see WatchEvents.
+	watchMu  sync.Mutex
+	watchCtx context.Context
+	watchers map[string]watcher
 }
 
 // UseBeforeStop sets what runs before hlm stops, restarts or recreates a
@@ -114,7 +118,7 @@ func (m *Manager) checkLANAddress(ctx context.Context, spec *deploy.Spec, req de
 // New creates a manager. Template paths under Unraid's appdata share are
 // placed under appdataRoot instead.
 func New(d *docker.Client, c *catalog.Catalog, appdataRoot string, log *slog.Logger) *Manager {
-	m := &Manager{docker: d, catalog: c, appdataRoot: appdataRoot, log: log, updates: newUpdateTracker(), jobs: newJobTracker(), storage: &storageTracker{},
+	m := &Manager{docker: newRouter(d), catalog: c, appdataRoot: appdataRoot, log: log, updates: newUpdateTracker(), jobs: newJobTracker(), storage: &storageTracker{},
 		crashes: newCrashTracker()}
 	if u, err := url.Parse(d.Host()); err == nil && u.Scheme != "unix" {
 		m.remoteHost = u.Hostname()
@@ -122,18 +126,26 @@ func New(d *docker.Client, c *catalog.Catalog, appdataRoot string, log *slog.Log
 	return m
 }
 
-// App returns a catalog app with its paths localized for this host.
+// App returns a catalog app with its paths localized for the local host.
 func (m *Manager) App(id string) (*catalog.App, bool) {
+	return m.AppOn(id, LocalHost)
+}
+
+// AppOn returns a catalog app with its paths localized for a host.
+func (m *Manager) AppOn(id, host string) (*catalog.App, bool) {
 	app, ok := m.catalog.Get(id)
 	if !ok {
 		return nil, false
 	}
-	return app.Localize(m.appdataRoot), true
+	return app.Localize(m.appdataFor(host)), true
 }
 
 // Server is a managed game server container.
 type Server struct {
-	ID         string               `json:"id"`
+	ID string `json:"id"`
+	// Host is the Docker host the server is on: LocalHost, or another
+	// host's ID (which ID and Name end in, after an @).
+	Host       string               `json:"host"`
 	Name       string               `json:"name"`
 	App        string               `json:"app"`
 	TemplateID string               `json:"templateId"`
@@ -216,7 +228,9 @@ func (m *Manager) fillWebUI(srv *Server, labels map[string]string) {
 	case labels[deploy.LabelDirectIP] == "true" && srv.IPAddress != "":
 		// macvlan/ipvlan containers have their own address on the LAN.
 		srv.WebUI = strings.ReplaceAll(srv.WebUI, "[IP]", srv.IPAddress)
-	case m.remoteHost != "":
+	case m.HostAddress(srv.ID) != "":
+		srv.WebUI = strings.ReplaceAll(srv.WebUI, "[IP]", m.HostAddress(srv.ID))
+	case m.remoteHost != "" && HostOf(srv.ID) == LocalHost:
 		srv.WebUI = strings.ReplaceAll(srv.WebUI, "[IP]", m.remoteHost)
 	}
 }
@@ -224,6 +238,7 @@ func (m *Manager) fillWebUI(srv *Server, labels map[string]string) {
 func serverFromSummary(s docker.ContainerSummary) Server {
 	srv := Server{
 		ID:         s.ID,
+		Host:       HostOf(s.ID),
 		Name:       strings.TrimPrefix(firstOr(s.Names, ""), "/"),
 		App:        s.Labels[deploy.LabelApp],
 		TemplateID: s.Labels[deploy.LabelTemplate],
@@ -302,7 +317,7 @@ func (m *Manager) Get(ctx context.Context, id string) (Server, error) {
 	}
 	// The list endpoint has the friendly status text and port summary, so
 	// look the container up there.
-	list, err := m.docker.ListContainers(ctx, deploy.LabelManaged+"=true")
+	list, err := m.docker.ListContainersOn(ctx, HostOf(info.ID), deploy.LabelManaged+"=true")
 	if err != nil {
 		return Server{}, err
 	}
@@ -369,7 +384,7 @@ func (m *Manager) Create(ctx context.Context, req deploy.Request, emit func(Even
 
 func (m *Manager) installJob(ctx context.Context, req deploy.Request, confined, start bool, emit func(Event)) (srv Server, err error) {
 	job := Job{Kind: "install", Server: req.Name}
-	if app, ok := m.App(req.TemplateID); ok {
+	if app, ok := m.AppOn(req.TemplateID, HostOf(req.Name)); ok {
 		job.App, job.Icon, job.Image = app.Name, app.Icon, app.Repository
 	}
 	emit, finish, err := m.jobs.start(job, emit)
@@ -380,42 +395,50 @@ func (m *Manager) installJob(ctx context.Context, req deploy.Request, confined, 
 	return m.install(ctx, req, confined, start, emit)
 }
 
+// install creates a server; req.Name ends in @host for another host.
 func (m *Manager) install(ctx context.Context, req deploy.Request, confined, start bool, emit func(Event)) (Server, error) {
+	host, bare := SplitID(req.Name)
+	if !m.KnownHost(host) {
+		return Server{}, errNoHost(host)
+	}
+	req.Name = bare
+	root := m.appdataFor(host)
 	if confined {
-		if app, ok := m.App(req.TemplateID); ok {
-			req = deploy.ConfinePaths(app, req, m.appdataRoot)
+		if app, ok := m.AppOn(req.TemplateID, host); ok {
+			req = deploy.ConfinePaths(app, req, root)
 		}
 	}
-	spec, err := m.build(ctx, req)
+	spec, err := m.build(ctx, host, req)
 	if err != nil {
 		return Server{}, err
 	}
+	name := JoinID(host, spec.Name)
 	if confined {
-		if bad := deploy.Confine(spec, m.appdataRoot); len(bad) > 0 {
+		if bad := deploy.Confine(spec, root); len(bad) > 0 {
 			return Server{}, errors.New("not allowed without an admin: " + strings.Join(bad, "; "))
 		}
-		if err := m.checkFreshData(ctx, spec.Name); err != nil {
+		if err := m.checkFreshData(ctx, name); err != nil {
 			return Server{}, err
 		}
 	}
 	if err := m.checkLANAddress(ctx, spec, req, nil, emit); err != nil {
 		return Server{}, err
 	}
-	if _, err := m.docker.InspectContainer(ctx, spec.Name); err == nil {
-		return Server{}, fmt.Errorf("a container named %q already exists", spec.Name)
+	if _, err := m.docker.InspectContainer(ctx, name); err == nil {
+		return Server{}, fmt.Errorf("a container named %q already exists", name)
 	}
-	if err := m.checkPorts(ctx, spec, ""); err != nil {
+	if err := m.checkPorts(ctx, host, spec, ""); err != nil {
 		return Server{}, err
 	}
 	for _, w := range spec.Warnings {
 		emit(Event{Stage: "warning", Message: w})
 	}
-	if err := m.pull(ctx, spec.Image, emit); err != nil {
+	if err := m.pull(ctx, host, spec.Image, emit); err != nil {
 		return Server{}, err
 	}
 
-	emit(Event{Stage: "create", Message: "Creating container " + spec.Name})
-	id, warnings, err := m.docker.CreateContainer(ctx, spec.Name, spec.Create)
+	emit(Event{Stage: "create", Message: "Creating container " + name})
+	id, warnings, err := m.docker.CreateContainer(ctx, name, spec.Create)
 	if err != nil {
 		return Server{}, fmt.Errorf("create container: %w", err)
 	}
@@ -425,7 +448,7 @@ func (m *Manager) install(ctx context.Context, req deploy.Request, confined, sta
 	if !start {
 		srv, err := m.Get(ctx, id)
 		if err == nil {
-			emit(Event{Stage: "created", Message: "Created " + spec.Name + " (not started yet)", Server: &srv})
+			emit(Event{Stage: "created", Message: "Created " + name + " (not started yet)", Server: &srv})
 		}
 		return srv, err
 	}
@@ -443,8 +466,11 @@ func (m *Manager) install(ctx context.Context, req deploy.Request, confined, sta
 	return srv, nil
 }
 
-// AppdataRoot is where servers' data folders go on the host.
+// AppdataRoot is where servers' data folders go on the local host.
 func (m *Manager) AppdataRoot() string { return m.appdataRoot }
+
+// AppdataRootOf is where servers' data folders go on a host.
+func (m *Manager) AppdataRootOf(host string) string { return m.appdataFor(host) }
 
 // Reconfigure recreates a server with new settings. The old container is
 // kept, renamed, until the new one has been created, so a bad configuration
@@ -511,6 +537,7 @@ func (m *Manager) recreate(ctx context.Context, id string, req *deploy.Request, 
 		return Server{}, err
 	}
 	name := strings.TrimPrefix(info.Name, "/")
+	host, bare := SplitID(name)
 	if stack := info.Config.Labels[LabelStack]; stack != "" {
 		return Server{}, fmt.Errorf("%s is part of the stack %s: update or change it from the stack", name, stack)
 	}
@@ -526,21 +553,21 @@ func (m *Manager) recreate(ctx context.Context, id string, req *deploy.Request, 
 	}
 	// Renaming a server is not supported; it would orphan its data paths in
 	// surprising ways. Keep the container name.
-	req.Name = name
+	req.Name = bare
 	// The live restart policy wins: it may have been changed with the
 	// start-on-boot switch since the server was created.
 	if p := info.HostConfig.RestartPolicy.Name; p != "" {
 		req.RestartPolicy = p
 	}
 
-	spec, err := m.build(ctx, *req)
+	spec, err := m.build(ctx, host, *req)
 	if err != nil {
 		return Server{}, err
 	}
 	// A template can change after a server is created, so this isn't only
 	// about what the request asks for.
 	if info.Config.Labels[deploy.LabelConfined] == "true" {
-		if bad := deploy.Confine(spec, m.appdataRoot); len(bad) > 0 {
+		if bad := deploy.Confine(spec, m.appdataFor(host)); len(bad) > 0 {
 			if !unconfine {
 				return Server{}, errors.New("this server has to stay confined, so an admin has to change this: " + strings.Join(bad, "; "))
 			}
@@ -549,20 +576,20 @@ func (m *Manager) recreate(ctx context.Context, id string, req *deploy.Request, 
 	}
 	// The server itself may already hold the address; don't count it, by
 	// its current MAC or the stable one it gets on LAN networks.
-	ownMACs := []string{deploy.StableMAC(name)}
+	ownMACs := []string{deploy.StableMAC(bare)}
 	for _, ep := range info.NetworkSettings.Networks {
 		ownMACs = append(ownMACs, ep.MacAddress)
 	}
 	if err := m.checkLANAddress(ctx, spec, *req, ownMACs, emit); err != nil {
 		return Server{}, err
 	}
-	if err := m.checkPorts(ctx, spec, info.ID); err != nil {
+	if err := m.checkPorts(ctx, host, spec, info.ID); err != nil {
 		return Server{}, err
 	}
 	for _, w := range spec.Warnings {
 		emit(Event{Stage: "warning", Message: w})
 	}
-	if err := m.pull(ctx, spec.Image, emit); err != nil {
+	if err := m.pull(ctx, host, spec.Image, emit); err != nil {
 		return Server{}, err
 	}
 
@@ -575,7 +602,7 @@ func (m *Manager) recreate(ctx context.Context, id string, req *deploy.Request, 
 	if err := m.docker.StopContainer(ctx, info.ID, -1); err != nil {
 		return Server{}, fmt.Errorf("stop old container: %w", err)
 	}
-	backup := fmt.Sprintf("%s-old-%d", name, time.Now().Unix())
+	backup := fmt.Sprintf("%s-old-%d", bare, time.Now().Unix())
 	if err := m.docker.RenameContainer(ctx, info.ID, backup); err != nil {
 		return Server{}, fmt.Errorf("rename old container: %w", err)
 	}
@@ -627,12 +654,14 @@ func (m *Manager) recreate(ctx context.Context, id string, req *deploy.Request, 
 	return srv, nil
 }
 
-func (m *Manager) build(ctx context.Context, req deploy.Request) (*deploy.Spec, error) {
-	app, ok := m.App(req.TemplateID)
+// build works out a server's container on a host; req.Name is its name
+// there.
+func (m *Manager) build(ctx context.Context, host string, req deploy.Request) (*deploy.Spec, error) {
+	app, ok := m.AppOn(req.TemplateID, host)
 	if !ok {
 		return nil, fmt.Errorf("template %q not found in catalog", req.TemplateID)
 	}
-	networks, err := m.inspectNetworks(ctx)
+	networks, err := m.inspectNetworks(ctx, host)
 	if err != nil {
 		return nil, fmt.Errorf("list networks: %w", err)
 	}
@@ -644,16 +673,16 @@ func (m *Manager) build(ctx context.Context, req deploy.Request) (*deploy.Spec, 
 	return spec, nil
 }
 
-// inspectNetworks returns the host's networks by name, with the containers
+// inspectNetworks returns a host's networks by name, with the containers
 // attached to each.
-func (m *Manager) inspectNetworks(ctx context.Context) (map[string]docker.Network, error) {
-	list, err := m.docker.ListNetworks(ctx)
+func (m *Manager) inspectNetworks(ctx context.Context, host string) (map[string]docker.Network, error) {
+	list, err := m.docker.ListNetworks(ctx, host)
 	if err != nil {
 		return nil, err
 	}
 	out := make(map[string]docker.Network, len(list))
 	for _, n := range list {
-		full, err := m.docker.InspectNetwork(ctx, n.ID)
+		full, err := m.docker.InspectNetwork(ctx, host, n.ID)
 		if err != nil {
 			if docker.IsNotFound(err) {
 				continue // removed since the list call
@@ -690,10 +719,10 @@ type NetworkIP struct {
 	Container string `json:"container"`
 }
 
-// Networks lists the networks servers can use. Docker's internal-only and
-// swarm-scoped networks are left out.
-func (m *Manager) Networks(ctx context.Context) ([]NetworkInfo, error) {
-	networks, err := m.inspectNetworks(ctx)
+// Networks lists the networks servers on a host can use. Docker's
+// internal-only and swarm-scoped networks are left out.
+func (m *Manager) Networks(ctx context.Context, host string) ([]NetworkInfo, error) {
+	networks, err := m.inspectNetworks(ctx, host)
 	if err != nil {
 		return nil, err
 	}
@@ -738,9 +767,13 @@ func (m *Manager) Networks(ctx context.Context) ([]NetworkInfo, error) {
 	return out, nil
 }
 
-func (m *Manager) pull(ctx context.Context, image string, emit func(Event)) error {
-	emit(Event{Stage: "pull", Message: "Pulling " + image})
-	err := m.docker.PullImage(ctx, image, func(p docker.PullProgress) {
+func (m *Manager) pull(ctx context.Context, host, image string, emit func(Event)) error {
+	msg := "Pulling " + image
+	if host != LocalHost {
+		msg += " on " + m.HostName(host)
+	}
+	emit(Event{Stage: "pull", Message: msg})
+	err := m.docker.PullImage(ctx, host, image, func(p docker.PullProgress) {
 		emit(Event{Stage: "pull", Progress: &p})
 	})
 	if err != nil {
@@ -923,7 +956,7 @@ func (m *Manager) Config(ctx context.Context, id string) (*catalog.App, deploy.R
 	}
 	req, _ := deploy.RequestFromLabels(info.Config.Labels)
 	tid := info.Config.Labels[deploy.LabelTemplate]
-	app, ok := m.App(tid)
+	app, ok := m.AppOn(tid, HostOf(info.ID))
 	if !ok {
 		return nil, req, fmt.Errorf("template %q is no longer in the catalog", tid)
 	}
@@ -938,10 +971,10 @@ func (m *Manager) ImportImage(ctx context.Context, ref string, emit func(Event))
 	if ref == "" || strings.ContainsAny(ref, " \t\n") {
 		return nil, fmt.Errorf("invalid image reference %q", ref)
 	}
-	if err := m.pull(ctx, ref, emit); err != nil {
+	if err := m.pull(ctx, LocalHost, ref, emit); err != nil {
 		return nil, err
 	}
-	img, err := m.docker.InspectImage(ctx, ref)
+	img, err := m.docker.InspectImage(ctx, LocalHost, ref)
 	if err != nil {
 		return nil, fmt.Errorf("read image %s: %w", ref, err)
 	}

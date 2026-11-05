@@ -225,7 +225,7 @@ func (s *Service) restAddresses(info docker.ContainerJSON, set Settings) ([]stri
 	if set.Host != "" {
 		return []string{net.JoinHostPort(set.Host, strconv.Itoa(set.Port))}, nil
 	}
-	out := reach.Addresses(info, restPort(info, set), "tcp", s.opts.HostAddresses())
+	out := reach.Addresses(info, restPort(info, set), "tcp", s.opts.HostAddresses(info.ID))
 	if len(out) == 0 {
 		return nil, errors.New("the REST API's port can't be reached: the container has no address hlm can use, and the port isn't published")
 	}

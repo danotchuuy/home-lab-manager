@@ -301,7 +301,7 @@ func (s *server) present(access rbac.Access, srv manager.Server) manager.Server 
 	case !role.AtLeast(rbac.Operator):
 		srv.Request = nil
 	case !role.AtLeast(rbac.Manager) && srv.Request != nil:
-		app, _ := s.Manager.App(srv.TemplateID)
+		app, _ := s.Manager.AppOn(srv.TemplateID, srv.Host)
 		_, req, hidden := deploy.HideSecrets(app, *srv.Request)
 		srv.Request, srv.Hidden = &req, hidden
 	}

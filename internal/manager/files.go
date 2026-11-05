@@ -7,17 +7,26 @@ import (
 	"io"
 	"time"
 
+	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/files"
 )
 
-// browser returns a file browser that reads data folders from the host when
-// hlm can see the Docker host's filesystem.
-func (m *Manager) browser() *files.Browser {
+// browser returns a file browser for the host a container is on, and the
+// container as that host knows it. It reads data folders from the host
+// when hlm can see the Docker host's filesystem (the local one only).
+func (m *Manager) browser(info docker.ContainerJSON) (*files.Browser, docker.ContainerJSON, error) {
+	host, bare := SplitID(info.ID)
+	c, err := m.docker.client(host)
+	if err != nil {
+		return nil, info, err
+	}
 	var hostPath func(string) string
-	if m.host != nil && m.host.Available() {
+	if host == LocalHost && m.host != nil && m.host.Available() {
 		hostPath = m.host.HostPath
 	}
-	return files.New(m.docker, hostPath)
+	info.ID = bare
+	_, info.Name = SplitID(info.Name)
+	return files.New(c, hostPath), info, nil
 }
 
 // FileListing is a directory listing plus the server's data folders.
@@ -41,7 +50,11 @@ func (m *Manager) ListFiles(ctx context.Context, id, path string) (FileListing, 
 			path = mounts[0].Path
 		}
 	}
-	l, err := m.browser().List(ctx, info, path)
+	b, local, err := m.browser(info)
+	if err != nil {
+		return FileListing{}, err
+	}
+	l, err := b.List(ctx, local, path)
 	if err != nil {
 		return FileListing{}, err
 	}
@@ -58,7 +71,11 @@ func (m *Manager) ReadFile(ctx context.Context, id, path string) (files.File, er
 	if err != nil {
 		return files.File{}, err
 	}
-	return m.browser().Read(ctx, info, path)
+	b, local, err := m.browser(info)
+	if err != nil {
+		return files.File{}, err
+	}
+	return b.Read(ctx, local, path)
 }
 
 // WriteFile saves a file in a server's container. expected is the
@@ -69,7 +86,11 @@ func (m *Manager) WriteFile(ctx context.Context, id, path, content string, expec
 		return files.File{}, err
 	}
 	m.log.Info("editing file", "server", info.Name, "path", path)
-	return m.browser().Write(ctx, info, path, content, expected)
+	b, local, err := m.browser(info)
+	if err != nil {
+		return files.File{}, err
+	}
+	return b.Write(ctx, local, path, content, expected)
 }
 
 // SearchFiles finds files under dir in a server's container.
@@ -80,7 +101,11 @@ func (m *Manager) SearchFiles(ctx context.Context, id, dir, query string) ([]fil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	return m.browser().Search(ctx, info, dir, query)
+	b, local, err := m.browser(info)
+	if err != nil {
+		return nil, false, err
+	}
+	return b.Search(ctx, local, dir, query)
 }
 
 // ArchiveFolders writes folders in a server's container, with everything in
@@ -90,7 +115,11 @@ func (m *Manager) ArchiveFolders(ctx context.Context, id string, folders, exclud
 	if err != nil {
 		return files.ArchiveStats{}, err
 	}
-	return m.browser().ArchiveExcluding(ctx, info, folders, exclude, tw, progress)
+	b, local, err := m.browser(info)
+	if err != nil {
+		return files.ArchiveStats{}, err
+	}
+	return b.ArchiveExcluding(ctx, local, folders, exclude, tw, progress)
 }
 
 // RestoreArchive extracts a tar stream made by ArchiveFolders back into a
@@ -101,7 +130,11 @@ func (m *Manager) RestoreArchive(ctx context.Context, id string, r io.Reader, pr
 		return files.ArchiveStats{}, err
 	}
 	m.log.Info("restoring files", "server", info.Name)
-	return m.browser().Restore(ctx, info, r, progress)
+	b, local, err := m.browser(info)
+	if err != nil {
+		return files.ArchiveStats{}, err
+	}
+	return b.Restore(ctx, local, r, progress)
 }
 
 // CopyData copies folders (container paths, with everything in them) from
@@ -117,18 +150,26 @@ func (m *Manager) CopyData(ctx context.Context, fromID, toID string, folders []s
 		return files.ArchiveStats{}, err
 	}
 	m.log.Info("copying data", "from", from.Name, "to", to.Name, "folders", folders)
+	fromB, from, err := m.browser(from)
+	if err != nil {
+		return files.ArchiveStats{}, err
+	}
+	toB, to, err := m.browser(to)
+	if err != nil {
+		return files.ArchiveStats{}, err
+	}
 	pr, pw := io.Pipe()
 	archived := make(chan error, 1)
 	go func() {
 		tw := tar.NewWriter(pw)
-		_, err := m.browser().Archive(ctx, from, folders, tw, nil)
+		_, err := fromB.Archive(ctx, from, folders, tw, nil)
 		if err == nil {
 			err = tw.Close()
 		}
 		pw.CloseWithError(err)
 		archived <- err
 	}()
-	st, err := m.browser().Restore(ctx, to, pr, progress)
+	st, err := toB.Restore(ctx, to, pr, progress)
 	pr.CloseWithError(err) // stop the reader if the restore gave up
 	if aerr := <-archived; aerr != nil && err == nil {
 		err = fmt.Errorf("read %s: %w", from.Name, aerr)

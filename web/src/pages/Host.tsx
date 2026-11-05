@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import { StackedBar, TimeSeriesChart, usePoll } from "../components/charts";
 import { AppIcon, Spinner } from "../components/common";
+import { DockerHosts } from "../components/DockerHosts";
 import { HostHistory, RangePicker } from "../components/ResourceHistory";
 import type { HistoryRange, DataFolder, DeletedStorage, HostSnapshot, ServerStorage, StorageReport } from "../types";
 import { formatBytes, timeAgo } from "../util";
@@ -54,6 +55,7 @@ export function HostPage() {
         )}
       </div>
 
+      <DockerHosts />
       {hostError && <div className="alert error">{hostError}</div>}
       {!host && !hostError && <Spinner />}
       {host && !host.available && (

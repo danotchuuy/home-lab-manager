@@ -204,6 +204,75 @@ func (c *Conn) Close() error {
 	return c.client.Close()
 }
 
+// Dial opens a connection from the server to addr: a "tcp" address or a
+// "unix" socket path there, such as Docker's socket.
+func (c *Conn) Dial(ctx context.Context, network, addr string) (net.Conn, error) {
+	return c.client.DialContext(ctx, network, addr)
+}
+
+// DialCommand runs a command whose input and output are a connection,
+// such as "docker system dial-stdio".
+func (c *Conn) DialCommand(ctx context.Context, cmd string) (net.Conn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	sess, err := c.client.NewSession()
+	if err != nil {
+		return nil, err
+	}
+	stdin, err := sess.StdinPipe()
+	if err != nil {
+		sess.Close()
+		return nil, err
+	}
+	stdout, err := sess.StdoutPipe()
+	if err != nil {
+		sess.Close()
+		return nil, err
+	}
+	if err := sess.Start(cmd); err != nil {
+		sess.Close()
+		return nil, err
+	}
+	return &cmdConn{sess: sess, stdin: stdin, stdout: stdout}, nil
+}
+
+// cmdConn is a command's input and output as a connection.
+type cmdConn struct {
+	sess   *ssh.Session
+	stdin  io.WriteCloser
+	stdout io.Reader
+}
+
+func (c *cmdConn) Read(p []byte) (int, error)  { return c.stdout.Read(p) }
+func (c *cmdConn) Write(p []byte) (int, error) { return c.stdin.Write(p) }
+func (c *cmdConn) Close() error {
+	c.stdin.Close()
+	return c.sess.Close()
+}
+func (c *cmdConn) LocalAddr() net.Addr              { return cmdAddr{} }
+func (c *cmdConn) RemoteAddr() net.Addr             { return cmdAddr{} }
+func (c *cmdConn) SetDeadline(time.Time) error      { return nil }
+func (c *cmdConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *cmdConn) SetWriteDeadline(time.Time) error { return nil }
+
+type cmdAddr struct{}
+
+func (cmdAddr) Network() string { return "ssh" }
+func (cmdAddr) String() string  { return "ssh-command" }
+
+// Wait returns when the connection has ended.
+func (c *Conn) Wait() error {
+	return c.client.Wait()
+}
+
+// KeepAlive asks the server for a reply, to check the connection still
+// works.
+func (c *Conn) KeepAlive() error {
+	_, _, err := c.client.SendRequest("keepalive@openssh.com", true, nil)
+	return err
+}
+
 // Result is the outcome of a command.
 type Result struct {
 	Stdout   string `json:"stdout"`

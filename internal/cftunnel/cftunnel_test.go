@@ -226,7 +226,7 @@ func TestOrigin(t *testing.T) {
 		{"own LAN address without LAN mode", lanServer("192.168.1.61", "8080/tcp"), host, 8080, "", "own LAN address"},
 		{"own LAN address, stopped", lanServer("", "8080/tcp"), lan, 8080, "", "is it running"},
 	} {
-		got, err := origin(c.info, route(c.port), c.t)
+		got, err := origin(c.info, route(c.port), c.t, "")
 		if c.errHas != "" {
 			if err == nil || !strings.Contains(err.Error(), c.errHas) {
 				t.Errorf("%s: got %q, %v; want error with %q", c.name, got, err, c.errHas)
@@ -238,7 +238,7 @@ func TestOrigin(t *testing.T) {
 		}
 	}
 	r := Route{Server: "s", Port: 8443, Scheme: "https"}
-	if got, _ := origin(publishing(map[string]string{"443/tcp": "8443"}), r, host); got != "https://localhost:8443" {
+	if got, _ := origin(publishing(map[string]string{"443/tcp": "8443"}), r, host, ""); got != "https://localhost:8443" {
 		t.Errorf("https: %s", got)
 	}
 }

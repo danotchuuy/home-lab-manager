@@ -174,7 +174,10 @@ export interface PortSummary {
 
 export interface Server {
   id: string;
+  /** Ends in @host for a server on another Docker host. */
   name: string;
+  /** The Docker host it's on: "local", or another host's ID. */
+  host: string;
   app: string;
   templateId: string;
   image: string;
@@ -421,6 +424,7 @@ export interface DeployEvent {
     // hlm's own updates:
     | "download"
     | "verify"
+    | "log"
     | "install"
     | "restart"
     // imports and clones:
@@ -1783,4 +1787,54 @@ export interface MetricHistory {
 export interface MetricsSettings {
   /** Addresses and ranges that may read /metrics without a key. */
   allowFrom: string[];
+}
+
+/** A Docker host servers can be on. Admins see how it's reached. */
+export interface DockerHost {
+  id: string;
+  name: string;
+  local?: boolean;
+  status?: { id: string; ok: boolean; error?: string; checked: string };
+  kind?: "tcp" | "ssh";
+  url?: string;
+  ca?: string;
+  cert?: string;
+  hasKey?: boolean;
+  ssh?: { host: string; port: number; user: string; hostKey?: string };
+  socket?: string;
+  appdataRoot?: string;
+  address?: string;
+}
+
+/** A host to save: the TLS client key is only ever sent, never shown. */
+export type DockerHostInput = DockerHost & { key?: string };
+
+export interface DockerVersion {
+  version: string;
+  apiVersion: string;
+  os: string;
+  arch: string;
+}
+
+/** What hlm found on an SSH host, and how it would set Docker up there. */
+export interface HostInspection {
+  os: string;
+  id: string;
+  version: string;
+  codename: string;
+  arch: string;
+  user: string;
+  root: boolean;
+  sudo: boolean;
+  docker: boolean;
+  running: boolean;
+  dockerVersion?: string;
+  inGroup: boolean;
+  systemd: boolean;
+  ready: boolean;
+  distro?: string;
+  script?: string;
+  canSetUp: boolean;
+  reason?: string;
+  notes?: string[];
 }

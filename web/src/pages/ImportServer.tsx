@@ -4,6 +4,7 @@ import { api } from "../api";
 import { AppIcon } from "../components/common";
 import { ConfigForm } from "../components/ConfigForm";
 import { DeployProgress } from "../components/DeployProgress";
+import { HostPicker } from "../components/HostPicker";
 import { TransferNotes } from "../components/TransferNotes";
 import type { DeployEvent, DeployRequest, ServerExport, TransferPreview } from "../types";
 
@@ -15,6 +16,7 @@ export function ImportServerPage() {
   const [error, setError] = useState<string>();
   const [events, setEvents] = useState<DeployEvent[]>([]);
   const [running, setRunning] = useState(false);
+  const [host, setHost] = useState("local");
 
   async function choose(e: ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -30,8 +32,19 @@ export function ImportServerPage() {
       } catch {
         throw new Error("That isn't a server exported from hlm (it isn't JSON).");
       }
-      setPreview(await api.previewImport(exp));
+      setPreview(await api.previewImport(exp, host));
       setFile(exp);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  // Paths and ports are worked out for the host it goes on.
+  async function changeHost(h: string) {
+    setHost(h);
+    if (!file) return;
+    try {
+      setPreview(await api.previewImport(file, h));
     } catch (err) {
       setError((err as Error).message);
     }
@@ -43,10 +56,15 @@ export function ImportServerPage() {
     setEvents([]);
     let created: string | undefined;
     try {
-      await api.importServer(file, req, (e) => {
-        setEvents((prev) => [...prev, e]);
-        if (e.stage === "done" && e.server) created = e.server.name;
-      });
+      await api.importServer(
+        file,
+        req,
+        (e) => {
+          setEvents((prev) => [...prev, e]);
+          if (e.stage === "done" && e.server) created = e.server.name;
+        },
+        host,
+      );
     } catch (e) {
       setEvents((prev) => [...prev, { stage: "error", message: (e as Error).message }]);
     } finally {
@@ -67,6 +85,7 @@ export function ImportServerPage() {
         into it afterwards, or copy the files across.
       </p>
       <div className="card">
+        <HostPicker value={host} onChange={changeHost} />
         <input type="file" accept=".json,application/json" onChange={choose} disabled={running} />
         {error && <div className="alert error">{error}</div>}
       </div>
@@ -86,10 +105,11 @@ export function ImportServerPage() {
           <TransferNotes preview={preview} />
           {events.length > 0 && <DeployProgress events={events} />}
           <ConfigForm
-            key={file.exported}
+            key={file.exported + host}
             app={preview.app}
             initial={preview.request}
             isNew
+            host={host}
             submitLabel={running ? "Installing…" : "Install & start"}
             busy={running}
             onSubmit={install}
