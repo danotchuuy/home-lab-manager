@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { TwoFactorCard } from "./TwoFactor";
 import { api } from "../api";
 import { MySignIns } from "./ActivityLog";
 import type { AuthStatus, ServerGroup } from "../types";
@@ -61,6 +62,13 @@ export function MyAccount() {
         </form>
       )}
       {result && <div className={`alert ${result.ok ? "success" : "error"}`}>{result.text}</div>}
+      {user?.method === "local" && user.username && status.twoFactor && (
+        <TwoFactorCard
+          username={user.username}
+          status={status.twoFactor}
+          onChange={() => api.authStatus().then(setStatus, () => {})}
+        />
+      )}
       {user?.method === "local" && user.username && (
         <>
           <h3>SSH keys</h3>

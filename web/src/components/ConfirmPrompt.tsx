@@ -3,6 +3,8 @@ import { api, setConfirmer } from "../api";
 
 interface Ask {
   method: string;
+  /** The account uses two-factor, so a code is needed too. */
+  twoFactor: boolean;
   resolve: (ok: boolean) => void;
 }
 
@@ -15,11 +17,12 @@ interface Ask {
 export function ConfirmPrompt() {
   const [ask, setAsk] = useState<Ask>();
   const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
 
   useEffect(() => {
-    setConfirmer((method) => new Promise<boolean>((resolve) => setAsk({ method, resolve })));
+    setConfirmer((method, twoFactor) => new Promise<boolean>((resolve) => setAsk({ method, twoFactor, resolve })));
     return () => setConfirmer(undefined);
   }, []);
 
@@ -28,6 +31,7 @@ export function ConfirmPrompt() {
     ask.resolve(ok);
     setAsk(undefined);
     setPassword("");
+    setCode("");
     setError(undefined);
   };
 
@@ -36,7 +40,7 @@ export function ConfirmPrompt() {
     setBusy(true);
     setError(undefined);
     try {
-      await api.confirm(password);
+      await api.confirm(password, ask?.twoFactor ? code : undefined);
       done(true);
     } catch (err) {
       setError((err as Error).message);
@@ -71,9 +75,15 @@ export function ConfirmPrompt() {
               <span className="field-label">Your password</span>
               <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" autoFocus required />
             </label>
+            {ask.twoFactor && (
+              <label className="field">
+                <span className="field-label">Code from your authenticator app (or a recovery code)</span>
+                <input value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" required />
+              </label>
+            )}
             {error && <div className="alert error">{error}</div>}
             <div className="btn-row">
-              <button className="btn primary" type="submit" disabled={busy || !password}>
+              <button className="btn primary" type="submit" disabled={busy || !password || (ask.twoFactor && !code.trim())}>
                 {busy ? "Checking…" : "Confirm"}
               </button>
               <button type="button" className="btn ghost" onClick={() => done(false)}>

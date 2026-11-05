@@ -2,6 +2,26 @@
 
 **Priority:** Medium · **Depends on:** nothing
 
+> **Status: TOTP done; passkeys not started** (branch `feature/12-two-factor`). See the README's
+> [Two-factor sign-in](../README.md#two-factor-sign-in). Passkeys (v2) were left for later by choice: they need
+> CBOR/COSE parsing, and adding `go-webauthn` (or writing a parser) is a separate decision. Where the TOTP result
+> differs from this plan:
+>
+> - **QR code:** drawn by hlm on the server, by a small in-repo encoder (`internal/qr`: byte mode, level M, versions
+>   1–10), returned as SVG with the setup. Not client-side, but the secret still never leaves hlm. The encoder's output
+>   for versions 1–10 (and the code as rendered in the browser) was checked with zbar.
+> - **Stored fields:** `Account.TwoFactor {secret, recovery hashes, lastStep, enabled}` and `Account.Pending` (a secret
+>   being set up, good for 15 minutes), in the encrypted secrets store.
+> - **Setup during sign-in:** for an account that has to use two-factor and doesn't yet, the password gives a half
+>   sign-in for setup, with `POST /api/auth/login/2fa/setup` and `/enable`, rather than a full session first. So
+>   requiring it can't be dodged by not setting it up.
+> - **Turning it off yourself** isn't allowed while it's required for your account; an admin's **Reset** (or
+>   `hlm reset-password --reset-2fa`) is.
+> - **Policies:** account endpoints use the `signedIn` policy and check "own account at a browser" (or admin, for
+>   resets) in the handler, plus a confirmed session for setup, recovery codes and turning it off. Enabling (which
+>   needs a right code from the new secret) doesn't need a confirmation of its own.
+> - **Recovery codes** are 10 characters (`xxxxx-xxxxx`, 50 bits), hashed with argon2id.
+
 ## Why
 
 hlm controls the Docker socket, which is root on the host. Local accounts are protected by a password (argon2id, with
@@ -66,12 +86,12 @@ lockout backoff). SSO users get MFA from their provider, but local accounts — 
 
 ## Tasks
 
-- [ ] TOTP implementation + tests
-- [ ] Account fields + recovery codes
-- [ ] Two-step login + half-session cookie
-- [ ] Confirm step asks for code
-- [ ] Require-2FA setting + forced setup
-- [ ] Admin reset + CLI flag
-- [ ] UI: setup with QR, recovery codes, sign-in code page
+- [x] TOTP implementation + tests
+- [x] Account fields + recovery codes
+- [x] Two-step login + half-session cookie
+- [x] Confirm step asks for code
+- [x] Require-2FA setting + forced setup
+- [x] Admin reset + CLI flag
+- [x] UI: setup with QR, recovery codes, sign-in code page
 - [ ] (v2) Passkeys
-- [ ] README section
+- [x] README section

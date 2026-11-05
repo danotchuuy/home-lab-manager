@@ -3555,3 +3555,41 @@ ul.target-list .btn-row {
 .target-form {
   margin-top: 0.75rem;
 }
+
+/* Two-factor */
+.two-factor-setup .qr {
+  width: 220px;
+  height: 220px;
+  margin: 0.75rem 0;
+  background: #fff;
+  border-radius: 6px;
+}
+
+.two-factor-setup .qr svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+code.secret {
+  user-select: all;
+  word-break: break-all;
+}
+
+.recovery-codes ol.codes {
+  columns: 2;
+  margin: 0.75rem 0;
+  font-size: 0.95rem;
+}
+
+.two-factor-card {
+  margin: 1rem 0;
+}
+
+.require-2fa {
+  margin-top: 0.75rem;
+}
+
+.require-2fa select {
+  width: auto;
+}

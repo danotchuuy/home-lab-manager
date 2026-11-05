@@ -160,10 +160,12 @@ func (s *server) stepUp(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	if !s.Auth.Confirmed(*u) {
-		writeJSON(w, http.StatusForbidden, map[string]string{
+		writeJSON(w, http.StatusForbidden, map[string]any{
 			"error":  "confirm it's you first: this changes who can get in",
 			"code":   "confirm_required",
 			"method": u.Method,
+			// The prompt asks for the authenticator app's code too.
+			"twoFactor": u.Method == auth.MethodLocal && s.Auth.HasTwoFactor(u.Username),
 		})
 		return false
 	}
@@ -176,14 +178,17 @@ func (s *server) stepUp(w http.ResponseWriter, r *http.Request) bool {
 func (s *server) confirmSession(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Password string `json:"password"`
+		Code     string `json:"code"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 8<<10)).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	u, err := s.Auth.ConfirmPassword(w, r, in.Password)
+	u, err := s.Auth.ConfirmPassword(w, r, in.Password, in.Code)
 	var le *auth.LoginError
 	switch {
+	case errors.Is(err, auth.ErrCodeNeeded):
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error(), "code": "code_required"})
 	case errors.As(err, &le):
 		if le.RetryAfter > 0 {
 			w.Header().Set("Retry-After", strconv.Itoa(int(le.RetryAfter.Seconds())+1))

@@ -19,6 +19,7 @@ import (
 var auditNames = map[string]string{
 	// Recorded by the sign-in service, with the username and outcome.
 	"POST /api/auth/login":         "-",
+	"POST /api/auth/login/2fa":     "-",
 	"POST /api/auth/logout":        "-",
 	"POST /api/auth/ssh/challenge": "-",
 	"POST /api/auth/ssh/login":     "-",

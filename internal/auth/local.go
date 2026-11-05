@@ -52,6 +52,10 @@ type Account struct {
 	Role rbac.Role `json:"role,omitempty"`
 	// SSHKeys can sign in as this account through the API.
 	SSHKeys []SSHKey `json:"sshKeys,omitempty"`
+	// TwoFactor is the account's authenticator app, if it uses one, and
+	// Pending a new one being set up.
+	TwoFactor *TwoFactor        `json:"twoFactor,omitempty"`
+	Pending   *pendingTwoFactor `json:"pendingTwoFactor,omitempty"`
 }
 
 // role returns the account's global role. An account without one predates
@@ -64,7 +68,11 @@ func (a Account) role() rbac.Role {
 }
 
 func (a Account) info() AccountInfo {
-	return AccountInfo{a.Username, a.Created, a.PasswordChanged, a.role(), len(a.SSHKeys)}
+	i := AccountInfo{Username: a.Username, Created: a.Created, PasswordChanged: a.PasswordChanged, Role: a.role(), SSHKeys: len(a.SSHKeys)}
+	if a.TwoFactor != nil {
+		i.TwoFactor, i.RecoveryLeft = true, len(a.TwoFactor.Recovery)
+	}
+	return i
 }
 
 // version identifies the account's current password, so a new one ends
@@ -78,6 +86,10 @@ type AccountInfo struct {
 	PasswordChanged time.Time `json:"passwordChanged"`
 	Role            rbac.Role `json:"role"`
 	SSHKeys         int       `json:"sshKeys"`
+	// TwoFactor says the account uses an authenticator app; RecoveryLeft is
+	// how many of its recovery codes are unused.
+	TwoFactor    bool `json:"twoFactor"`
+	RecoveryLeft int  `json:"recoveryLeft,omitempty"`
 }
 
 func (s *Service) accounts() []Account {
@@ -218,6 +230,16 @@ func (s *Service) SetAccountRole(r *http.Request, username string, role rbac.Rol
 // guesses as signing in, so a stolen session can't change it without
 // knowing it.
 func (s *Service) VerifyPassword(username, password string) error {
+	if err := s.checkPasswordGuess(username, password); err != nil {
+		return err
+	}
+	s.limiter.succeed(strings.ToLower(strings.TrimSpace(username)))
+	return nil
+}
+
+// checkPasswordGuess is VerifyPassword without forgetting earlier failures,
+// for when a second factor is still to come.
+func (s *Service) checkPasswordGuess(username, password string) error {
 	key := strings.ToLower(strings.TrimSpace(username))
 	if wait := s.limiter.wait(key, s.now()); wait > 0 {
 		return &LoginError{fmt.Errorf("too many wrong passwords for %s; try again in %s", username, roundUp(wait)), wait}
@@ -230,7 +252,6 @@ func (s *Service) VerifyPassword(username, password string) error {
 	if !passwordMatches(hash, password) || !ok {
 		return &LoginError{errors.New("wrong password"), s.limiter.fail(key, s.now())}
 	}
-	s.limiter.succeed(key)
 	return nil
 }
 
@@ -298,8 +319,10 @@ func (s *Service) DeleteAccount(r *http.Request, username string) error {
 
 // ResetPassword gives an account a new random password and returns it. It's
 // for "hlm reset-password", when nobody can sign in. An account it has to
-// create is an admin; makeAdmin makes an existing account one too.
-func (s *Service) ResetPassword(username string, makeAdmin bool) (password string, created bool, err error) {
+// create is an admin; makeAdmin makes an existing account one too, and
+// resetTwoFactor turns off its two-factor (it's asked for again at the next
+// sign-in if required).
+func (s *Service) ResetPassword(username string, makeAdmin, resetTwoFactor bool) (password string, created bool, err error) {
 	b := make([]byte, 15)
 	if _, err := rand.Read(b); err != nil {
 		return "", false, err
@@ -311,7 +334,12 @@ func (s *Service) ResetPassword(username string, makeAdmin bool) (password strin
 		}
 		if makeAdmin {
 			// Whoever runs this is on the host, so there's no lockout to prevent.
-			_, err = s.SetAccountRole(nil, username, rbac.Admin)
+			if _, err = s.SetAccountRole(nil, username, rbac.Admin); err != nil {
+				return "", false, err
+			}
+		}
+		if resetTwoFactor {
+			err = s.DisableTwoFactor(username, true)
 		}
 		return password, false, err
 	}
@@ -433,17 +461,16 @@ func (s *Service) LocalLogin(w http.ResponseWriter, r *http.Request) (User, erro
 		}
 		return User{}, &LoginError{ErrBadLogin, wait}
 	}
-	s.limiter.succeed(key)
-	u := User{
-		Method: MethodLocal, Subject: "local:" + a.Username, Username: a.Username, Version: a.version(),
-		Expires: s.now().Add(s.config().sessionLength()),
+	// The password is right; a second factor may still be needed. Failures
+	// aren't forgotten until it's given, so codes count towards them too.
+	if a.TwoFactor != nil || s.mustUseTwoFactor(a) {
+		setup := a.TwoFactor == nil
+		if err := s.startHalf(w, r, a, setup); err != nil {
+			return User{}, err
+		}
+		return User{}, &TwoFactorNeeded{Setup: setup}
 	}
-	if err := s.startSession(w, u, secureRequest(r)); err != nil {
-		return User{}, err
-	}
-	s.log.Info("signed in", "user", a.Username, "method", MethodLocal)
-	s.record(audit.Entry{Actor: a.Username, ActorKind: audit.ActorLocal, IP: clientIP(r), Action: "auth.login"})
-	return u, nil
+	return s.finishLogin(w, r, a, "")
 }
 
 func roundUp(d time.Duration) time.Duration {

@@ -1315,11 +1315,44 @@ sign-on, or single sign-on when there are no local accounts.
 
 **Locked out?** On the host, `docker exec home-lab-manager hlm reset-password admin` prints a new random password for
 `admin` (creating the account, as an admin, if there isn't one), ending its existing sessions. Add `--admin` to make an
-existing account an admin. For a binary install, run `hlm reset-password admin` with the same `HLM_DATA_DIR` (and `HLM_SECRET_KEY`, if set) as the server.
+existing account an admin, and `--reset-2fa` to turn off its [two-factor sign-in](#two-factor-sign-in) when its phone
+and recovery codes are lost. For a binary install, run `hlm reset-password admin` with the same `HLM_DATA_DIR` (and `HLM_SECRET_KEY`, if set) as the server.
 
 **Local accounts** need passwords of at least 10 characters. After five wrong passwords for a username, more attempts
 are refused for 30 seconds, doubling with each further wrong password up to 15 minutes. Changing a password ends the
 account's other sessions; removing an account ends all of them.
+
+### Two-factor sign-in
+
+Local accounts can add a second step to signing in: a 6-digit code from an authenticator app (Aegis, 2FAS, Google
+Authenticator, 1Password, Bitwarden, …), so a leaked password alone isn't enough. Single sign-on users get theirs from
+their provider. API keys, SSH tokens and `HLM_TOKEN` aren't affected; they're already a separate credential, limited by
+**allowed from**.
+
+- **Setting it up.** **My account** (members) or **System → Sign-in** (admins, for their own account) → **Set up
+  two-factor**, after confirming it's you.
+  - hlm shows a QR code and the key as text. hlm draws the QR code itself, so the key isn't sent to any other site.
+  - Enter the code the app shows to turn it on.
+  - You get **10 recovery codes**, shown once: each signs in once in place of a code, if the phone is lost. Copy or
+    download them.
+  - **New recovery codes** replaces them, and **Set up again** moves it to a new phone.
+- **Signing in** then takes the password, then the code (or a recovery code) within 5 minutes.
+  - Codes are TOTP (RFC 6238: 30 seconds, SHA-1, 6 digits). One step of clock drift either way is allowed, and a code
+    can't be used twice.
+  - Wrong codes count towards the same lockout as wrong passwords.
+  - Confirming it's you asks for a code too.
+- **Requiring it.** **System → Sign-in → Require two-factor sign-in for local accounts**: for admins, or for every
+  local account.
+  - It can only be turned on by someone who has it themselves (or who signed in with single sign-on), so it can't lock
+    out the person turning it on.
+  - Accounts that have to use it and don't yet set it up right after their password at the next sign-in.
+  - They can't turn it off themselves while it's required.
+- **Lost phone.**
+  - Use a recovery code.
+  - Or an admin clicks **Reset** in the accounts table (the account then signs in with its password, or sets it up
+    again if required).
+  - Or, on the host: `hlm reset-password <user> --reset-2fa`.
+- **Passkeys** (WebAuthn) aren't supported yet.
 
 ### Roles and server groups
 
@@ -1367,7 +1400,7 @@ someone can't see answer 404, as if they didn't exist.
 Changes that could give someone lasting access take a person at a browser who has confirmed it's them in the last 10
 minutes: making API keys and changing where they work from, adding SSH keys, adding accounts and setting their
 passwords and roles, changing server groups, and changing sign-in and single sign-on settings. hlm asks for your
-password, or, if you signed in with single sign-on, sends you to sign in there again. hlm checks the provider's
+password (and, with [two-factor](#two-factor-sign-in), a code), or, if you signed in with single sign-on, sends you to sign in there again. hlm checks the provider's
 `auth_time` to make sure it really asked, so a provider that ignores `prompt=login` can't confirm; use a local account
 then.
 
@@ -1613,15 +1646,21 @@ when the `HLM_*` one isn't set.
 |------------------------------------------------|-----------------------------------------------------------------------------------|
 | `GET /api/status`                              | Docker and catalog status.                                                        |
 | `GET /api/auth/status`                         | How to sign in, and who is signed in. Needs no sign-in.                           |
-| `POST /api/auth/login`                         | `{username, password}`: sign in with a local account (send `X-HLM-Request: 1`). Needs no sign-in. |
+| `POST /api/auth/login`                         | `{username, password}`: sign in with a local account (send `X-HLM-Request: 1`). Needs no sign-in. For an account with two-factor, the answer is `{twoFactor: true}` (or `{twoFactorSetup: true}` when it has to set it up) and a short-lived cookie for the next step. |
+| `POST /api/auth/login/2fa`                     | `{code}`: finish signing in with an authenticator or recovery code.               |
+| `POST /api/auth/login/2fa/setup`, `.../enable` | During sign-in, for an account that has to use two-factor: get the secret (`{secret, url, qr}`), then `{code}` to turn it on and finish signing in (`{recoveryCodes}`). |
+| `POST /api/auth/accounts/{username}/2fa/setup` | Start setting up your own two-factor: `{secret, url, qr}` (a [confirmed](#confirming-its-you) session). |
+| `POST /api/auth/accounts/{username}/2fa/enable` | `{code}`: turn it on; answers the recovery codes, once.                         |
+| `POST /api/auth/accounts/{username}/2fa/recovery` | New recovery codes for your own account (confirmed).                          |
+| `DELETE /api/auth/accounts/{username}/2fa`     | Turn off your own two-factor (unless it's required), or, as an admin, reset someone's (confirmed). |
 | `POST /api/auth/logout`                        | Ends the session (send `X-HLM-Request: 1`).                                       |
-| `GET/PUT /api/auth/config`                     | `{required, sessionHours}`. Requiring sign-in needs a signed-in session.          |
+| `GET/PUT /api/auth/config`                     | `{required, sessionHours, requireTwoFactor}` (`requireTwoFactor`: empty, `admins` or `all`). Requiring sign-in needs a signed-in session; requiring two-factor, one that has it (or single sign-on). |
 | `GET/POST /api/auth/accounts`                  | Local accounts; `POST {username, password, role}` adds one.                       |
 | `PUT /api/auth/accounts/{username}/password`   | `{password}`: sets a new password, ending the account's other sessions. Members change only their own, and send `current` too. |
 | `PUT /api/auth/accounts/{username}/role`       | `{role}`: `admin` or `member`.                                                    |
 | `DELETE /api/auth/accounts/{username}`         | Removes an account.                                                               |
 | `GET/POST /api/auth/accounts/{username}/ssh-keys`, `PUT/DELETE …/ssh-keys/{id}` | [SSH keys](#ssh-keys) of an account, for an admin or the account itself. `POST {publicKey, name?, allowFrom?}` and `PUT {allowFrom}` need a [confirmed](#confirming-its-you) session. |
-| `POST /api/auth/confirm`                       | Confirm a password session for 10 minutes: `{password}`. Single sign-on confirms at `/auth/login?confirm=1`. |
+| `POST /api/auth/confirm`                       | Confirm a password session for 10 minutes: `{password, code?}` (the code for accounts with two-factor). Single sign-on confirms at `/auth/login?confirm=1`. |
 | `GET/PUT /api/system/https`, `POST /api/system/https/renew` | [HTTPS](#https) settings and certificate status; `PUT {enabled, domain, email?, staging?}` needs a [confirmed](#confirming-its-you) session. |
 | `POST /api/auth/download-ticket`               | `{url}` of a backup download returns a URL that works once, for a minute, from the same address: for downloads when signed in with a token. |
 | `POST /api/auth/ssh/challenge`, `POST /api/auth/ssh/login` | Sign in with an SSH key: `{username}` returns `{challenge}`; `{challenge, signature}` returns `{token, expires}`. |

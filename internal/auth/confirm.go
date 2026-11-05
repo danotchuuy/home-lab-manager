@@ -9,6 +9,7 @@ import (
 	"errors"
 	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -28,8 +29,13 @@ func (s *Service) Confirmed(u User) bool {
 	return !u.Confirmed.IsZero() && now.Sub(u.Confirmed) < ConfirmWindow && !u.Confirmed.After(now.Add(time.Minute))
 }
 
-// ConfirmPassword confirms the request's session with its account's password.
-func (s *Service) ConfirmPassword(w http.ResponseWriter, r *http.Request, password string) (User, error) {
+// ErrCodeNeeded is returned when confirming an account with two-factor
+// without its code.
+var ErrCodeNeeded = errors.New("enter the code from your authenticator app too")
+
+// ConfirmPassword confirms the request's session with its account's password,
+// and code if it uses two-factor.
+func (s *Service) ConfirmPassword(w http.ResponseWriter, r *http.Request, password, code string) (User, error) {
 	u, ok := s.Session(r)
 	if !ok {
 		return User{}, ErrNoSession
@@ -37,12 +43,24 @@ func (s *Service) ConfirmPassword(w http.ResponseWriter, r *http.Request, passwo
 	if u.Method != MethodLocal {
 		return User{}, ErrConfirmWithSSO
 	}
-	if err := s.VerifyPassword(u.Username, password); err != nil {
+	if err := s.checkPasswordGuess(u.Username, password); err != nil {
 		s.log.Warn("refused confirmation", "user", u.Username, "remote", r.RemoteAddr)
 		s.record(audit.Entry{Actor: u.Username, ActorKind: audit.ActorLocal, IP: clientIP(r), Action: "auth.confirm",
 			Result: audit.ResultDenied, Error: "wrong password"})
 		return User{}, err
 	}
+	if s.HasTwoFactor(u.Username) {
+		if cleanCode(code) == "" {
+			return User{}, ErrCodeNeeded
+		}
+		if _, ok := s.useCode(u.Username, code); !ok {
+			wait := s.limiter.fail(strings.ToLower(u.Username), s.now())
+			s.record(audit.Entry{Actor: u.Username, ActorKind: audit.ActorLocal, IP: clientIP(r), Action: "auth.confirm",
+				Result: audit.ResultDenied, Error: "wrong two-factor code"})
+			return User{}, &LoginError{errors.New("that code isn't right"), wait}
+		}
+	}
+	s.limiter.succeed(strings.ToLower(u.Username))
 	u.Confirmed = s.now().UTC()
 	if err := s.startSession(w, u, secureRequest(r)); err != nil {
 		return User{}, err

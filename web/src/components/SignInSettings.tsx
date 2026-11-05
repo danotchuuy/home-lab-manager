@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, UNAUTHORIZED_EVENT } from "../api";
-import type { Account, AuthConfig, AuthStatus, Role } from "../types";
+import type { Account, AuthConfig, AuthStatus, RequireTwoFactor, Role } from "../types";
+import { TwoFactorCard } from "./TwoFactor";
 import { timeAgo } from "../util";
 import { Spinner } from "./common";
 import { SSHKeys } from "./SSHKeys";
@@ -115,14 +116,43 @@ export function SignInSettings() {
           {busy === "hours" ? "Saving…" : "Save"}
         </button>
       </form>
+      <div className="field require-2fa">
+        <span className="field-label">Require two-factor sign-in for local accounts</span>
+        <select
+          value={config.requireTwoFactor ?? ""}
+          disabled={!!busy || (!config.requireTwoFactor && me?.method === "local" && !status.twoFactor?.enabled)}
+          onChange={(e) => {
+            const requireTwoFactor = e.target.value as RequireTwoFactor;
+            run("2fa", async () => {
+              await api.saveAuthConfig({ ...config, requireTwoFactor });
+              return requireTwoFactor
+                ? `Two-factor is required for ${requireTwoFactor === "all" ? "every local account" : "admins"}. Accounts without it set it up at their next sign-in.`
+                : "Two-factor isn't required any more; accounts that have it keep it.";
+            });
+          }}
+        >
+          <option value="">Not required (each account chooses)</option>
+          <option value="admins">Required for admins</option>
+          <option value="all">Required for every local account</option>
+        </select>
+        <span className="field-help">
+          {!config.requireTwoFactor && me?.method === "local" && !status.twoFactor?.enabled
+            ? "Set up two-factor for your own account first (below), so requiring it can't lock you out."
+            : "Accounts that have to use it and don't yet set it up right after their password at the next sign-in. Single sign-on and API keys aren't affected: the provider handles its own."}
+        </span>
+      </div>
       {result && <div className={`alert ${result.ok ? "success" : "error"}`}>{result.text}</div>}
+
+      {me?.method === "local" && me.username && status.twoFactor && (
+        <TwoFactorCard username={me.username} status={status.twoFactor} onChange={() => load().catch(() => {})} />
+      )}
 
       <h3>Local accounts</h3>
       <p className="muted small no-margin">
         A username and password kept by Home Lab Manager, for when single sign-on is down or there isn&apos;t any. If
         nobody can sign in, <code>docker exec home-lab-manager hlm reset-password admin</code> on the host prints a new
         password for <code>admin</code> (making the account if needed). Add <code>--admin</code> to make an existing
-        account an admin. Admins can do everything; members get only what server groups give them.
+        account an admin, and <code>--reset-2fa</code> to turn off its two-factor sign-in if its phone is lost. Admins can do everything; members get only what server groups give them.
       </p>
       {accounts.length > 0 && (
         <div className="table-scroll">
@@ -132,6 +162,7 @@ export function SignInSettings() {
                 <th>Username</th>
                 <th>Role</th>
                 <th>Password changed</th>
+                <th>Two-factor</th>
                 <th />
               </tr>
             </thead>
@@ -182,6 +213,14 @@ function AccountRow({ account, me, busy, run, onChange }: { account: Account; me
     });
   }
 
+  function resetTwoFactor() {
+    if (!confirm(`Reset ${account.username}'s two-factor sign-in, for a lost phone? Until they set it up again, their password alone signs in (or, if it's required, they set it up at their next sign-in).`)) return;
+    run("2fa-reset", async () => {
+      await api.disableTwoFactor(account.username);
+      return `Reset ${account.username}'s two-factor sign-in.`;
+    });
+  }
+
   function remove() {
     if (!confirm(`Remove the account ${account.username}? Its sessions end.`)) return;
     run("delete", async () => {
@@ -208,6 +247,20 @@ function AccountRow({ account, me, busy, run, onChange }: { account: Account; me
           </select>
         </td>
         <td title={account.passwordChanged}>{timeAgo(account.passwordChanged)}</td>
+        <td>
+          {account.twoFactor ? (
+            <span title={`${account.recoveryLeft ?? 0} recovery codes left`}>
+              On{" "}
+              {!me && (
+                <button type="button" className="link-button" onClick={resetTwoFactor} disabled={busy}>
+                  Reset
+                </button>
+              )}
+            </span>
+          ) : (
+            <span className="muted">Off</span>
+          )}
+        </td>
         <td className="actions">
           <button type="button" className="btn small ghost" onClick={() => setChanging((v) => !v)} disabled={busy}>
             Change password
@@ -222,14 +275,14 @@ function AccountRow({ account, me, busy, run, onChange }: { account: Account; me
       </tr>
       {showKeys && (
         <tr>
-          <td colSpan={4}>
+          <td colSpan={5}>
             <SSHKeys username={account.username} onChange={onChange} />
           </td>
         </tr>
       )}
       {changing && (
         <tr>
-          <td colSpan={4}>
+          <td colSpan={5}>
             <form className="inline-form" onSubmit={change}>
               <label className="field">
                 <span className="field-label">New password</span>

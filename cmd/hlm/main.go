@@ -564,12 +564,14 @@ func runHelper(log *slog.Logger, args []string) error {
 // resetPassword gives a local account a new random password, creating the
 // account if needed, for when nobody can sign in. In Docker:
 // docker exec home-lab-manager hlm reset-password admin
-// With --admin, an existing account also becomes an admin.
+// With --admin, an existing account also becomes an admin; with
+// --reset-2fa, its two-factor sign-in is turned off.
 func resetPassword(args []string) error {
 	makeAdmin := slices.Contains(args, "--admin")
-	args = slices.DeleteFunc(slices.Clone(args), func(a string) bool { return a == "--admin" })
+	reset2FA := slices.Contains(args, "--reset-2fa")
+	args = slices.DeleteFunc(slices.Clone(args), func(a string) bool { return a == "--admin" || a == "--reset-2fa" })
 	if len(args) != 1 {
-		return errors.New("usage: hlm reset-password <username> [--admin]")
+		return errors.New("usage: hlm reset-password <username> [--admin] [--reset-2fa]")
 	}
 	dataDir := env("HLM_DATA_DIR", "./data")
 	store, err := secrets.Open(filepath.Join(dataDir, "secrets"), env("HLM_SECRET_KEY", ""))
@@ -578,7 +580,7 @@ func resetPassword(args []string) error {
 	}
 	quiet := slog.New(slog.DiscardHandler)
 	service := auth.New(store, false, quiet)
-	password, created, err := service.ResetPassword(args[0], makeAdmin)
+	password, created, err := service.ResetPassword(args[0], makeAdmin, reset2FA)
 	if err != nil {
 		return err
 	}
@@ -591,6 +593,9 @@ func resetPassword(args []string) error {
 		if makeAdmin {
 			details["admin"] = "yes"
 		}
+		if reset2FA {
+			details["twoFactor"] = "reset"
+		}
 		l.Record(audit.Entry{Actor: "host", ActorKind: audit.ActorHost, Action: action, Target: args[0], Details: details})
 		l.Close()
 	}
@@ -601,6 +606,12 @@ func resetPassword(args []string) error {
 	fmt.Printf("%s for %s: %s\nSign in with it, then change it under System → Sign-in.\n", what, args[0], password)
 	if service.AccountRole(args[0]) != rbac.Admin {
 		fmt.Printf("%s is a member, not an admin. Add --admin to make it one.\n", args[0])
+	}
+	switch {
+	case reset2FA:
+		fmt.Printf("Two-factor sign-in is off for %s; if it's required, it's set up again when signing in.\n", args[0])
+	case service.HasTwoFactor(args[0]):
+		fmt.Printf("%s still uses two-factor sign-in: add --reset-2fa if its authenticator app is lost.\n", args[0])
 	}
 	return nil
 }
