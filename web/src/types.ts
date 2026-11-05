@@ -178,6 +178,10 @@ export interface Server {
   name: string;
   /** The Docker host it's on: "local", or another host's ID. */
   host: string;
+  /** Labels a manager gave it. */
+  tags?: string[];
+  /** Pinned to the top of the list by the person looking. */
+  favourite?: boolean;
   app: string;
   templateId: string;
   image: string;

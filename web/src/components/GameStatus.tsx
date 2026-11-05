@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api } from "../api";
 import type { GameStatus, GameStatusKind, GameSummary, QueryProtocol, QueryResult, QuerySettings } from "../types";
 import { usePoll } from "../usePoll";
-import { timeAgo } from "../util";
+import { Ago } from "./common";
 
 const STATUS_LABEL: Record<GameStatusKind, string> = {
   online: "Online",
@@ -171,7 +171,12 @@ export function GameStatusCard({ server, running, canManage }: { server: string;
       <div className="muted small">
         {st.status !== "online" && STATUS_HELP[st.status]}
         {st.method && ` Checked with: ${PROTOCOL_LABEL[st.method.protocol]}${st.method.port ? `, port ${st.method.port}` : ""}`}
-        {st.checked && `, ${timeAgo(st.checked)}.`}
+        {st.checked && (
+          <>
+            {st.method ? ", " : " Checked "}
+            <Ago iso={st.checked} />.
+          </>
+        )}
         {canManage && (
           <>
             {" "}

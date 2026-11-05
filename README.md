@@ -1371,6 +1371,31 @@ container. It can't see other devices on your LAN, so keep macvlan addresses out
 With macvlan, the Docker host itself can't reach the containers (a Linux kernel limitation); other machines on the LAN
 can. Web UI links for macvlan servers use the server's own IP.
 
+## Using the web UI
+
+- **Theme.** The ◐ button in the header switches between the system's setting, light and dark; the choice is kept in
+  the browser.
+- **The server list** has a search (name, app, image, tags, host, address or port: every word has to match), filters
+  for state (running, stopped, with a problem, with an update), server group, tag and Docker host, and a sort by name,
+  state, CPU, memory or players. The view is in the page's address, so it can be bookmarked or shared.
+- **Favourites.** ☆ pins a server to the top of the list. Favourites are each person's own (each account, single
+  sign-on user or API key; everyone shares one set while sign-in isn't required) and follow them to other browsers.
+- **Tags.** Managers can give a server up to 10 tags on its page (**+ Add tags**). Clicking a tag shows the servers
+  with it.
+- **Bulk actions.** Tick servers (or **Select all** for what's shown) to start, stop, restart, update or back them up
+  together. Each server is checked against your role on it; ones you can't act on are skipped and reported, and the
+  progress shows each server's outcome.
+- **Connect.** **Copy address** on a server's card copies where players connect (the server's host and published
+  port); its page has a **Connect** card with every port and **Copy all**, as one message to send to players.
+- **Notices.** When an install or update finishes while you're on another page, a notice says so (click it to open
+  the server).
+- **Keyboard.** `/` searches the server list, `Ctrl K` (`⌘ K`) opens the command palette (go to a server or page, or
+  start, stop or restart a server by typing, e.g. `restart valheim`), `g s` / `g c` / `g h` / `g y` go to Servers,
+  Catalog, Host and System, and `?` lists the shortcuts.
+- **Phones.** The layout fits narrow screens, with larger touch targets, and hlm can be added to the home screen (it has
+  a web app manifest and icons).
+- **Times** like "5 min ago" show the exact time when you hover over them.
+
 ## Notifications
 
 **System → Notifications** sends alerts to places you choose when something needs attention. Add one or more
@@ -1853,6 +1878,9 @@ when the `HLM_*` one isn't set.
 | `GET /api/host/cleanup?host=`                 | What [disk cleanup](#disk-cleanup) can delete on a Docker host (`items`: kind, ID, name, size, ticked by default); nothing is deleted. Admins. |
 | `POST /api/host/cleanup?host=`                | `{images, containers, volumes, buildCache}`: delete those (if they're still candidates); answers `{freed, removed, failed}`. Admins. |
 | `GET/PUT /api/system/cleanup`                  | `{keepOldImages, weekly}`, plus the last weekly run (`lastRun`, `lastFreed`, `lastError`). Admins. |
+| `PUT /api/servers/{id}/tags`                   | `{tags}`: a server's tags (up to 10; letters, digits, spaces, `.`, `_`, `-`). Managers. Server lists include `tags`. |
+| `PUT /api/servers/{id}/favourite`              | `{favourite}`: pin the server for the caller (their own favourites). Viewers. Server lists include `favourite`. |
+| `POST /api/servers/bulk`                       | `{servers, action: "start"\|"stop"\|"restart"\|"update"\|"backup"}`: one action on several servers in turn, checking the caller's role on each. Streams NDJSON (each event's `target` is the server; `summary` at the end). |
 | `GET /api/hosts`                               | [Docker hosts](#more-docker-hosts) and whether they could be reached. Admins also get how each is reached (never a client key) and hlm's SSH public key. |
 | `POST /api/hosts/test`                         | Connect to a host as given, without saving it: its Docker version, or (for SSH) the host key to confirm (`hostKey`, `hostKeyFingerprint`). Admins. |
 | `POST /api/hosts`, `PUT /api/hosts/{id}`       | `{id, name, kind: "ssh"\|"tcp", ssh?: {host, port, user, hostKey}, socket?, url?, ca?, cert?, key?, appdataRoot, address?}`: add or change a host, after connecting to it. An empty `key` keeps the saved one. [Confirmed](#confirming-its-you) session. |

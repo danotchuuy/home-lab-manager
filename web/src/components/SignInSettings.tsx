@@ -2,8 +2,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import { api, UNAUTHORIZED_EVENT } from "../api";
 import type { Account, AuthConfig, AuthStatus, RequireTwoFactor, Role } from "../types";
 import { TwoFactorCard } from "./TwoFactor";
-import { timeAgo } from "../util";
-import { Spinner } from "./common";
+
+import { Ago, Spinner } from "./common";
 import { SSHKeys } from "./SSHKeys";
 
 const MIN_PASSWORD = 10;
@@ -119,6 +119,7 @@ export function SignInSettings() {
       <div className="field require-2fa">
         <span className="field-label">Require two-factor sign-in for local accounts</span>
         <select
+          aria-label="Require two-factor sign-in for local accounts"
           value={config.requireTwoFactor ?? ""}
           disabled={!!busy || (!config.requireTwoFactor && me?.method === "local" && !status.twoFactor?.enabled)}
           onChange={(e) => {
@@ -246,7 +247,7 @@ function AccountRow({ account, me, busy, run, onChange }: { account: Account; me
             <option value="member">Member</option>
           </select>
         </td>
-        <td title={account.passwordChanged}>{timeAgo(account.passwordChanged)}</td>
+        <td title={account.passwordChanged}><Ago iso={account.passwordChanged} /></td>
         <td>
           {account.twoFactor ? (
             <span title={`${account.recoveryLeft ?? 0} recovery codes left`}>

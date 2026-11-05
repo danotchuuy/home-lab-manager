@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import { Spinner } from "../components/common";
+import { Ago, Spinner } from "../components/common";
 import { applyNote, HostnamesEditor } from "../components/Hostnames";
 import { LogViewer } from "../components/LogViewer";
 import type { CloudflareTest, TunnelSetupInput, TunnelStatus } from "../types";
@@ -438,7 +438,7 @@ function TunnelCard({ status, onChange }: { status: TunnelStatus; onChange: (st:
           )}
         </ul>
         <p className="muted small no-margin">
-          Tunnel <strong>{t.name}</strong> · <code>{t.id}</code> · created {timeAgo(t.created)}
+          Tunnel <strong>{t.name}</strong> · <code>{t.id}</code> · created <Ago iso={t.created} />
         </p>
       </div>
       {editing && form}

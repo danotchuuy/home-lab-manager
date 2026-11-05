@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { can, useAdmin } from "../access";
 import { api, ApiError } from "../api";
-import { AppIcon, CrashLoopBadge, HealthBadge, Spinner, StateBadge } from "../components/common";
+import { Ago, AppIcon, CrashLoopBadge, HealthBadge, Spinner, StateBadge } from "../components/common";
 import { ServerActivity } from "../components/ActivityLog";
 import { ConfigFilesCard } from "../components/ConfigFilesCard";
 import { ExportCard } from "../components/ExportCard";
@@ -24,8 +24,10 @@ import { StatTiles } from "../components/Resources";
 import { ServerHistory } from "../components/ResourceHistory";
 import type { App, DeployEvent, DeployRequest, Server, Stats } from "../types";
 import { usePoll } from "../usePoll";
-import { bareName, formatNetwork, formatPorts, timeAgo, webUILink } from "../util";
+import { bareName, formatNetwork, formatPorts, webUILink } from "../util";
 import { HostBadge, useHosts } from "../components/HostPicker";
+import { ConnectCard } from "../components/ConnectInfo";
+import { TagEditor } from "../components/TagEditor";
 
 type Tab = "logs" | "files" | "backups" | "schedule" | "ports" | "settings";
 
@@ -157,6 +159,7 @@ export function ServerDetailPage() {
           {server.groups && server.groups.length > 0 && (
             <div className="muted small">Server groups: {server.groups.join(", ")}</div>
           )}
+          <TagEditor server={server} canEdit={manager} onChange={(tags) => setServer({ ...server, tags })} />
         </div>
         <div className="btn-row">
           {link && running && (
@@ -202,7 +205,7 @@ export function ServerDetailPage() {
           <div>
             <strong>Crash loop: stopped by hlm.</strong> {server.name} exited (or had to be restarted) {server.crashLoop.exits} times in{" "}
             {server.crashLoop.windowMinutes} minutes (last: {server.crashLoop.reason ?? "unknown"}), so hlm stopped it{" "}
-            <span title={new Date(server.crashLoop.since).toLocaleString()}>{timeAgo(server.crashLoop.since)}</span>.
+            <span title={new Date(server.crashLoop.since).toLocaleString()}><Ago iso={server.crashLoop.since} /></span>.
             It stays stopped until someone starts it. Its console output usually says why it keeps exiting.
           </div>
           {operator && (
@@ -221,6 +224,7 @@ export function ServerDetailPage() {
       {stats && <StatTiles stats={stats} />}
 
       <GameStatusCard server={server.name} running={running} canManage={manager} />
+      <ConnectCard server={server} hosts={hosts} />
 
       <ServerHistory server={server.name} memLimit={stats?.memoryLimit} />
 

@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import type { ConsoleStatus, ScheduledTask, ServerTasks, StepKind, TaskRun, TaskStep, TaskWhen } from "../types";
 import { usePoll } from "../usePoll";
-import { formatInZone, timeAgo, timeUntil } from "../util";
-import { Spinner } from "./common";
+import { formatInZone, timeUntil } from "../util";
+import { Ago, Spinner } from "./common";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -308,7 +308,7 @@ export function ServerSchedule({ server, canRun, canManage }: { server: string; 
                     <span>
                       Last: <span className={`run-${last.result}`}>{RESULT_LABEL[last.result]}</span>{" "}
                       <span className="muted" title={formatInZone(last.started, tz)}>
-                        {timeAgo(last.started)}
+                        <Ago iso={last.started} />
                         {last.trigger === "manual" ? ", run by hand" : ""}
                       </span>
                     </span>

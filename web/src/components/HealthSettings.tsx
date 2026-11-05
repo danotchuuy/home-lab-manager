@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { DockerHealthcheck, HealthCheck, HealthCheckKind, HealthSettings, ServerHealth } from "../types";
-import { timeAgo } from "../util";
-import { Spinner } from "./common";
+
+import { Ago, Spinner } from "./common";
 
 /** A container's check, in words. */
 function describeCheck(hc?: DockerHealthcheck): string {
@@ -136,7 +136,7 @@ export function ServerHealthCard({
       <ul className="muted small health-facts">
         <li>
           Health check: {data.health ? <strong>{data.health}</strong> : running ? "none" : "not running"}
-          {data.unhealthySince && <> · failing since {timeAgo(data.unhealthySince)}</>}
+          {data.unhealthySince && <> · failing since <Ago iso={data.unhealthySince} /></>}
           {data.custom && data.applied ? (
             <> · hlm&apos;s check, as set below</>
           ) : (

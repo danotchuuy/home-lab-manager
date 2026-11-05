@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { AutoUpdateResult, AutoUpdateState, ServerUpdatePolicy, SystemUpdatePolicy, UpdatePolicy } from "../types";
-import { formatInZone, timeAgo, timeUntil } from "../util";
-import { Spinner } from "./common";
+import { formatInZone, timeUntil } from "../util";
+import { Ago, Spinner } from "./common";
 
 /** Describes a policy in words. */
 export function describePolicy(p: UpdatePolicy): string {
@@ -39,7 +39,7 @@ function LastResult({ r, tz }: { r: AutoUpdateResult; tz: string }) {
     <div className="small">
       Last automatic update: <span className={r.ok ? "run-ok" : "run-failed"}>{r.ok ? "OK" : "Failed"}</span>{" "}
       <span className="muted" title={formatInZone(r.started, tz)}>
-        {timeAgo(r.started)}
+        <Ago iso={r.started} />
       </span>
       {r.steps && r.steps.length > 0 && <span className="muted"> · {r.steps.join(", ")}</span>}
       {r.error && <div className="form-error">{r.error}</div>}

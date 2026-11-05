@@ -12,8 +12,8 @@ import type {
   Severity,
   TargetKind,
 } from "../types";
-import { timeAgo } from "../util";
-import { Spinner } from "./common";
+
+import { Ago, Spinner } from "./common";
 
 const KIND_LABEL: Record<TargetKind, string> = {
   discord: "Discord",
@@ -60,10 +60,10 @@ function formFrom(t: NotifyTarget): NotifyTargetInput {
 
 function DeliveryLine({ d }: { d?: NotifyDelivery }) {
   if (!d) return <span className="muted">nothing sent yet</span>;
-  if (d.ok) return <span className="notify-ok">✓ sent {timeAgo(d.at)}</span>;
+  if (d.ok) return <span className="notify-ok">✓ sent <Ago iso={d.at} /></span>;
   return (
     <span className="form-error" title={d.error}>
-      ✗ failed {timeAgo(d.at)}: {d.error}
+      ✗ failed <Ago iso={d.at} />: {d.error}
     </span>
   );
 }
@@ -664,7 +664,7 @@ function History({ records, onRefresh }: { records: NotifyRecord[]; onRefresh: (
             <li key={i}>
               <span className={`sev-dot sev-${r.severity}`} title={SEVERITY_LABEL[r.severity]} />
               <span className="muted small" title={new Date(r.time).toLocaleString()}>
-                {timeAgo(r.time)}
+                <Ago iso={r.time} />
               </span>{" "}
               <strong>{r.title}</strong>
               <div className="muted small">{deliveriesText(r)}</div>

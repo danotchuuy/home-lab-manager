@@ -47,6 +47,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/metrics"
 	"github.com/danotchuuy/home-lab-manager/internal/metricstore"
 	"github.com/danotchuuy/home-lab-manager/internal/notify"
+	"github.com/danotchuuy/home-lab-manager/internal/prefs"
 	"github.com/danotchuuy/home-lab-manager/internal/proxy"
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
 	"github.com/danotchuuy/home-lab-manager/internal/reach"
@@ -533,6 +534,7 @@ func run(log *slog.Logger) error {
 		Stacks:        stacks,
 		Hosts:         dockerHosts,
 		Cleanup:       cleaner,
+		Prefs:         prefs.New(store),
 		// Set when HLM_UPDATE_CHECK overrides the setting.
 		UpdateCheckEnv: updateCheckEnv,
 		Token:          env("HLM_TOKEN", ""),

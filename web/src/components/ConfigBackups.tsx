@@ -3,8 +3,8 @@ import { KeepingFields } from "./BackupOptions";
 import { api, download } from "../api";
 import type { ConfigBackupOverview, ConfigBackupPlan } from "../types";
 import { usePoll } from "../usePoll";
-import { formatBytes, timeAgo } from "../util";
-import { Spinner } from "./common";
+import { formatBytes } from "../util";
+import { Ago, Spinner } from "./common";
 import { baseName, INTERVALS, STAGES } from "./ServerBackups";
 
 type Draft = Omit<ConfigBackupPlan, "last">;
@@ -170,12 +170,12 @@ export function ConfigBackups({ storageVersion }: { storageVersion: number }) {
         <div className={`alert ${plan.last.error ? "error" : plan.last.warnings?.length ? "warn" : "success"}`}>
           {plan.last.error ? (
             <>
-              The last backup ({plan.last.trigger === "schedule" ? "scheduled" : "manual"}, {timeAgo(plan.last.started)}
+              The last backup ({plan.last.trigger === "schedule" ? "scheduled" : "manual"}, <Ago iso={plan.last.started} />
               ) failed: {plan.last.error}
             </>
           ) : (
             <>
-              Last backup {timeAgo(plan.last.finished)}: {plan.last.files} files, stored as{" "}
+              Last backup <Ago iso={plan.last.finished} />: {plan.last.files} files, stored as{" "}
               {formatBytes(plan.last.size)}.
               {plan.intervalHours > 0 && (
                 <>
@@ -210,7 +210,7 @@ export function ConfigBackups({ storageVersion }: { storageVersion: number }) {
                 </code>
                 <span className="muted small">{formatBytes(b.size)}</span>
                 <span className="muted small" title={new Date(b.lastModified).toLocaleString()}>
-                  {timeAgo(b.lastModified)}
+                  <Ago iso={b.lastModified} />
                 </span>
                 <span className="btn-row">
                   <a

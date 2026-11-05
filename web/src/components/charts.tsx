@@ -261,6 +261,7 @@ export function StackedBar({ segments, scaleMax, format }: { segments: Segment[]
             className={`stacked-seg${hover === s.key ? " hovered" : ""}`}
             style={{ width: `${scaleMax > 0 ? (s.value / scaleMax) * 100 : 0}%`, background: s.color }}
             tabIndex={0}
+            role="img"
             aria-label={`${s.label}: ${format(s.value)}`}
             onPointerEnter={() => setHover(s.key)}
             onPointerLeave={() => setHover(null)}

@@ -266,6 +266,8 @@ export async function download(path: string) {
   window.location.href = url;
 }
 
+export type BulkAction = "start" | "stop" | "restart" | "update" | "backup";
+
 /** ?host= for requests about a Docker host other than the local one. */
 function hostQuery(host?: string): string {
   return host && host !== "local" ? `?host=${encodeURIComponent(host)}` : "";
@@ -439,6 +441,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ request, server, host }),
     }),
+  setTags: (id: string, tags: string[]) =>
+    json<{ tags: string[] }>(`/api/servers/${encodeURIComponent(id)}/tags`, { method: "PUT", body: JSON.stringify({ tags }) }),
+  setFavourite: (id: string, favourite: boolean) =>
+    json<{ favourites: string[] }>(`/api/servers/${encodeURIComponent(id)}/favourite`, {
+      method: "PUT",
+      body: JSON.stringify({ favourite }),
+    }),
+  /** Runs one action on several servers, streaming each one's outcome (target: the server). */
+  bulk: (servers: string[], action: BulkAction, onEvent: (e: DeployEvent) => void) =>
+    stream("/api/servers/bulk", { method: "POST", body: JSON.stringify({ servers, action }) }, onEvent),
   /** Docker hosts; admins also get how each is reached, and hlm's SSH key. */
   hosts: () => json<{ hosts: DockerHost[]; sshKey?: SSHKeyInfo }>("/api/hosts"),
   testHost: (h: DockerHostInput) =>

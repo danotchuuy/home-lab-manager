@@ -84,3 +84,14 @@ export function Spinner() {
 
 /** Icons for the containers hlm runs for connections, by kind. */
 export const CONNECTION_GLYPH: Record<string, string> = { wireguard: "🔒", cloudflared: "☁️", hlm: "🎛️" };
+
+/** A time as "5 min ago", with the exact time on hover (and for screen readers, in the element). */
+export function Ago({ iso, never = "never" }: { iso?: string; never?: string }) {
+  if (!iso) return <>{never}</>;
+  const d = new Date(iso);
+  return (
+    <time dateTime={iso} title={d.toLocaleString()}>
+      {timeAgo(iso)}
+    </time>
+  );
+}

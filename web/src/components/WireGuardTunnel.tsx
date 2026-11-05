@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api";
 import type { WireGuardCheck, WireGuardInput, WireGuardResult, WireGuardStatus } from "../types";
 import { timeAgo } from "../util";
-import { Spinner } from "./common";
+import { Ago, Spinner } from "./common";
 
 /**
  * Sets up a WireGuard tunnel between the proxy server and this Docker host,
@@ -242,7 +242,7 @@ export function WireGuardTunnel({
                 </li>
               )}
             </ul>
-            {status.configuredAt && <p className="muted small no-margin">Set up {timeAgo(status.configuredAt)}.</p>}
+            {status.configuredAt && <p className="muted small no-margin">Set up <Ago iso={status.configuredAt} />.</p>}
           </div>
           {editing && form}
           <div className="btn-row">

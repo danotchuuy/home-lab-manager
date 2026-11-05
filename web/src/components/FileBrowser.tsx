@@ -6,7 +6,7 @@ import { detectIndent, fromEditor, indent, newline, offsetOfLine, outdent, toEdi
 import { MAX_COLOR_SIZE, syntaxOf, tokenize, type Syntax } from "../highlight";
 import { formatBytes, timeAgo } from "../util";
 import { formatOf, validate, type Problem } from "../validate";
-import { Spinner } from "./common";
+import { Ago, Spinner } from "./common";
 import { SettingsForm } from "./SettingsForm";
 import { FORM_FILE, parseSettings } from "../settingsform";
 
@@ -433,7 +433,7 @@ export function FileBrowser({ server, running, canEdit }: { server: string; runn
                   </button>
                   <span className="muted small">
                     {blocked && <span className="badge">{blocked.badge}</span>} {formatBytes(m.size)} ·{" "}
-                    {timeAgo(m.mtime)}
+                    <Ago iso={m.mtime} />
                   </span>
                 </li>
               );
@@ -789,7 +789,7 @@ function FileEditor({
       {file && (
         <div className="editor-foot muted small">
           <span>
-            {formatBytes(file.size)} · {file.mode} · modified {timeAgo(file.mtime)} ·{" "}
+            {formatBytes(file.size)} · {file.mode} · modified <Ago iso={file.mtime} /> ·{" "}
             {file.source === "host" ? "host folder" : "via Docker"}
           </span>
           {problems && problems.length === 0 && <span className="editor-valid">✓ Valid {format}</span>}

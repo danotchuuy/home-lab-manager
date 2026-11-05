@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAdmin } from "../access";
 import { api } from "../api";
-import { Overview, Spinner } from "../components/common";
+import { Ago, Overview, Spinner } from "../components/common";
 import { DeployProgress } from "../components/DeployProgress";
 import { BackupSettings } from "../components/BackupSettings";
 import { BackupTargets } from "../components/BackupTargets";
@@ -211,7 +211,7 @@ export function SystemPage() {
             {u.latest ? (
               <>
                 <code>{u.latest.version}</code>
-                {u.latest.published && <span className="muted"> · published {timeAgo(u.latest.published)}</span>}
+                {u.latest.published && <span className="muted"> · published <Ago iso={u.latest.published} /></span>}
                 {u.latest.url && (
                   <>
                     {" "}
@@ -227,7 +227,7 @@ export function SystemPage() {
             )}
           </dd>
           <dt>Last checked</dt>
-          <dd>{timeAgo(u.checkedAt)}</dd>
+          <dd><Ago iso={u.checkedAt} /></dd>
         </dl>
 
         {u.latest && u.checkError && <div className="alert error">Last check failed: {u.checkError}</div>}

@@ -510,5 +510,5 @@ func (s *server) setServerGroups(w http.ResponseWriter, r *http.Request) {
 		writeGroupError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.present(s.access(r), srv))
+	writeJSON(w, http.StatusOK, s.presentOne(r, srv))
 }

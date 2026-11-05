@@ -181,6 +181,10 @@ type Server struct {
 	// the server is, if it's part of one.
 	Stack        string `json:"stack,omitempty"`
 	StackService string `json:"stackService,omitempty"`
+	// Tags are the server's labels, and Favourite whether the caller pinned
+	// it; the API fills these in.
+	Tags      []string `json:"tags,omitempty"`
+	Favourite bool     `json:"favourite,omitempty"`
 	// CrashLoop is set when hlm stopped the server because it kept exiting.
 	CrashLoop *CrashLoop `json:"crashLoop,omitempty"`
 	imageID   string

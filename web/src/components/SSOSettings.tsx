@@ -1,8 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api } from "../api";
 import type { ClientSecret, OIDCInput, OIDCSettings } from "../types";
-import { timeAgo } from "../util";
-import { Spinner } from "./common";
+
+import { Ago, Spinner } from "./common";
 
 const CALLBACK_PATH = "/auth/callback";
 
@@ -216,7 +216,7 @@ export function SSOSettings() {
           <dd>
             {verified ? (
               <>
-                {config.verifiedBy} signed in {timeAgo(config.verified)}
+                {config.verifiedBy} signed in <Ago iso={config.verified} />
               </>
             ) : (
               <span className="form-error">Nobody has signed in with these settings yet</span>

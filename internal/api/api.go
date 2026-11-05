@@ -44,6 +44,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/metrics"
 	"github.com/danotchuuy/home-lab-manager/internal/metricstore"
 	"github.com/danotchuuy/home-lab-manager/internal/notify"
+	"github.com/danotchuuy/home-lab-manager/internal/prefs"
 	"github.com/danotchuuy/home-lab-manager/internal/proxy"
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
 	"github.com/danotchuuy/home-lab-manager/internal/registry"
@@ -107,6 +108,8 @@ type Options struct {
 	Hosts *hosts.Registry
 	// Cleanup keeps the disk cleanup settings.
 	Cleanup *cleanup.Service
+	// Prefs keeps servers' tags and users' favourites.
+	Prefs *prefs.Store
 	// UpdateCheckEnv is HLM_UPDATE_CHECK, which overrides the setting for
 	// how often updates are checked for, if set.
 	UpdateCheckEnv string
@@ -219,6 +222,8 @@ func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 // spaHandler serves static files from fsys, falling back to index.html so
 // that client-side routes work on reload.
 func spaHandler(fsys fs.FS) http.Handler {
+	// For "add to home screen"; not every system's MIME table has it.
+	_ = mime.AddExtensionType(".webmanifest", "application/manifest+json")
 	files := http.FileServerFS(fsys)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
@@ -435,7 +440,7 @@ func (s *server) listServers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, servers)
+	writeJSON(w, http.StatusOK, s.decorate(r.Context(), servers))
 }
 
 func (s *server) getServer(w http.ResponseWriter, r *http.Request) {
@@ -446,7 +451,7 @@ func (s *server) getServer(w http.ResponseWriter, r *http.Request) {
 		writeManagerError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.present(s.access(r), srv))
+	writeJSON(w, http.StatusOK, s.presentOne(r, srv))
 }
 
 func (s *server) removeServer(w http.ResponseWriter, r *http.Request) {
@@ -511,6 +516,11 @@ func (s *server) removeServer(w http.ResponseWriter, r *http.Request) {
 			s.Log.Warn("take deleted server out of notification targets", "server", srv.Name, "err", err)
 		}
 	}
+	if s.Prefs != nil {
+		if err := s.Prefs.ForgetServer(srv.Name); err != nil {
+			s.Log.Warn("forget deleted server's tags and favourites", "server", srv.Name, "err", err)
+		}
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -537,7 +547,7 @@ func (s *server) serverAction(w http.ResponseWriter, r *http.Request) {
 		writeManagerError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.present(s.access(r), srv))
+	writeJSON(w, http.StatusOK, s.presentOne(r, srv))
 }
 
 func (s *server) installServer(w http.ResponseWriter, r *http.Request) {
@@ -1532,7 +1542,7 @@ func (s *server) setAutostart(w http.ResponseWriter, r *http.Request) {
 		writeManagerError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.present(s.access(r), srv))
+	writeJSON(w, http.StatusOK, s.presentOne(r, srv))
 }
 
 // listConnections returns the containers hlm runs for connections

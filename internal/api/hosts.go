@@ -54,7 +54,8 @@ func (s *server) listHosts(w http.ResponseWriter, r *http.Request) {
 	}
 	statuses := s.Manager.HostStatuses()
 	for _, h := range list {
-		v := hostView{ID: h.ID, Name: h.Name}
+		// Where its servers' ports are: what players connect to.
+		v := hostView{ID: h.ID, Name: h.Name, Address: h.Address}
 		if st, ok := statuses[h.ID]; ok {
 			if !admin {
 				st.Error = "" // may say how the host is reached
@@ -63,7 +64,7 @@ func (s *server) listHosts(w http.ResponseWriter, r *http.Request) {
 		}
 		if admin {
 			v.Kind, v.URL, v.CA, v.Cert, v.HasKey = h.Kind, h.URL, h.CA, h.Cert, h.HasKey
-			v.SSH, v.Socket, v.AppdataRoot, v.Address = h.SSH, h.Socket, h.AppdataRoot, h.Address
+			v.SSH, v.Socket, v.AppdataRoot = h.SSH, h.Socket, h.AppdataRoot
 		}
 		out = append(out, v)
 	}

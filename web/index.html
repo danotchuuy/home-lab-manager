@@ -8,6 +8,14 @@
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="theme-color" content="#e8590c" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <script>
+      // The theme chosen in the header (light or dark), before the first paint so the page doesn't flash.
+      try {
+        var t = localStorage.getItem("hlm-theme");
+        if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

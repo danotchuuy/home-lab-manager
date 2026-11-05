@@ -5,12 +5,13 @@
   --border: #dde1e6;
   --text: #1c2027;
   --muted: #646d7a;
-  --accent: #e8590c;
+  /* Dark enough for white text on it, and for text on the page (WCAG AA). */
+  --accent: #c4470a;
   --accent-text: #ffffff;
-  --danger: #c92a2a;
-  --success: #2b8a3e;
+  --danger: #b42323;
+  --success: #1e6b30;
   --warning: #b45309;
-  --warn: #b07500;
+  --warn: #8a5a00;
   --info: #1864ab;
   --log-bg: #12151a;
   --log-text: #d8dee6;
@@ -25,8 +26,31 @@
   line-height: 1.45;
 }
 
+/* Dark: chosen in the header, or the system's setting when the theme is "system". */
+:root[data-theme="dark"] {
+  --bg: #111317;
+  --surface: #1a1d23;
+  --surface-2: #232730;
+  --border: #2e333d;
+  --text: #e4e7ec;
+  --muted: #9099a6;
+  --accent: #ff7a33;
+  --accent-text: #15100c;
+  --danger: #ff6b6b;
+  --success: #51cf66;
+  --warning: #fab005;
+  --warn: #fcc419;
+  --info: #74c0fc;
+  --log-bg: #0b0d10;
+  --code-key: #74c0fc;
+  --code-string: #8ce99a;
+  --code-number: #ffa94d;
+  --code-literal: #d0a4f5;
+  color-scheme: dark;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #111317;
     --surface: #1a1d23;
     --surface-2: #232730;
@@ -1154,8 +1178,16 @@ progress {
   --status-critical: #d03b3b;
 }
 
+/* Dark: chosen in the header, or the system's setting when the theme is "system". */
+:root[data-theme="dark"] {
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --chart-grid: #2c2c2a;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --series-1: #3987e5;
     --series-2: #d95926;
     --series-3: #199e70;
@@ -3730,4 +3762,302 @@ textarea.code-input {
   padding: 0;
   max-height: 14rem;
   overflow: auto;
+}
+
+/* --- UI improvements: theme, list tools, toasts, palette, mobile, focus --- */
+
+.skip-link {
+  position: absolute;
+  left: -999px;
+  top: 0.5rem;
+  z-index: 50;
+  background: var(--surface);
+  color: var(--text);
+  padding: 0.5rem 0.8rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+.skip-link:focus {
+  left: 0.5rem;
+}
+
+/* Keyboard focus shows clearly everywhere, in both themes. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.icon-button {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--muted);
+  font: inherit;
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0.3rem 0.45rem;
+  cursor: pointer;
+}
+.icon-button:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.list-toolbar,
+.bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+.list-search {
+  flex: 1 1 16rem;
+  min-width: 10rem;
+}
+.bulk-bar {
+  padding: 0.4rem 0.6rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+.bulk-bar .radio {
+  margin-right: 0.5rem;
+}
+
+.server-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  align-self: flex-start;
+}
+.server-card {
+  flex-wrap: wrap;
+}
+.server-card .server-main {
+  flex: 1 1 18rem;
+}
+.server-card.selected {
+  border-color: var(--accent);
+}
+.star {
+  color: var(--muted);
+}
+.star.on {
+  color: var(--warn);
+}
+
+.tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+  align-items: center;
+}
+.tag-chip {
+  font: inherit;
+  font-size: 0.75rem;
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  text-decoration: none;
+  cursor: pointer;
+}
+.tag-chip:hover {
+  border-color: var(--accent);
+}
+.tag-editor {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 0.3rem;
+}
+.tag-editor input {
+  min-width: 14rem;
+}
+
+.connect-list {
+  list-style: none;
+  margin: 0.4rem 0;
+  padding: 0;
+}
+.connect-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.15rem 0;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.toasts {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: min(26rem, calc(100vw - 2rem));
+}
+.toast {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.6rem 0.8rem;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--info);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.18);
+}
+.toast.success {
+  border-left-color: var(--success);
+}
+.toast.error {
+  border-left-color: var(--danger);
+}
+
+.palette-backdrop {
+  place-items: start center;
+  padding-top: 12vh;
+}
+.palette {
+  width: min(36rem, calc(100vw - 2rem));
+  padding: 0.6rem;
+}
+.palette input {
+  width: 100%;
+  font-size: 1.05rem;
+}
+.palette-results {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  max-height: 50vh;
+  overflow: auto;
+}
+.palette-results li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.palette-results li.active {
+  background: var(--surface-2);
+}
+.shortcuts kbd,
+kbd {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85em;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  white-space: nowrap;
+}
+
+/* Phones */
+@media (max-width: 640px) {
+  .topbar {
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+  }
+  .topbar nav {
+    order: 10;
+    width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .page {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+  .server-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .server-pick {
+    flex-direction: row;
+    align-self: stretch;
+  }
+  .server-card .server-main {
+    flex: none;
+  }
+  /* Server page: the icon and name on one line, the buttons below. */
+  .app-hero {
+    align-items: flex-start;
+  }
+  .app-hero > .grow {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .app-hero > .btn-row {
+    flex: 1 1 100%;
+  }
+  .server-side {
+    justify-content: flex-start;
+  }
+  /* Server page tabs scroll sideways instead of wrapping. */
+  .tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    scrollbar-width: none;
+  }
+  .tabs button {
+    white-space: nowrap;
+  }
+  .console-input {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+  }
+  .list-toolbar select {
+    flex: 1 1 45%;
+  }
+}
+
+/* Touch screens: targets big enough for a finger. */
+@media (pointer: coarse) {
+  .btn,
+  .icon-button,
+  .tabs button,
+  .topbar nav a,
+  select,
+  input[type="search"] {
+    min-height: 44px;
+  }
+  input[type="checkbox"] {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+}
+
+.row-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+/* Logs are on a dark background in both themes. */
+pre .muted {
+  color: #9aa3af;
 }

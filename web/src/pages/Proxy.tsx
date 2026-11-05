@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../api";
-import { Spinner } from "../components/common";
+import { Ago, Spinner } from "../components/common";
 import { ProxyFirewall } from "../components/ProxyFirewall";
 import { WireGuardTunnel } from "../components/WireGuardTunnel";
 import type {
@@ -16,7 +16,7 @@ import type {
   WireGuardResult,
   WireGuardStatus,
 } from "../types";
-import { timeAgo } from "../util";
+
 
 const EMPTY: ProxySettings = {
   host: "",
@@ -320,7 +320,7 @@ export function ProxyPage() {
         {key ? (
           <>
             <p className="muted small no-margin">
-              hlm signs in with this key (created {timeAgo(key.created)}; the private half is stored encrypted on this
+              hlm signs in with this key (created <Ago iso={key.created} />; the private half is stored encrypted on this
               machine). Add the public key to the proxy server&apos;s <code>~/.ssh/authorized_keys</code> for the user hlm
               signs in as:
             </p>
@@ -616,7 +616,7 @@ function UpstreamStatus({
           {state.applied ? (
             <>
               The proxy sends traffic to <code>{state.applied}</code>
-              {state.appliedAt && <span className="muted"> (applied {timeAgo(state.appliedAt)})</span>}
+              {state.appliedAt && <span className="muted"> (applied <Ago iso={state.appliedAt} />)</span>}
             </>
           ) : (
             "Not applied yet: the address is kept up to date once you apply"
@@ -625,7 +625,7 @@ function UpstreamStatus({
         {state.current && (
           <li className={behind ? "bad" : "ok"}>
             UniFi reports <code>{state.current}</code>
-            {state.checkedAt && <span className="muted"> (checked {timeAgo(state.checkedAt)})</span>}
+            {state.checkedAt && <span className="muted"> (checked <Ago iso={state.checkedAt} />)</span>}
           </li>
         )}
       </ul>

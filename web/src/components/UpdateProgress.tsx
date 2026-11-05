@@ -11,7 +11,18 @@ interface Item {
 }
 
 /** Shows the progress of updating several servers from its event stream. */
-export function UpdateProgress({ events, running }: { events: DeployEvent[]; running: boolean }) {
+export function UpdateProgress({
+  events,
+  running,
+  title,
+  onClose,
+}: {
+  events: DeployEvent[];
+  running: boolean;
+  /** Defaults to an update's. */
+  title?: string;
+  onClose?: () => void;
+}) {
   const { items, summary, error } = useMemo(() => {
     const items: Item[] = [];
     const byName = new Map<string, Item>();
@@ -51,8 +62,15 @@ export function UpdateProgress({ events, running }: { events: DeployEvent[]; run
 
   return (
     <div className="card update-progress">
-      <h2>{running ? "Updating servers…" : "Update finished"}</h2>
-      <ul className="update-items">
+      <div className="section-head">
+        <h2>{title ?? (running ? "Updating servers…" : "Update finished")}</h2>
+        {onClose && (
+          <button type="button" className="icon-button" aria-label="Close" onClick={onClose}>
+            ×
+          </button>
+        )}
+      </div>
+      <ul className="update-items" aria-live="polite">
         {items.map((item) => (
           <li key={item.name} className={`update-item ${item.state}`}>
             <span className="update-icon" aria-hidden="true">

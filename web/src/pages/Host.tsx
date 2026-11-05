@@ -2,7 +2,7 @@ import { Fragment, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import { StackedBar, TimeSeriesChart, usePoll } from "../components/charts";
-import { AppIcon, Spinner } from "../components/common";
+import { Ago, AppIcon, Spinner } from "../components/common";
 import { DiskCleanup } from "../components/DiskCleanup";
 import { DockerHosts } from "../components/DockerHosts";
 import { HostHistory, RangePicker } from "../components/ResourceHistory";
@@ -524,7 +524,7 @@ function DeletedSection({ deleted, onChanged }: { deleted: DeletedStorage[]; onC
                 <div>
                   <strong>{d.name}</strong>
                   <div className="muted small">
-                    {d.app ? `${d.app} · ` : ""}deleted {timeAgo(d.deletedAt)}
+                    {d.app ? `${d.app} · ` : ""}deleted <Ago iso={d.deletedAt} />
                   </div>
                 </div>
               </div>
