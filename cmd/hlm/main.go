@@ -491,6 +491,8 @@ func run(log *slog.Logger) error {
 	sampler := metrics.New(history, mgr, queries, log)
 	host.Observe(sampler.ObserveHost)
 	go sampler.Run(ctx)
+	// Hosts with hlm's agent report their own CPU, memory, network and disks.
+	go dockerHosts.RunHostMetrics(ctx, 15*time.Second, sampler.ObserveHostOn)
 	// Servers' scheduled tasks, such as a nightly restart.
 	sched = schedule.New(schedule.Options{
 		Secrets: store, Servers: mgr, Backups: backups, Console: consoles, Notifier: notifier,

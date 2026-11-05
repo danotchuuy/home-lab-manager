@@ -88,8 +88,8 @@ export function DockerHosts() {
         Other machines hlm runs servers on, such as a NAS or a mini-PC. Their servers are listed with this host&apos;s,
         named <code>name@host</code>, with their console, files, backups and updates. hlm reaches their Docker over SSH
         (as a user in the <code>docker</code> group) or Docker&apos;s API over TCP with TLS, or through hlm&apos;s agent
-        on the host, which connects out to hlm, so nothing has to be opened there. The CPU, memory and disks on this
-        page are this host&apos;s only.
+        on the host, which connects out to hlm, so nothing has to be opened there. Hosts with the agent also report
+        their CPU, memory, network and disks: choose one at the top of this page.
       </p>
       {error && <div className="alert error small">{error}</div>}
       {!hosts ? (
@@ -842,6 +842,7 @@ function AgentCommand({ enrolment, onConnected }: { enrolment: AgentEnrolment; o
   const docker = [
     "docker run -d --name hlm-agent --restart unless-stopped \\",
     "  -v /var/run/docker.sock:/var/run/docker.sock -v hlm-agent:/data \\",
+    "  -v /proc:/host/proc:ro -v /:/host/rootfs:ro \\",
     `  danotchuuy/home-lab-manager:latest ${args}`,
   ].join("\n");
   const id = enrolment.host.id;
@@ -875,7 +876,9 @@ function AgentCommand({ enrolment, onConnected }: { enrolment: AgentEnrolment; o
         Or, with the <code>hlm</code> binary there: <code>hlm {args.replace(enrolment.token, "…")} --data DIR</code>.
         The token works once, until {new Date(enrolment.expires).toLocaleTimeString([], { timeStyle: "short" })}, and
         isn&apos;t shown again; the agent trades it for its own credential, kept in the <code>hlm-agent</code> volume.
-        Running the same command again later (to update the agent) keeps that credential.
+        Running the same command again later (to update the agent) keeps that credential. The read-only{" "}
+        <code>/proc</code> and <code>/</code> mounts are for the host&apos;s CPU, memory, network and disk figures;
+        without them, only its Docker is used.
       </p>
       {http && (
         <div className="alert warn small">

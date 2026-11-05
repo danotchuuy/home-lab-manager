@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"github.com/hashicorp/yamux"
+
+	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
 )
 
 // Config is how "hlm agent" runs.
@@ -42,9 +44,17 @@ type Config struct {
 	// AllowHTTP allows a plain http:// server (on a trusted network only:
 	// whoever can see or change the traffic can control this host's Docker).
 	AllowHTTP bool
-	Version   string
-	Log       *slog.Logger
+	// ProcPath and RootPath are where the host's procfs and root
+	// filesystem are, for its CPU, memory, network and disk metrics (as
+	// HLM_HOST_PROC and HLM_HOST_ROOT for hlm).
+	ProcPath, RootPath string
+	Version            string
+	Log                *slog.Logger
 }
+
+// HostMetricsPath is where the agent answers with the host's metrics,
+// beside the Docker API it passes on.
+const HostMetricsPath = "/_hlm/host"
 
 // ErrRevoked is returned when hlm no longer knows the agent.
 var ErrRevoked = errors.New("hlm refused the agent's credential: the host was removed from hlm. To add it again, run the agent with a new enrolment token from hlm's Hosts page")
@@ -138,7 +148,12 @@ func Run(ctx context.Context, cfg Config) error {
 		return err
 	}
 	cfg.Log.Info("agent starting", "server", creds.Server, "host", creds.Host, "socket", cfg.Socket)
-	proxy := DockerProxy(cfg.Socket, cfg.Log)
+	metrics := hostmetrics.New(hostmetrics.Config{ProcPath: cfg.ProcPath, RootPath: cfg.RootPath}, "")
+	if snap := metrics.Snapshot(); snap.Reason != "" {
+		cfg.Log.Warn("host metrics aren't available", "reason", snap.Reason)
+	}
+	go metrics.Run(ctx)
+	proxy := Handler(DockerProxy(cfg.Socket, cfg.Log), metrics)
 	backoff := time.Second
 	for {
 		started := time.Now()
@@ -320,6 +335,19 @@ func DockerProxy(socket string, log *slog.Logger) http.Handler {
 			return
 		}
 		rp.ServeHTTP(w, r)
+	})
+}
+
+// Handler is what the agent serves hlm: the host's metrics, and the
+// Docker API calls it passes on.
+func Handler(docker http.Handler, metrics *hostmetrics.Collector) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == HostMetricsPath && r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(metrics.Snapshot())
+			return
+		}
+		docker.ServeHTTP(w, r)
 	})
 }
 

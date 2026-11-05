@@ -1421,9 +1421,27 @@ func (s *server) dismissSelfUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 // hostMetrics returns the host's CPU, memory, network and filesystem usage,
-// with up to 30 minutes of history.
+// with up to 30 minutes of history: this host's, or (?host=) another's,
+// from its agent. When they can't be had, the snapshot says why.
 func (s *server) hostMetrics(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.Host.Snapshot())
+	id := r.URL.Query().Get("host")
+	if id == "" || id == manager.LocalHost {
+		writeJSON(w, http.StatusOK, s.Host.Snapshot())
+		return
+	}
+	if s.Hosts == nil {
+		writeError(w, http.StatusNotFound, hosts.ErrNotFound)
+		return
+	}
+	snap, err := s.Hosts.HostMetrics(r.Context(), id)
+	switch {
+	case errors.Is(err, hosts.ErrNotFound):
+		writeError(w, http.StatusNotFound, err)
+		return
+	case err != nil:
+		snap = hostmetrics.Snapshot{Reason: err.Error()}
+	}
+	writeJSON(w, http.StatusOK, snap)
 }
 
 // hostStorage returns the last disk usage report per server.

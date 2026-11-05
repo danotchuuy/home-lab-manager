@@ -279,6 +279,7 @@ alerts as usual.
   ```sh
   docker run -d --name hlm-agent --restart unless-stopped \
     -v /var/run/docker.sock:/var/run/docker.sock -v hlm-agent:/data \
+    -v /proc:/host/proc:ro -v /:/host/rootfs:ro \
     danotchuuy/home-lab-manager:latest agent --server https://hlm.example.com --token hlme_…
   ```
 
@@ -302,10 +303,19 @@ alerts as usual.
     refuses a plain `http://` address unless given `--allow-http`, which the command includes when hlm is open over
     HTTP; then anyone who can see or change the traffic between them could take the host's Docker over, so only do
     that on a network you trust.
+  - **Host metrics.** The agent also reports the host's CPU, memory, load, network and disks, read from the host's
+    `/proc` and root filesystem (the two read-only mounts in the command, as for hlm itself; leave them out and only
+    its Docker is used). hlm asks every 15 seconds: the **Host** page has a picker for this host or an agent's host,
+    with the live charts and the kept history (by the minute for a day, by the quarter hour for 30 days), and
+    [`/metrics`](#prometheus-metrics) has its `hlm_host_*` series with a `host` label. Disk usage by server and deleted
+    servers' data stay this host's only ([cleanup](#disk-cleanup) already works on every host). Hosts reached over SSH or TLS don't report these: nothing of hlm's runs
+    there to read them.
   - **Removing the host** disconnects its agent and its credential stops working; the agent says so and exits. Remove
     the `hlm-agent` container there too. The table shows each agent's connection: since when, and its version.
   - The agent's settings can also be given as `HLM_AGENT_SERVER`, `HLM_AGENT_TOKEN`, `HLM_AGENT_DATA` (default
-    `/data`), `HLM_AGENT_SOCKET` (default `/var/run/docker.sock`), `HLM_AGENT_CA` and `HLM_AGENT_ALLOW_HTTP`.
+    `/data`), `HLM_AGENT_SOCKET` (default `/var/run/docker.sock`), `HLM_AGENT_CA` and `HLM_AGENT_ALLOW_HTTP`, and the
+    host's procfs and root as `--proc`/`HLM_HOST_PROC` and `--root`/`HLM_HOST_ROOT` (by default `/host/proc` and
+    `/host/rootfs` when they're mounted, otherwise the agent's own `/proc`).
 - **TCP with TLS.** For a daemon started with `--tlsverify`: its address (`tcp://nas.lan:2376`), the CA that signed its
   certificate and a client certificate and key. The daemon's certificate is always checked, and plain TCP isn't
   accepted. The client key is kept encrypted with hlm's settings and never shown again.
@@ -320,8 +330,8 @@ hlm are kept. Removing a host stops hlm managing its servers: they keep running 
 
 Limits for now:
 
-- The Host page's CPU, memory, disks, disk usage by server and the data of deleted servers are this host's only (for
-  agents' hosts too).
+- The Host page's CPU, memory, network and disks are this host's and those of hosts with the agent; not those of hosts
+  reached over SSH or TLS. Disk usage by server and the data of deleted servers are this host's only.
 - [Compose stacks](#compose-stacks), hlm's own WireGuard and Cloudflare Tunnel containers, and self-update run on this
   host.
 - Container IP addresses on another host's bridge networks can't be reached from here; hlm uses the host's published
@@ -1299,14 +1309,14 @@ hlm keeps a month of resource history itself, without a database, so "why was it
 
 `GET /metrics` serves hlm's state in Prometheus' text format, for Grafana dashboards and alerts:
 
-- **Servers** (labels `server`, `app`, `image`): `hlm_server_up`, `hlm_server_cpu_ratio` (in cores),
+- **Servers** (labels `server`, `app`, `image`, `host`: `local` or the [Docker host](#more-docker-hosts)'s ID): `hlm_server_up`, `hlm_server_cpu_ratio` (in cores),
   `hlm_server_memory_bytes`, `hlm_server_memory_limit_bytes`, `hlm_server_network_{receive,transmit}_bytes_total`,
   `hlm_server_block_{read,write}_bytes_total`, `hlm_server_restarts_total`, `hlm_server_update_available`, and from the
   [game status](#is-the-game-up-players-and-status) `hlm_server_query_up`, `hlm_server_players` and `hlm_server_players_max`.
 - **Backups** (label `server`): `hlm_backup_last_success_timestamp_seconds`, `hlm_backup_last_size_bytes`,
   `hlm_backup_last_duration_seconds`.
-- **Host:** `hlm_host_cpu_ratio`, `hlm_host_cpu_cores`, `hlm_host_load1`, `hlm_host_memory_{used,total}_bytes`,
-  `hlm_host_filesystem_{size,avail}_bytes` (labels `mount`, `device`) and `hlm_host_network_{receive,transmit}_bytes_total`
+- **Hosts** (label `host`: `local`, or the ID of a host with [hlm's agent](#more-docker-hosts)): `hlm_host_cpu_ratio`,
+  `hlm_host_cpu_cores`, `hlm_host_load1`, `hlm_host_memory_{used,total}_bytes`, `hlm_host_filesystem_{size,avail}_bytes` (labels `mount`, `device`) and `hlm_host_network_{receive,transmit}_bytes_total`
   (label `interface`), when [host metrics](#host-metrics) are available.
 - **hlm:** `hlm_build_info{version}`, and `hlm_https_cert_expiry_timestamp_seconds` with [HTTPS](#https) on.
 
@@ -2086,8 +2096,8 @@ when the `HLM_*` one isn't set.
 | `POST /api/system/update/check`                | Check GitHub for a newer hlm release.                                             |
 | `POST /api/system/update/apply`                | Install the latest release. Streams NDJSON; hlm restarts afterwards.             |
 | `POST /api/system/update/dismiss`              | Clear the result of the last update.                                              |
-| `GET /api/host`                                | Host CPU, memory, network, filesystems and disk I/O, with 30 minutes of history.  |
-| `GET /api/host/history?range=1h\|6h\|24h\|7d\|30d` | The host's [resource history](#resource-history): `{step, times, series: {name: {avg, max}}}`, `null` where nothing was recorded. Admins only. |
+| `GET /api/host?host=`                          | Host CPU, memory, network, filesystems and disk I/O, with 30 minutes of history: this host's, or (`host=`) a host's with [hlm's agent](#more-docker-hosts). When they can't be had, `available` is false and `reason` says why. |
+| `GET /api/host/history?range=1h\|6h\|24h\|7d\|30d&host=` | The host's (or, with `host=`, an agent host's) [resource history](#resource-history): `{step, times, series: {name: {avg, max}}}`, `null` where nothing was recorded. Admins only. |
 | `GET /api/servers/{id}/history?range=…`        | A server's resource history (a viewer).                                           |
 | `GET /metrics`                                 | [Prometheus](#prometheus) metrics: a metrics or admin key, or an allowed address. |
 | `GET/PUT /api/system/metrics`                  | `{allowFrom}`: who may scrape without a key; `PUT` needs a [confirmed](#confirming-its-you) session. |

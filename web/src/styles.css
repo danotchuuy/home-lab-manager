@@ -4238,3 +4238,9 @@ pre .muted {
   max-width: 46rem;
   margin-top: 0.75rem;
 }
+
+/* Which host's metrics the Host page shows. */
+.host-picker {
+  width: auto;
+  max-width: 16rem;
+}

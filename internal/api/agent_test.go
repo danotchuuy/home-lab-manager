@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -13,7 +14,9 @@ import (
 	"time"
 
 	"github.com/danotchuuy/home-lab-manager/internal/agent"
+	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
 	"github.com/danotchuuy/home-lab-manager/internal/hosts"
+	"github.com/danotchuuy/home-lab-manager/internal/metrics"
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
 )
 
@@ -26,7 +29,8 @@ func TestAgentAPI(t *testing.T) {
 	store, _ := secrets.Open(t.TempDir(), "")
 	hub := agent.NewHub(log)
 	reg := hosts.New(hosts.Options{Secrets: store, Agents: hub, Log: log})
-	e.opts.Hosts, e.opts.Agents = reg, hub
+	sampler := metrics.New(nil, e.opts.Manager, nil, log)
+	e.opts.Hosts, e.opts.Agents, e.opts.Sampler = reg, hub, sampler
 	srv := httptest.NewServer(Handler(e.opts))
 	defer srv.Close()
 
@@ -95,6 +99,39 @@ func TestAgentAPI(t *testing.T) {
 	if len(list.Hosts) != 2 || list.Hosts[1].Kind != "agent" || list.Hosts[1].Agent == nil || !list.Hosts[1].Agent.Connected || list.Hosts[1].Agent.Version != "test" {
 		t.Errorf("hosts: %+v", list.Hosts)
 	}
+	// The host's own metrics, from its agent: on the Host page's API, in
+	// its history and in /metrics with its host label.
+	get := func(path string) *http.Response {
+		req, _ := http.NewRequest("GET", srv.URL+path, nil)
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	var snap hostmetrics.Snapshot
+	for deadline := time.Now().Add(5 * time.Second); !snap.Available && time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		json.NewDecoder(get("/api/host?host=nas").Body).Decode(&snap)
+	}
+	if !snap.Available || snap.CPU.Cores == 0 {
+		t.Fatalf("host metrics: %+v", snap)
+	}
+	if resp := get("/api/host?host=nope"); resp.StatusCode != 404 {
+		t.Errorf("unknown host: %d", resp.StatusCode)
+	}
+	sampler.ObserveHostOn("nas", snap)
+	if resp := get("/api/host/history?host=nas&range=1h"); resp.StatusCode != 200 {
+		t.Errorf("history: %d", resp.StatusCode)
+	}
+	if resp := get("/api/host/history?host=nope&range=1h"); resp.StatusCode != 404 {
+		t.Errorf("history of an unknown host: %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(get("/metrics").Body)
+	if !strings.Contains(string(body), `hlm_host_cpu_cores{host="nas"}`) {
+		t.Errorf("metrics:\n%s", body)
+	}
+
 	// Removing the host disconnects the agent for good.
 	if err := reg.Delete("nas"); err != nil {
 		t.Fatal(err)

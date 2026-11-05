@@ -42,13 +42,39 @@ function Tile({ label, value, detail, percent }: { label: string; value: string;
 }
 
 export function HostPage() {
-  const [host, hostError] = usePoll(api.host, 5000);
+  // Which host's metrics: this one, or one with hlm's agent.
+  const [selected, setSelected] = useState("local");
+  const [hostList] = usePoll(api.hosts, 30000);
+  const agentHosts = hostList?.hosts.filter((h) => h.kind === "agent") ?? [];
+  const local = selected === "local";
+  const selectedName = local ? "This host" : (agentHosts.find((h) => h.id === selected)?.name ?? selected);
+  const [polled, hostError, reloadHost] = usePoll(async () => ({ id: selected, snap: await api.host(selected) }), 5000);
+  // Not the last host's figures under the new one's name.
+  const host = polled?.id === selected ? polled.snap : undefined;
   const [storage, storageError, reloadStorage] = usePoll(api.storage, 15000);
 
   return (
     <div className="page host-page">
       <div className="page-header">
         <h1>Host</h1>
+        {agentHosts.length > 0 && (
+          <select
+            aria-label="Host"
+            className="host-picker"
+            value={selected}
+            onChange={(e) => {
+              setSelected(e.target.value);
+              setTimeout(reloadHost);
+            }}
+          >
+            <option value="local">This host</option>
+            {agentHosts.map((h) => (
+              <option key={h.id} value={h.id}>
+                {h.name} ({h.id})
+              </option>
+            ))}
+          </select>
+        )}
         {host?.available && (
           <span className="muted small">
             {host.hostname} · Linux {host.kernel} · up {formatUptime(host.uptime)}
@@ -61,22 +87,34 @@ export function HostPage() {
       {!host && !hostError && <Spinner />}
       {host && !host.available && (
         <div className="alert info">
-          Host CPU, memory, network and disk metrics aren't available: {host.reason}. Disk usage per server is still
-          shown below from Docker's figures.
+          {local ? "Host" : `${selectedName}'s`} CPU, memory, network and disk metrics aren't available: {host.reason}.
+          {local && " Disk usage per server is still shown below from Docker's figures."}
         </div>
       )}
-      {host?.available && <HostMetrics host={host} />}
+      {host?.available && <HostMetrics key={selected} host={host} hostId={selected} />}
 
-      <StorageSection
-        report={storage}
-        error={storageError}
-        onRefresh={async () => {
-          await api.refreshStorage();
-          reloadStorage();
-        }}
-      />
+      {!local ? (
+        <p className="muted small">
+          Disk usage by server and deleted servers&apos; data are for this host only; choose{" "}
+          <button type="button" className="link-button" onClick={() => setSelected("local")}>
+            This host
+          </button>{" "}
+          to see them. Cleanup, below, works on every host.
+        </p>
+      ) : (
+        <StorageSection
+          report={storage}
+          error={storageError}
+          onRefresh={async () => {
+            await api.refreshStorage();
+            reloadStorage();
+          }}
+        />
+      )}
       <DiskCleanup onCleaned={reloadStorage} />
-      {storage?.deleted && storage.deleted.length > 0 && <DeletedSection deleted={storage.deleted} onChanged={reloadStorage} />}
+      {local && storage?.deleted && storage.deleted.length > 0 && (
+        <DeletedSection deleted={storage.deleted} onChanged={reloadStorage} />
+      )}
     </div>
   );
 }
@@ -90,7 +128,7 @@ const HOST_RANGES: { value: HostRange; label: string }[] = [
   { value: "30d", label: "30 days" },
 ];
 
-function HostMetrics({ host }: { host: HostSnapshot }) {
+function HostMetrics({ host, hostId }: { host: HostSnapshot; hostId: string }) {
   const [showTable, setShowTable] = useState(false);
   const [range, setRange] = useState<HostRange>("live");
   const history = host.history ?? [];
@@ -138,7 +176,7 @@ function HostMetrics({ host }: { host: HostSnapshot }) {
       </div>
 
       {range !== "live" ? (
-        <HostHistory range={range} memTotal={mem.total} cores={host.cpu.cores} />
+        <HostHistory range={range} memTotal={mem.total} cores={host.cpu.cores} host={hostId} />
       ) : (
         <LiveCharts host={host} history={history} times={times} showTable={showTable} setShowTable={setShowTable} />
       )}

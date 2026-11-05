@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/danotchuuy/home-lab-manager/internal/agent"
+	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
 )
@@ -67,6 +68,29 @@ func TestAgentEnrolment(t *testing.T) {
 	if st := r.AgentStatus("nas"); st == nil || st.Connected {
 		t.Errorf("status %+v", st)
 	}
+
+	// Its metrics come from its agent, which isn't there; the polling loop
+	// reports that as unavailable.
+	if _, err := r.HostMetrics(ctx, "nas"); !errors.Is(err, agent.ErrNotConnected) {
+		t.Errorf("metrics: %v", err)
+	}
+	if _, err := r.HostMetrics(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("metrics of an unknown host: %v", err)
+	}
+	pctx, stop := context.WithCancel(ctx)
+	seen := make(chan hostmetrics.Snapshot, 1)
+	go r.RunHostMetrics(pctx, 10*time.Millisecond, func(id string, snap hostmetrics.Snapshot) {
+		if id == "nas" {
+			select {
+			case seen <- snap:
+			default:
+			}
+		}
+	})
+	if snap := <-seen; snap.Available || !strings.Contains(snap.Reason, "isn't connected") {
+		t.Errorf("polled: %+v", snap)
+	}
+	stop()
 
 	// It can be renamed and moved while away, but stays an agent's host.
 	if h, err := r.Save(ctx, Input{Host: Host{ID: "nas", Kind: KindAgent, Name: "Big NAS", AppdataRoot: "/data", Address: "nas.lan"}}, false); err != nil || h.Name != "Big NAS" {

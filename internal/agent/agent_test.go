@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
+	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
 )
 
 func TestAllowed(t *testing.T) {
@@ -205,6 +206,23 @@ func TestAgentEndToEnd(t *testing.T) {
 		defer fd.mu.Unlock()
 		return len(fd.stdin) == 1 && fd.stdin[0] == "minecraft:say hi\n"
 	})
+
+	// The host's own metrics (this machine's /proc, in the test).
+	var snap hostmetrics.Snapshot
+	waitFor(t, "host metrics", func() bool {
+		snap, err = hub.HostMetrics(ctx, "nas")
+		return err == nil && snap.Available
+	})
+	if snap.CPU.Cores == 0 || snap.Memory.Total == 0 || snap.Kernel == "" {
+		t.Errorf("host metrics: %+v", snap)
+	}
+	if _, err := hub.HostMetrics(ctx, "other"); !errors.Is(err, ErrNotConnected) {
+		t.Errorf("metrics of a host without an agent: %v", err)
+	}
+	// The path isn't one of Docker's: an older agent refuses it.
+	if Allowed("GET", HostMetricsPath) {
+		t.Error("host metrics path in the Docker allow-list")
+	}
 
 	// A stream arrives as it's sent.
 	raw := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return hub.Dial(ctx, "nas") }}}

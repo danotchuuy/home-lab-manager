@@ -34,10 +34,13 @@
 >   dependency); hlm's Docker client dials a stream per connection, so everything (attach, logs, events, archives)
 >   works unchanged. The agent authenticates with a credential from a single-use, one-hour enrolment token (made by a
 >   confirmed admin; only hashes are stored), checks hlm's certificate (plain HTTP only with `--allow-http`), and passes
->   on only an allow-list of the Docker calls hlm makes. Hosts gain `kind: "agent"`. Host metrics (`/proc`) and host
->   folder reads through the agent weren't built: hlm's files and backups already go through Docker.
-> - **Not built (yet):** host metrics, disk usage and deleted-server data
->   for other hosts (the Host page is the local host's); Compose stacks on other hosts; "host" as an RBAC grant target.
+>   on only an allow-list of the Docker calls hlm makes. Hosts gain `kind: "agent"`. The agent also reports its host's
+>   metrics (the same collector as hlm's, from `/host/proc` and `/host/rootfs`): hlm polls them every 15 s into the
+>   host's history (`hosts/<id>`), the Host page has a host picker, and `/metrics` labels `hlm_host_*` (and
+>   `hlm_server_*`) with `host`. Host folder reads through the agent weren't needed: files and backups go through
+>   Docker.
+> - **Not built (yet):** host metrics for SSH and TLS hosts; disk usage by server and deleted-server data for other
+>   hosts; Compose stacks on other hosts; "host" as an RBAC grant target.
 
 ## Why
 

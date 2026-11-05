@@ -7,6 +7,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -17,6 +18,8 @@ import (
 	"time"
 
 	"github.com/hashicorp/yamux"
+
+	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
 )
 
 // ErrNotConnected is returned when a host's agent isn't connected.
@@ -181,6 +184,39 @@ func (h *Hub) Dial(ctx context.Context, host string) (net.Conn, error) {
 		}()
 		return nil, ctx.Err()
 	}
+}
+
+// HostMetrics asks a host's agent for the host's CPU, memory, network and
+// disk metrics.
+func (h *Hub) HostMetrics(ctx context.Context, host string) (hostmetrics.Snapshot, error) {
+	client := &http.Client{Transport: &http.Transport{
+		DialContext:       func(ctx context.Context, _, _ string) (net.Conn, error) { return h.Dial(ctx, host) },
+		DisableKeepAlives: true,
+	}}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://agent"+HostMetricsPath, nil)
+	if err != nil {
+		return hostmetrics.Snapshot{}, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		if errors.Is(err, ErrNotConnected) {
+			return hostmetrics.Snapshot{}, ErrNotConnected
+		}
+		return hostmetrics.Snapshot{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		// An agent from before host metrics passes the path to Docker's
+		// allow-list, which refuses it.
+		return hostmetrics.Snapshot{}, errors.New("the host's agent doesn't report host metrics: update it (run its command again with the newer image)")
+	}
+	var snap hostmetrics.Snapshot
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&snap); err != nil {
+		return hostmetrics.Snapshot{}, err
+	}
+	return snap, nil
 }
 
 // Status is a host's agent's connection.
