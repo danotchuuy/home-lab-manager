@@ -2,6 +2,27 @@
 
 **Priority:** Low · **Depends on:** nothing (benefits from 10's export format)
 
+> **Status: done** (branch `feature/13-compose-stacks`). See the README's
+> [Compose stacks](../README.md#compose-stacks). Where the result differs from this plan:
+>
+> - **YAML:** `gopkg.in/yaml.v3`, as recommended (decided with the user).
+> - **Storage:** the file and `.env` are kept in the secrets store (`"stacks"`), not `stacks/<name>.yml` in the data
+>   directory. `.env` files usually hold passwords, and the secrets store is encrypted and already in configuration
+>   backups.
+> - **No per-service form:** the editor is the YAML and `.env`. **Check** shows each service's image, ports, resolved
+>   data paths, order and change before applying.
+> - **Services aren't template servers:** their containers are built from the Compose file by `internal/compose` (not
+>   `deploy.Spec`, which is template-based) and carry `io.hlm.managed` plus `io.hlm.stack`, `io.hlm.stack.service` and
+>   `io.hlm.stack.hash` labels. The per-server update, reconfigure, export and clone refuse them ("change it from the
+>   stack"), and the server page hides those settings.
+> - **Edits** recreate a service only when its hash (of the container it would get) changed; the old container is
+>   kept, renamed, until the new one starts, as in `manager.recreate` (implemented in `internal/stack`).
+> - **RBAC:** no stack-level grant. Server groups hold the services like any server; stack actions need operator on
+>   every service, and creating, editing and deleting stacks is admin-only (deployer keys can't).
+> - **Testing:** parity with `docker compose config` was checked by hand for the fixture (environment and merge
+>   behaviour, command splitting, entrypoint, restart, network and volume names), not as an automated test, since the
+>   Compose plugin isn't a test dependency.
+
 ## Why
 
 hlm installs one container per server. Many self-hosted apps need several: an app plus Postgres/Redis, a game server
@@ -66,12 +87,12 @@ Server groups can contain a stack (grant applies to all its services).
 
 ## Tasks
 
-- [ ] Decide YAML dependency
-- [ ] `internal/compose` parser + model + validation
-- [ ] Service → `deploy.Spec` mapping
-- [ ] Ordered create/start/stop, network/volume creation
-- [ ] Stack labels + grouping in server list
-- [ ] Edit with change plan
-- [ ] RBAC grouping
-- [ ] UI: add stack, stack card, YAML editor with diff
-- [ ] README section
+- [x] Decide YAML dependency
+- [x] `internal/compose` parser + model + validation
+- [x] Service → `deploy.Spec` mapping
+- [x] Ordered create/start/stop, network/volume creation
+- [x] Stack labels + grouping in server list
+- [x] Edit with change plan
+- [x] RBAC grouping
+- [x] UI: add stack, stack card, YAML editor with diff
+- [x] README section

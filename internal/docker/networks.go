@@ -52,6 +52,7 @@ type NetworkingConfig struct {
 // EndpointSettings configures a container's endpoint on one network.
 type EndpointSettings struct {
 	IPAMConfig *EndpointIPAMConfig `json:"IPAMConfig,omitempty"`
+	Aliases    []string            `json:"Aliases,omitempty"`
 	IPAddress  string              `json:"IPAddress,omitempty"`  // only set in inspect output
 	MacAddress string              `json:"MacAddress,omitempty"` // only set in inspect output
 }
@@ -82,11 +83,12 @@ func (c *Client) InspectNetwork(ctx context.Context, id string) (Network, error)
 
 // CreateNetworkRequest is the body of a network create call.
 type CreateNetworkRequest struct {
-	Name    string            `json:"Name"`
-	Driver  string            `json:"Driver"`
-	Options map[string]string `json:"Options,omitempty"`
-	IPAM    *NetworkIPAM      `json:"IPAM,omitempty"`
-	Labels  map[string]string `json:"Labels,omitempty"`
+	Name     string            `json:"Name"`
+	Driver   string            `json:"Driver"`
+	Options  map[string]string `json:"Options,omitempty"`
+	IPAM     *NetworkIPAM      `json:"IPAM,omitempty"`
+	Labels   map[string]string `json:"Labels,omitempty"`
+	Internal bool              `json:"Internal,omitempty"`
 }
 
 // CreateNetwork creates a network and returns its ID.

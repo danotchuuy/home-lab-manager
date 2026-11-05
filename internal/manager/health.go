@@ -30,6 +30,12 @@ const (
 	DefaultCrashLoopWindow = 10 * time.Minute
 )
 
+// Labels of Compose stacks' containers (see internal/compose).
+const (
+	LabelStack        = "io.hlm.stack"
+	LabelStackService = "io.hlm.stack.service"
+)
+
 // LabelHealth marks a container whose health check hlm set (from its health
 // settings), rather than the image or template.
 const LabelHealth = "io.hlm.health"

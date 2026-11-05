@@ -17,7 +17,7 @@ the API and UI it needs, who may use it, how to test it, and a task list. They'r
 | 10 | [Clone, export and import servers](10-clone-export-import.md) | Medium | — | Done |
 | 11 | [Backup improvements](11-backup-improvements.md) | Medium | 01 for alerts | Done |
 | 12 | [Two-factor sign-in](12-two-factor.md) | Medium | — | Done (TOTP); passkeys later |
-| 13 | [Docker Compose stacks](13-compose-stacks.md) | Low | — | Planned |
+| 13 | [Docker Compose stacks](13-compose-stacks.md) | Low | — | Done |
 | 14 | [Multiple Docker hosts](14-multi-host.md) | Low | — | Planned |
 | 15 | [Image and disk cleanup](15-cleanup.md) | Low | — | Planned |
 | 16 | [UI improvements](16-ui-improvements.md) | Low | — | Planned |

@@ -162,6 +162,10 @@ type Server struct {
 	// Hidden lists the settings left out of Request for this caller, as
 	// deploy.HideSecrets does.
 	Hidden []string `json:"hidden,omitempty"`
+	// Stack and StackService say which Compose stack (and service in it)
+	// the server is, if it's part of one.
+	Stack        string `json:"stack,omitempty"`
+	StackService string `json:"stackService,omitempty"`
 	// CrashLoop is set when hlm stopped the server because it kept exiting.
 	CrashLoop *CrashLoop `json:"crashLoop,omitempty"`
 	imageID   string
@@ -238,6 +242,7 @@ func serverFromSummary(s docker.ContainerSummary) Server {
 	if r, ok := deploy.RequestFromLabels(s.Labels); ok {
 		srv.Request = &r
 	}
+	srv.Stack, srv.StackService = s.Labels[LabelStack], s.Labels[LabelStackService]
 	return srv
 }
 
@@ -506,6 +511,9 @@ func (m *Manager) recreate(ctx context.Context, id string, req *deploy.Request, 
 		return Server{}, err
 	}
 	name := strings.TrimPrefix(info.Name, "/")
+	if stack := info.Config.Labels[LabelStack]; stack != "" {
+		return Server{}, fmt.Errorf("%s is part of the stack %s: update or change it from the stack", name, stack)
+	}
 	if req == nil {
 		r, ok := deploy.RequestFromLabels(info.Config.Labels)
 		if !ok {

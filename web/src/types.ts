@@ -201,6 +201,47 @@ export interface Server {
   hidden?: string[];
   /** Set when hlm stopped the server because it kept exiting. */
   crashLoop?: CrashLoop;
+  /** The Compose stack (and service in it) the server is part of. */
+  stack?: string;
+  stackService?: string;
+}
+
+/** A Compose stack's service as it runs. */
+export interface StackMember {
+  service: string;
+  container: string;
+  id?: string;
+  /** "missing" when the file has it but there's no container. */
+  state: string;
+  status?: string;
+  health?: string;
+  image: string;
+}
+
+/** A Compose stack (GET /api/stacks). */
+export interface Stack {
+  name: string;
+  services: StackMember[];
+  created: string;
+  updated: string;
+  busy?: boolean;
+  /** The stored file can't be read any more. */
+  error?: string;
+}
+
+/** What applying a Compose file would do. */
+export interface StackPlan {
+  services: {
+    service: string;
+    container: string;
+    image: string;
+    ports: string[];
+    mounts: string[];
+    dependsOn?: string[];
+    change: "create" | "update" | "unchanged" | "remove";
+  }[];
+  networks: string[];
+  warnings: string[];
 }
 
 /** A server hlm stopped because it exited too often in a short time. */

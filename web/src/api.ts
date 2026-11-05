@@ -7,6 +7,8 @@ import type {
   HistoryRange,
   MetricHistory,
   MetricsSettings,
+  Stack,
+  StackPlan,
   TwoFactorSetup,
   BackupTarget,
   BackupVerification,
@@ -392,6 +394,18 @@ export const api = {
     opts: { name: string; request?: DeployRequest; copyData: CopyData; backupKey?: string; stopSource: boolean; start: boolean },
     onEvent: (e: DeployEvent) => void,
   ) => stream(`/api/servers/${encodeURIComponent(id)}/clone`, { method: "POST", body: JSON.stringify(opts) }, onEvent),
+  stacks: () => json<Stack[]>("/api/stacks"),
+  /** A stack, with its Compose file and .env for admins. */
+  stack: (name: string) => json<{ stack: Stack; yaml?: string; env?: string }>(`/api/stacks/${encodeURIComponent(name)}`),
+  previewStack: (name: string, yaml: string, env: string, existing: boolean) =>
+    json<StackPlan>("/api/stacks/preview", { method: "POST", body: JSON.stringify({ name, yaml, env, existing }) }),
+  createStack: (name: string, yaml: string, env: string, onEvent: (e: DeployEvent) => void) =>
+    stream("/api/stacks", { method: "POST", body: JSON.stringify({ name, yaml, env }) }, onEvent),
+  updateStack: (name: string, yaml: string, env: string, onEvent: (e: DeployEvent) => void) =>
+    stream(`/api/stacks/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ yaml, env }) }, onEvent),
+  stackAction: (name: string, action: "start" | "stop" | "restart" | "update", onEvent: (e: DeployEvent) => void) =>
+    stream(`/api/stacks/${encodeURIComponent(name)}/${action}`, { method: "POST" }, onEvent),
+  deleteStack: (name: string) => json<void>(`/api/stacks/${encodeURIComponent(name)}`, { method: "DELETE" }),
   install: (req: DeployRequest, onEvent: (e: DeployEvent) => void) =>
     stream("/api/servers", { method: "POST", body: JSON.stringify(req) }, onEvent),
   /** Host ports the settings would use that are already in use; `server` is the one being edited. */

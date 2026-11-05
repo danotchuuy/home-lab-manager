@@ -52,6 +52,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/schedule"
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
 	"github.com/danotchuuy/home-lab-manager/internal/selfupdate"
+	"github.com/danotchuuy/home-lab-manager/internal/stack"
 	"github.com/danotchuuy/home-lab-manager/internal/tlscert"
 	"github.com/danotchuuy/home-lab-manager/internal/transfer"
 )
@@ -476,6 +477,8 @@ func run(log *slog.Logger) error {
 		Manager: mgr, Catalog: cat, Backups: backups, Tasks: sched, Updates: autoUpdates, Query: queries,
 		Console: consoles, ConfigFiles: pinned, Health: healthStore, Version: version, Log: log,
 	})
+	// Docker Compose stacks.
+	stacks := stack.New(store, dc, mgr, log)
 	handler := api.Handler(api.Options{
 		Docker:        dc,
 		Catalog:       cat,
@@ -505,6 +508,7 @@ func run(log *slog.Logger) error {
 		Health:        healthStore,
 		HealthMonitor: healthMonitor,
 		Transfer:      transfers,
+		Stacks:        stacks,
 		// Set when HLM_UPDATE_CHECK overrides the setting.
 		UpdateCheckEnv: updateCheckEnv,
 		Token:          env("HLM_TOKEN", ""),

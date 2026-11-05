@@ -87,6 +87,11 @@ func (m *Manager) PortConflicts(ctx context.Context, req deploy.Request, self st
 	return m.portConflicts(ctx, spec.Create, self)
 }
 
+// PortConflictsOf is PortConflicts for a container's create request.
+func (m *Manager) PortConflictsOf(ctx context.Context, c docker.CreateRequest, self string) ([]PortConflict, error) {
+	return m.portConflicts(ctx, c, self)
+}
+
 func (m *Manager) portConflicts(ctx context.Context, c docker.CreateRequest, self string) ([]PortConflict, error) {
 	if c.Labels[deploy.LabelDirectIP] == "true" {
 		return []PortConflict{}, nil
