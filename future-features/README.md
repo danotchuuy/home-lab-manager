@@ -15,7 +15,7 @@ the API and UI it needs, who may use it, how to test it, and a task list. They'r
 | 08 | [Metrics history and Prometheus](08-metrics-history-prometheus.md) | Medium | — | Done |
 | 09 | [Health checks and crash-loop protection](09-health-crash-loop.md) | Medium | 01 for alerts | Done |
 | 10 | [Clone, export and import servers](10-clone-export-import.md) | Medium | — | Done |
-| 11 | [Backup improvements](11-backup-improvements.md) | Medium | 01 for alerts | Planned |
+| 11 | [Backup improvements](11-backup-improvements.md) | Medium | 01 for alerts | Done |
 | 12 | [Two-factor sign-in](12-two-factor.md) | Medium | — | Planned |
 | 13 | [Docker Compose stacks](13-compose-stacks.md) | Low | — | Planned |
 | 14 | [Multiple Docker hosts](14-multi-host.md) | Low | — | Planned |

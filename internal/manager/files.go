@@ -85,12 +85,12 @@ func (m *Manager) SearchFiles(ctx context.Context, id, dir, query string) ([]fil
 
 // ArchiveFolders writes folders in a server's container, with everything in
 // them, to tw; see files.Browser.Archive.
-func (m *Manager) ArchiveFolders(ctx context.Context, id string, folders []string, tw *tar.Writer, progress func(files.ArchiveStats)) (files.ArchiveStats, error) {
+func (m *Manager) ArchiveFolders(ctx context.Context, id string, folders, exclude []string, tw *tar.Writer, progress func(files.ArchiveStats)) (files.ArchiveStats, error) {
 	info, err := m.inspect(ctx, id)
 	if err != nil {
 		return files.ArchiveStats{}, err
 	}
-	return m.browser().Archive(ctx, info, folders, tw, progress)
+	return m.browser().ArchiveExcluding(ctx, info, folders, exclude, tw, progress)
 }
 
 // RestoreArchive extracts a tar stream made by ArchiveFolders back into a

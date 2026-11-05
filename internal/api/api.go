@@ -2124,7 +2124,7 @@ func (s *server) startBackup(w http.ResponseWriter, r *http.Request) {
 // downloadBackup streams a backup from the bucket (?key=).
 func (s *server) downloadBackup(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Query().Get("key")
-	rc, size, err := s.Backup.Download(r.Context(), r.PathValue("id"), key)
+	rc, size, err := s.Backup.Download(r.Context(), r.PathValue("id"), key, r.URL.Query().Get("target"))
 	if err != nil {
 		writeBackupError(w, err)
 		return
@@ -2148,6 +2148,7 @@ func sendBackup(w http.ResponseWriter, key string, rc io.ReadCloser, size int64)
 func (s *server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Key         string `json:"key"`
+		Target      string `json:"target"`
 		BackupFirst bool   `json:"backupFirst"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil {
@@ -2158,7 +2159,10 @@ func (s *server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 	if body.BackupFirst {
 		audit.Add(r.Context(), "backupFirst", "yes")
 	}
-	if err := s.Backup.Restore(r.Context(), r.PathValue("id"), body.Key, body.BackupFirst); err != nil {
+	if body.Target != "" {
+		audit.Add(r.Context(), "target", body.Target)
+	}
+	if err := s.Backup.Restore(r.Context(), r.PathValue("id"), body.Key, body.Target, body.BackupFirst); err != nil {
 		writeBackupError(w, err)
 		return
 	}
@@ -2166,11 +2170,76 @@ func (s *server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) deleteBackup(w http.ResponseWriter, r *http.Request) {
-	if err := s.Backup.DeleteBackup(r.Context(), r.PathValue("id"), r.URL.Query().Get("key")); err != nil {
+	if err := s.Backup.DeleteBackup(r.Context(), r.PathValue("id"), r.URL.Query().Get("key"), r.URL.Query().Get("target")); err != nil {
 		writeBackupError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// verifyBackup reads one of a server's backups back (?key=&target=), and
+// says how it went.
+func (s *server) verifyBackup(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	audit.Add(r.Context(), "key", q.Get("key"))
+	v, err := s.Backup.VerifyBackup(r.Context(), r.PathValue("id"), q.Get("key"), q.Get("target"))
+	if err != nil {
+		writeBackupError(w, err)
+		return
+	}
+	if !v.OK {
+		audit.Fail(r.Context(), errors.New(v.Error))
+	}
+	writeJSON(w, http.StatusOK, v)
+}
+
+// --- backup storage targets ---
+
+func (s *server) backupTargets(w http.ResponseWriter, r *http.Request) {
+	ts, err := s.Backup.Targets()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ts)
+}
+
+func (s *server) saveBackupTarget(w http.ResponseWriter, r *http.Request) {
+	var t backup.Target
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&t); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	t.ID = r.PathValue("target") // empty when adding
+	audit.Add(r.Context(), "name", t.Name)
+	if t.Encrypt {
+		audit.Add(r.Context(), "encrypt", "yes")
+	}
+	pub, err := s.Backup.SaveTarget(r.Context(), t)
+	if err != nil {
+		writeBackupError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, pub)
+}
+
+func (s *server) deleteBackupTarget(w http.ResponseWriter, r *http.Request) {
+	if err := s.Backup.DeleteTarget(r.PathValue("target")); err != nil {
+		writeBackupError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// backupTargetKey shows a storage's encryption key, to keep it safe.
+func (s *server) backupTargetKey(w http.ResponseWriter, r *http.Request) {
+	k, err := s.Backup.Key(r.PathValue("target"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]string{"key": k})
 }
 
 // --- backups of hlm's own configuration ---

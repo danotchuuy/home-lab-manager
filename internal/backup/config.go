@@ -44,8 +44,10 @@ const keyFile = "secrets/secret.key"
 type ConfigPlan struct {
 	// IntervalHours is how often to back up; 0 means only when asked.
 	IntervalHours int `json:"intervalHours"`
-	// Keep is how many backups to keep; 0 keeps them all.
-	Keep int `json:"keep"`
+	// Keep is how many backups to keep; 0 keeps them all. Retention, if
+	// set, keeps by age instead.
+	Keep      int        `json:"keep"`
+	Retention *Retention `json:"retention,omitempty"`
 	// IncludeKey adds the key that decrypts the stored credentials, making
 	// the backup enough to restore hlm on its own, but also letting anyone
 	// who can read the bucket read them.
@@ -151,12 +153,12 @@ func (s *Service) SetConfigPlan(in ConfigPlan) (ConfigPlan, error) {
 	if in.IntervalHours < 0 || in.IntervalHours > 24*365 {
 		return ConfigPlan{}, errors.New("the interval must be between 0 (off) and 8760 hours")
 	}
-	if in.Keep < 0 {
-		return ConfigPlan{}, errors.New("the number of backups to keep can't be negative")
+	if err := (Keeping{Keep: in.Keep, Retention: in.Retention}).check(); err != nil {
+		return ConfigPlan{}, err
 	}
 	var out ConfigPlan
 	err := s.updateConfigPlan(func(p *ConfigPlan) {
-		p.IntervalHours, p.Keep, p.IncludeKey = in.IntervalHours, in.Keep, in.IncludeKey
+		p.IntervalHours, p.Keep, p.Retention, p.IncludeKey = in.IntervalHours, in.Keep, in.Retention, in.IncludeKey
 		out = *p
 	})
 	return out, err
@@ -205,7 +207,7 @@ func (s *Service) runConfig(ctx context.Context, plan ConfigPlan, prog *Progress
 		run.Finished, run.Error = time.Now(), err.Error()
 		return run
 	}
-	cl, c, err := s.client()
+	st, err := s.store("")
 	if err != nil {
 		return fail(err)
 	}
@@ -214,18 +216,21 @@ func (s *Service) runConfig(ctx context.Context, plan ConfigPlan, prog *Progress
 	if err != nil {
 		return fail(err)
 	}
-	r := configSeries(c)
+	r := configSeries(st.t.Settings)
 	key := r.newKey(run.Started)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	size, err := cl.Upload(ctx, key, bytes.NewReader(data), "application/gzip", map[string]string{"Hlm-Server": configRunName})
-	if err != nil {
+	size, sum, err := st.put(ctx, key, bytes.NewReader(data), map[string]string{"Hlm-Server": configRunName})
+	var noSum *sumError
+	if errors.As(err, &noSum) {
+		run.Warnings = append(run.Warnings, err.Error())
+	} else if err != nil {
 		return fail(err)
 	}
-	run.Key, run.Size = key, size
-	if plan.Keep > 0 {
+	run.Key, run.Size, run.SHA256 = key, size, sum
+	if k := (Keeping{Keep: plan.Keep, Retention: plan.Retention}); k.prunes() {
 		s.setStage(prog, "cleaning")
-		if err := prune(ctx, cl, r, plan.Keep); err != nil {
+		if err := prune(ctx, st, r, k, s.loc()); err != nil {
 			run.Warnings = append(run.Warnings, "couldn't delete old backups: "+err.Error())
 		}
 	}
@@ -331,6 +336,13 @@ To restore: stop hlm, extract this archive into its data directory
                         aren't restored by extracting; install each server again
                         from its template with these values. The game data itself
                         is in each server's own backups.
+
+Backup storage that encrypts backups keeps its key in secrets.enc too: restoring
+this backup (with secrets.enc's own key) brings the keys back. Without hlm, an
+encrypted backup can be read with the key shown when encryption was turned on:
+  hlm decrypt-backup KEY server-backup.tar.gz plain.tar.gz
+If this configuration backup is itself in storage that encrypts, decrypt it the
+same way first.
 `)
 	switch {
 	case keyFromEnv:
@@ -344,34 +356,39 @@ To restore: stop hlm, extract this archive into its data directory
 }
 
 // configKey checks that key is one of the configuration backups.
-func (s *Service) configKey(key string) (*s3.Client, error) {
+func (s *Service) configKey(key string) (*store, error) {
 	if s.config == nil {
 		return nil, ErrNoConfig
 	}
-	cl, c, err := s.client()
+	st, err := s.store("")
 	if err != nil {
 		return nil, err
 	}
-	if !configSeries(c).has(key) {
+	if !configSeries(st.t.Settings).has(key) {
 		return nil, ErrBadKey
 	}
-	return cl, nil
+	return st, nil
 }
 
-// DownloadConfig opens one of the configuration backups.
+// DownloadConfig opens one of the configuration backups, decrypted. size
+// is -1 when the storage encrypts.
 func (s *Service) DownloadConfig(ctx context.Context, key string) (io.ReadCloser, int64, error) {
-	cl, err := s.configKey(key)
+	st, err := s.configKey(key)
 	if err != nil {
 		return nil, 0, err
 	}
-	return cl.Get(ctx, key)
+	rc, size, err := st.open(ctx, key)
+	if err == nil && st.key != nil {
+		size = -1
+	}
+	return rc, size, err
 }
 
 // DeleteConfigBackup deletes one of the configuration backups.
 func (s *Service) DeleteConfigBackup(ctx context.Context, key string) error {
-	cl, err := s.configKey(key)
+	st, err := s.configKey(key)
 	if err != nil {
 		return err
 	}
-	return cl.Delete(ctx, key)
+	return st.remove(ctx, key)
 }

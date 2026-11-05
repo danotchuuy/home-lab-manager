@@ -19,6 +19,8 @@ import (
 type ArchiveStats struct {
 	Files int   `json:"files"`
 	Bytes int64 `json:"bytes"` // file contents, before compression
+	// Excluded counts the files and folders exclude patterns left out.
+	Excluded int `json:"excluded,omitempty"`
 	// Warnings are files that were skipped or changed while being read.
 	Warnings []string `json:"warnings,omitempty"`
 }
@@ -76,6 +78,12 @@ func within(p, dir string) bool {
 // included too, each read the fastest way available. progress, if not nil,
 // is called after each file.
 func (b *Browser) Archive(ctx context.Context, info docker.ContainerJSON, folders []string, tw *tar.Writer, progress func(ArchiveStats)) (ArchiveStats, error) {
+	return b.ArchiveExcluding(ctx, info, folders, nil, tw, progress)
+}
+
+// ArchiveExcluding is Archive, leaving out what the exclude patterns match
+// (see Excluded).
+func (b *Browser) ArchiveExcluding(ctx context.Context, info docker.ContainerJSON, folders, exclude []string, tw *tar.Writer, progress func(ArchiveStats)) (ArchiveStats, error) {
 	var st ArchiveStats
 	folders, err := NormalizeFolders(folders)
 	if err != nil {
@@ -102,7 +110,7 @@ func (b *Browser) Archive(ctx context.Context, info docker.ContainerJSON, folder
 	if progress == nil {
 		progress = func(ArchiveStats) {}
 	}
-	a := &archiver{tw: tw, stats: &st, progress: progress}
+	a := &archiver{tw: tw, stats: &st, progress: progress, exclude: exclude}
 	for i, src := range sources {
 		if i > 0 && src == sources[i-1] {
 			continue
@@ -124,6 +132,16 @@ type archiver struct {
 	tw       *tar.Writer
 	stats    *ArchiveStats
 	progress func(ArchiveStats)
+	exclude  []string
+}
+
+// excluded reports whether a pattern leaves a path out, and counts it.
+func (a *archiver) excluded(full string, dir bool) bool {
+	if len(a.exclude) == 0 || !Excluded(a.exclude, full, dir) {
+		return false
+	}
+	a.stats.Excluded++
+	return true
 }
 
 func skipped(p string, skip []string) bool {
@@ -175,7 +193,7 @@ func archiveHost(ctx context.Context, loc *location, skip []string, a *archiver)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if full != loc.path && skipped(full, skip) {
+		if full != loc.path && (skipped(full, skip) || a.excluded(full, d.IsDir())) {
 			if d.IsDir() {
 				return fs.SkipDir
 			}
@@ -294,6 +312,12 @@ func (b *Browser) archiveDocker(ctx context.Context, id, src string, skip []stri
 		}
 		full := path.Join(parent, hdr.Name)
 		if full != src && skipped(full, skip) {
+			continue
+		}
+		if full != src && a.excluded(full, hdr.Typeflag == tar.TypeDir) {
+			if hdr.Typeflag == tar.TypeDir {
+				skip = append(skip, full) // and everything in it
+			}
 			continue
 		}
 		dir := hdr.Typeflag == tar.TypeDir

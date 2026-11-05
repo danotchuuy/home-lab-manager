@@ -103,6 +103,32 @@ func TestArchiveHost(t *testing.T) {
 	}
 }
 
+func TestArchiveHostExcluding(t *testing.T) {
+	dir := t.TempDir()
+	for name, content := range map[string]string{
+		"server.cfg": "port=1", "logs/latest.log": "hello", "cache/a.bin": "x", "world/cache/b.bin": "y", "world/level.dat": "w",
+	} {
+		p := filepath.Join(dir, name)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte(content), 0o644)
+	}
+	var info docker.ContainerJSON
+	info.Mounts = []docker.MountPoint{{Type: "bind", Source: dir, Destination: "/data", RW: true}}
+	b := New(nil, func(p string) string { return p })
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	st, err := b.ArchiveExcluding(context.Background(), info, []string{"/data"}, []string{"*.log", "cache/"}, tw, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tw.Close()
+	names, _ := readTar(t, buf.Bytes())
+	want := []string{"data/", "data/logs/", "data/server.cfg", "data/world/", "data/world/level.dat"}
+	if !slices.Equal(names, want) || st.Files != 2 || st.Excluded != 3 {
+		t.Errorf("entries = %v (stats %+v), want %v", names, st, want)
+	}
+}
+
 func TestRestoreSkips(t *testing.T) {
 	var in bytes.Buffer
 	tw := tar.NewWriter(&in)

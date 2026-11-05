@@ -7,6 +7,8 @@ import type {
   HistoryRange,
   MetricHistory,
   MetricsSettings,
+  BackupTarget,
+  BackupVerification,
   ServerExport,
   TransferPreview,
   CopyData,
@@ -331,15 +333,34 @@ export const api = {
   /** Starts a backup in the background; serverBackups shows its progress. */
   startBackup: (id: string) => json<void>(`/api/servers/${encodeURIComponent(id)}/backups`, { method: "POST" }),
   /** Starts putting a backup's files back; backupFirst saves the current ones as a new backup before. */
-  restoreBackup: (id: string, key: string, backupFirst: boolean) =>
+  restoreBackup: (id: string, key: string, backupFirst: boolean, target = "") =>
     json<void>(`/api/servers/${encodeURIComponent(id)}/backups/restore`, {
       method: "POST",
-      body: JSON.stringify({ key, backupFirst }),
+      body: JSON.stringify({ key, backupFirst, target }),
     }),
-  deleteBackup: (id: string, key: string) =>
-    json<void>(`/api/servers/${encodeURIComponent(id)}/backups?${new URLSearchParams({ key })}`, { method: "DELETE" }),
+  deleteBackup: (id: string, key: string, target = "") =>
+    json<void>(`/api/servers/${encodeURIComponent(id)}/backups?${new URLSearchParams({ key, target })}`, {
+      method: "DELETE",
+    }),
+  /** Reads a backup back and checks it. */
+  verifyBackup: (id: string, key: string, target = "") =>
+    json<BackupVerification>(`/api/servers/${encodeURIComponent(id)}/backups/verify?${new URLSearchParams({ key, target })}`, {
+      method: "POST",
+    }),
   /** URL to download a backup from. A plain link can't send headers, so the token goes in the query. */
-  backupDownloadUrl: (id: string, key: string) => withKey(`/api/servers/${encodeURIComponent(id)}/backups/download`, key),
+  backupDownloadUrl: (id: string, key: string, target = "") =>
+    withKey(`/api/servers/${encodeURIComponent(id)}/backups/download`, key) +
+    (target ? `&${new URLSearchParams({ target })}` : ""),
+  backupTargets: () => json<BackupTarget[]>("/api/integrations/backup/targets"),
+  /** Adds a backup storage (without an id) or changes one; a blank secret key keeps the saved one. */
+  saveBackupTarget: (t: Partial<BackupTarget> & { secretKey?: string }) =>
+    json<BackupTarget>(`/api/integrations/backup/targets${t.id ? `/${encodeURIComponent(t.id)}` : ""}`, {
+      method: t.id ? "PUT" : "POST",
+      body: JSON.stringify(t),
+    }),
+  deleteBackupTarget: (id: string) =>
+    json<void>(`/api/integrations/backup/targets/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  backupTargetKey: (id: string) => json<{ key: string }>(`/api/integrations/backup/targets/${encodeURIComponent(id)}/key`),
   configBackups: () => json<ConfigBackupOverview>("/api/system/backup"),
   setConfigBackupPlan: (plan: Omit<ConfigBackupPlan, "last">) =>
     json<ConfigBackupPlan>("/api/system/backup", { method: "PUT", body: JSON.stringify(plan) }),

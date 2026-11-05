@@ -598,9 +598,58 @@ MinIO, Garage or AWS S3. Set up the bucket once under **System → Backup storag
 **Test connection** and **Save** list the bucket, then write and delete a small test file, so a read-only key is caught
 right away.
 
-On a server's **Backups** tab, add folders by browsing the container (or with the data folder shortcuts). Then choose a
-**schedule** (off, or every 1 hour to 1 week), how many **backups to keep** (older ones are deleted after each successful
-backup; 0 keeps all), and whether to **stop the server while backing up**. **Back up now** runs one straight away.
+On a server's **Backups** tab, add folders by browsing the container (or with the data folder shortcuts). **Back up now**
+runs a backup straight away. Then choose:
+
+- **Schedule:** off; every 1 hour to 1 week; or **at a time of day** (say 04:00) on chosen weekdays, in hlm's time zone.
+- **Which backups to keep.** Either the newest N (0 keeps all), or **by age**: the newest few, plus the newest backup of
+  each of the last so many days, weeks (ISO weeks) and months that have one (by default 3, 7 days, 4 weeks and 6
+  months). A backup any rule keeps is kept. Older ones are deleted after each successful backup.
+- Whether to **stop the server while backing up**.
+
+**More options:**
+
+- **Leave out:** patterns for files not worth backing up, one per line:
+  - `*.log` matches a name anywhere;
+  - `cache/` (ending in a slash) matches only folders;
+  - `/data/logs` matches a whole container path;
+  - `mods/*.tmp` matches the end of a path.
+
+  An excluded folder leaves out everything in it. SteamCMD's game files (`steamapps/`) are worth leaving out: they're
+  downloaded again anyway. The last backup's summary says how many files and folders were left out.
+- **Console commands before and after** (one per line), sent through the server's [console](#sending-commands-to-a-server)
+  when it's running. For example, Minecraft's `save-off` and `save-all flush` before, and `save-on` after, give a
+  consistent backup without stopping the server. A command that fails is noted on the backup, which goes ahead anyway.
+- **Check each backup** (on by default for backups under 5 GB; or always, or off). After a backup is stored, hlm:
+  - downloads it again;
+  - checks its size and its SHA-256 checksum, which is stored beside it as `<backup>.sha256` (in `sha256sum`'s format);
+  - decrypts it if it's encrypted;
+  - reads every file in it through gzip, whose own check covers the contents;
+  - counts the files.
+
+  Nothing is written to disk. A backup that fails this counts as failed, and sends `backup.verify_failed`. **Verify**
+  on any listed backup does the same check on demand. The result shows as **✓ verified** or **✗ damaged**.
+- **Also copy each backup to** another backup storage (see below), with its own rule for which copies to keep there. After
+  a backup is stored (and checked), it's streamed from the primary storage to the other one. The tab lists the copies
+  there too, with **Restore**, **Verify**, **Download** and **Delete**. A copy that fails is a warning on the backup.
+
+**More backup storage.** Under **System → Backup storage**, below the primary storage (where every backup goes), **Add
+backup storage** adds others, such as an off-site bucket (Backblaze B2, Cloudflare R2, AWS S3, another SeaweedFS). They're
+checked the same way when saved. The primary can only be disconnected once it's the only one.
+
+**Encryption.** Any backup storage can **encrypt backups** before they're stored:
+- AES-256-GCM, in chunks, so backups still stream without being staged on disk; a file that's cut short or changed is
+  caught.
+- The key is made when encryption is turned on, shown once to keep somewhere safe (**Show key** shows it again, after
+  confirming it's you), and kept in hlm's encrypted settings, so configuration backups include it.
+- hlm decrypts on restore, verify and download, so a downloaded backup is a plain `.tar.gz`.
+- Without hlm: `hlm decrypt-backup KEY backup.tar.gz plain.tar.gz` (or `-key-file`). It runs in the image too:
+  `docker run --rm -i danotchuuy/home-lab-manager decrypt-backup KEY < in > out`.
+- Turning encryption off keeps the key, so older encrypted backups can still be read.
+
+[Notifications](#notifications) also report a backup that fails its check (`backup.verify_failed`), and a server whose
+scheduled backups haven't worked for a while (`backup.stale`): no successful backup for twice the schedule's longest gap,
+and at least a day and a half.
 
 - Each backup is one `.tar.gz`, streamed from the container to the bucket in 16 MiB parts (S3 multipart upload), so
   nothing is staged on disk and backups of up to about 160 GB work. It's stored as
@@ -631,7 +680,8 @@ afterwards, so the game doesn't overwrite the restored saves when it shuts down.
 ### Backing up hlm's own configuration
 
 Once backup storage is set up, hlm also backs up its own configuration there, **every day by default**, keeping the
-last 14. **System → Backups of hlm's configuration** changes the schedule and how many to keep, runs a backup now, and
+last 14. **System → Backups of hlm's configuration** changes the schedule and which to keep (the newest N, or by age, as for
+servers), runs a backup now, and
 lists, downloads or deletes them. They're stored as `<folder>/_hlm/hlm-config-<UTC time>.tar.gz`, apart from the
 servers' backups.
 
@@ -1214,6 +1264,8 @@ Each target chooses its **events** (warnings and errors by default):
 | `hlm.update_available` | info | A new version of hlm is out (once per version). |
 | `hlm.update_failed` | error | hlm couldn't [update itself automatically](#automatic-updates). |
 | `backup.failed`, `backup.succeeded` | error, info | A server's or hlm's configuration backup fails or finishes. |
+| `backup.verify_failed` | error | A backup was stored, but reading it back (after the backup, or **Verify**) showed it's damaged. |
+| `backup.stale` | warning | A server with scheduled backups hasn't had one work for twice its schedule's longest gap (at least a day and a half). |
 | `restore.finished`, `restore.failed` | info, error | A restore finishes or fails. |
 | `tunnel.down` | error | The WireGuard or Cloudflare Tunnel container stops on its own. |
 | `wan.changed`, `proxy.update_failed` | info, error | The home address changed and the proxy was updated, or updating it failed. |
@@ -1616,23 +1668,28 @@ when the `HLM_*` one isn't set.
 | `GET /api/servers/{id}/files/content?path=`    | Read a text file (up to 1 MiB).                                                   |
 | `PUT /api/servers/{id}/files/content`          | `{path, content, expectedMtime}`: save a file; 409 if it changed since it was read. |
 | `GET /api/servers/{id}/backups`                | The server's backup plan, a running backup's progress, and its backups in the bucket (newest first). |
-| `PUT /api/servers/{id}/backups/plan`           | `{folders, intervalHours, keep, stopServer}`: what to back up and when.            |
+| `PUT /api/servers/{id}/backups/plan`           | `{folders, intervalHours, at?: {time, weekdays}, keep, retention?: {last, daily, weekly, monthly}, stopServer, exclude?, preCommand?, postCommand?, verify?: ""\|"always"\|"off", copyTo?: {target, keep, retention?}}`: what to back up, when, and how long to keep it. |
+| `POST /api/servers/{id}/backups/verify?key=&target=` | Read a backup back and check it: `{ok, files, bytes, checksum, error}`. Operators. |
 | `POST /api/servers/{id}/backups`               | Start a backup now (202); progress shows in `GET .../backups`.                     |
-| `POST /api/servers/{id}/backups/restore`       | `{key, backupFirst}`: start restoring a backup (202); progress shows in `GET .../backups`. |
-| `GET /api/servers/{id}/backups/download?key=`  | Download one of the server's backups.                                             |
+| `POST /api/servers/{id}/backups/restore`       | `{key, target?, backupFirst}`: start restoring a backup (202); progress shows in `GET .../backups`. |
+| `GET /api/servers/{id}/backups/download?key=&target=` | Download one of the server's backups (decrypted).                           |
 | `GET /api/servers/{id}/export?secrets=0\|1`    | The server's settings as an [export file](#export-import-and-clone). Operators; `secrets=1` (passwords included) takes a manager in a [confirmed](#confirming-its-you) browser session. |
 | `POST /api/servers/import/preview`             | Read an export file: the install form's template and settings, warnings, what was left out and what comes along. Admins. |
 | `POST /api/servers/import`                     | `{export, request}`: install a server from an export file with the form's settings, and give it the file's other settings. Streams NDJSON. Admins. |
 | `POST /api/servers/{id}/clone/preview`         | `{name}`: a clone's settings (new data folders and free ports), what it copies, and warnings. Admins. |
 | `POST /api/servers/{id}/clone`                 | `{name, request?, copyData: "none"\|"now"\|"backup", backupKey?, stopSource, start}`: clone the server. Streams NDJSON. Admins. |
-| `DELETE /api/servers/{id}/backups?key=`        | Delete one of the server's backups from the bucket.                               |
+| `DELETE /api/servers/{id}/backups?key=&target=` | Delete one of the server's backups (and its checksum) from the bucket.          |
 | `GET /api/system/backup`                       | Configuration backups: their plan, a running backup, and the backups in the bucket. |
-| `PUT /api/system/backup`                       | `{intervalHours, keep, includeKey}`: when to back up hlm's configuration.          |
+| `PUT /api/system/backup`                       | `{intervalHours, keep, retention?, includeKey}`: when to back up hlm's configuration, and which backups to keep. |
 | `POST /api/system/backup`                      | Back up hlm's configuration now (202).                                            |
 | `GET /api/system/backup/download?key=`         | Download a configuration backup.                                                  |
 | `DELETE /api/system/backup?key=`               | Delete a configuration backup.                                                    |
 | `GET\|PUT\|DELETE /api/integrations/backup`     | Bucket settings, including `caCert` (PEM) for a private CA (the secret key is never returned; empty keeps the saved one). |
 | `POST /api/integrations/backup/test`           | Check bucket settings: list, write and delete a test file.                        |
+| `GET /api/integrations/backup/targets`         | Every backup storage (the primary first), without secret keys: `{id, name, encrypt, hasKey, endpoint, bucket, …}`. |
+| `POST /api/integrations/backup/targets`, `PUT .../targets/{target}` | Add or change a backup storage (`{name, endpoint, bucket, accessKey, secretKey, prefix, region, virtualHost, caCert, encrypt}`), checked first. Turning on encryption returns the new key once as `newKey`. Needs a [confirmed](#confirming-its-you) session. |
+| `DELETE /api/integrations/backup/targets/{target}` | Forget a backup storage (not its backups); the primary only when it's the only one. |
+| `GET /api/integrations/backup/targets/{target}/key` | A storage's encryption key, to keep safe. Needs a confirmed session. |
 | `GET /api/servers/{id}/files/search?path=&q=`  | Find files by name, or config files when `q` is empty.                            |
 | `GET/PUT /api/servers/{id}/config-files`       | The server's [pinned settings files](#editing-server-files) and the usual ones of its game that hlm found (`{pinned, suggested}`); `PUT {pinned: [{path, label?}]}` takes a manager. |
 | `GET /api/servers/{id}/stats`                  | CPU, memory, network and disk usage.                                              |

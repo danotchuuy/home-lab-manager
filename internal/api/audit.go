@@ -24,14 +24,15 @@ var auditNames = map[string]string{
 	"POST /api/auth/ssh/login":     "-",
 	"POST /api/auth/confirm":       "-",
 	// Not changes.
-	"POST /api/auth/download-ticket":         "-",
-	"POST /api/servers/check-ports":          "-",
-	"GET /api/servers/{id}/backups/download": "servers.backups.download",
-	"GET /api/system/backup/download":        "system.backup.download",
-	"GET /api/audit/export":                  "audit.export",
-	"GET /api/servers/{id}/export":           "servers.export",
-	"POST /api/servers/import/preview":       "-",
-	"POST /api/servers/{id}/clone/preview":   "-",
+	"POST /api/auth/download-ticket":                    "-",
+	"POST /api/servers/check-ports":                     "-",
+	"GET /api/servers/{id}/backups/download":            "servers.backups.download",
+	"GET /api/system/backup/download":                   "system.backup.download",
+	"GET /api/audit/export":                             "audit.export",
+	"GET /api/servers/{id}/export":                      "servers.export",
+	"POST /api/servers/import/preview":                  "-",
+	"POST /api/servers/{id}/clone/preview":              "-",
+	"GET /api/integrations/backup/targets/{target}/key": "integrations.backup.targets.key",
 }
 
 // actionVerbs are path ends that already say what a POST does; other POSTs
@@ -39,7 +40,7 @@ var auditNames = map[string]string{
 var actionVerbs = []string{
 	"test", "check", "apply", "run", "restore", "start", "stop", "restart", "update", "renew", "import", "refresh",
 	"sync", "install", "command", "adopt", "dismiss", "forget", "delete", "remove", "key", "secret", "wan-check",
-	"detect", "confirm", "login", "logout", "challenge", "download-ticket", "check-ports", "check-ip", "clone",
+	"detect", "confirm", "login", "logout", "challenge", "download-ticket", "check-ports", "check-ip", "clone", "verify",
 }
 
 var wildcardRE = regexp.MustCompile(`\{(\w+)\.*\}`)
