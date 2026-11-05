@@ -19,6 +19,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -376,6 +377,24 @@ func run(log *slog.Logger) error {
 	// Set before the update checker starts, which lists them.
 	mgr.UseSelf(updater.ContainerID(), manager.ConnectionKind{Kind: "hlm", Title: "Home Lab Manager", Page: "/system"})
 	updater.UseNotifier(notifier)
+	// Tunnel routes to hlm itself (status page sites) go to its port, as
+	// its container publishes it if it runs in one.
+	tunnel.UseSelf(func(ctx context.Context) (cftunnel.SelfOrigin, error) {
+		_, p, err := net.SplitHostPort(listen)
+		if err != nil {
+			return cftunnel.SelfOrigin{}, err
+		}
+		port, _ := strconv.Atoi(p)
+		so := cftunnel.SelfOrigin{Port: port}
+		if id := updater.ContainerID(); id != "" {
+			info, err := dc.InspectContainer(ctx, id)
+			if err != nil {
+				return so, err
+			}
+			so.Container = &info
+		}
+		return so, nil
+	})
 	// After UseConnection and UseSelf, which say which containers are whose.
 	go mgr.WatchEvents(ctx)
 	if updateCheck > 0 {

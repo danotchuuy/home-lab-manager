@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api";
 import type {
   AddressSuggestion,
@@ -7,9 +8,12 @@ import type {
   StatusPageEntry,
   StatusPageSettings as Settings,
   StatusSite,
+  TunnelRoute,
+  TunnelRoutes,
 } from "../types";
 import { bareName } from "../util";
 import { Spinner } from "./common";
+import { RouteBadge } from "./Hostnames";
 import { CopyButton } from "./ConnectInfo";
 
 const SOURCE: Record<AddressSuggestion["source"], string> = { proxy: "proxy server", unifi: "UniFi port forward" };
@@ -31,6 +35,10 @@ export function StatusPageSettings() {
   // Bumped on each save, to reset the password fields.
   const [saves, setSaves] = useState(0);
   const [sites, setSites] = useState<StatusSite[]>([]);
+  // The tunnel's routes, to publish the sites' domains; undefined while
+  // Cloudflare Tunnel isn't set up.
+  const [tunnel, setTunnel] = useState<TunnelRoutes>();
+  const [savedHosts, setSavedHosts] = useState<string[]>([]);
   const [groups, setGroups] = useState<ServerGroup[]>([]);
 
   useEffect(() => {
@@ -40,11 +48,13 @@ export function StatusPageSettings() {
         setSaved(r.settings);
         setHas({ view: r.hasViewPassword, details: r.hasDetailsPassword });
         setSites(r.sites);
+        setSavedHosts(r.sites.map((x) => x.hostname));
       },
       (e) => setError((e as Error).message),
     );
     api.servers().then(setServers, () => {});
     api.groups().then(setGroups, () => {});
+    api.tunnelRoutes().then(setTunnel, () => setTunnel(undefined));
   }, []);
 
   if (!set) return error ? <div className="alert error small">{error}</div> : <Spinner />;
@@ -107,6 +117,7 @@ export function StatusPageSettings() {
       setSaved(r.settings);
       setHas({ view: r.hasViewPassword, details: r.hasDetailsPassword });
       setSites(r.sites);
+      setSavedHosts(r.sites.map((x) => x.hostname));
       setViewPassword(undefined);
       setDetailsPassword(undefined);
       setSaves((n) => n + 1);
@@ -221,6 +232,14 @@ export function StatusPageSettings() {
           key={(site.id ?? "new") + i + saves}
           site={site}
           groups={groups}
+          cloudflare={
+            <SiteCloudflare
+              hostname={site.hostname}
+              saved={savedHosts.includes(site.hostname)}
+              tunnel={tunnel}
+              onChange={setTunnel}
+            />
+          }
           onChange={(c) => {
             setSites(sites.map((x, j) => (j === i ? { ...x, ...c } : x)));
             setDone(false);
@@ -493,11 +512,13 @@ function PasswordField({
 function SiteFields({
   site,
   groups,
+  cloudflare,
   onChange,
   onRemove,
 }: {
   site: StatusSite;
   groups: ServerGroup[];
+  cloudflare: ReactNode;
   onChange: (c: Partial<StatusSite>) => void;
   onRemove: () => void;
 }) {
@@ -579,11 +600,100 @@ function SiteFields({
           onChange={(v) => onChange({ detailsPassword: v })}
         />
       </div>
+      {cloudflare}
       <div className="btn-row">
         <button type="button" className="btn small ghost danger" onClick={onRemove}>
           Remove this site
         </button>
       </div>
     </fieldset>
+  );
+}
+
+/** A site's domain on Cloudflare Tunnel: whether it's routed to hlm, and a button to route it. */
+function SiteCloudflare({
+  hostname,
+  saved,
+  tunnel,
+  onChange,
+}: {
+  hostname: string;
+  saved: boolean;
+  tunnel?: TunnelRoutes;
+  onChange: (t: TunnelRoutes) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const host = hostname.trim().toLowerCase().replace(/\.+$/, "");
+  if (!host) return null;
+  if (!tunnel || !tunnel.tunnel) {
+    return (
+      <p className="muted small no-margin">
+        To publish {host} through Cloudflare, set up <Link to="/tunnel">Cloudflare Tunnel</Link> first; or point any
+        proxy for it at hlm.
+      </p>
+    );
+  }
+  const route = tunnel.routes.find((r) => r.hostname === host);
+
+  async function publish() {
+    if (!tunnel) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      // The routes as they are, plus this domain to hlm itself.
+      const routes: TunnelRoute[] = tunnel.routes.map((r) => ({
+        hostname: r.hostname,
+        zoneId: r.zoneId,
+        server: r.server,
+        address: r.address,
+        port: r.port,
+        scheme: r.scheme,
+        noTLSVerify: r.noTLSVerify,
+        hlm: r.hlm,
+      }));
+      routes.push({ hostname: host, hlm: true, port: 0, scheme: "http" });
+      await api.setTunnelRoutes(routes);
+      onChange(await api.tunnelRoutes());
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="small status-site-cloudflare">
+      {route && route.hlm ? (
+        <>
+          <RouteBadge route={route} />{" "}
+          {route.state === "published" ? (
+            <a href={`https://${host}/status`} target="_blank" rel="noreferrer">
+              https://{host}/status ↗
+            </a>
+          ) : (
+            <Link to="/tunnel">Tunnel page</Link>
+          )}
+          {route.error && <div className="form-error">{route.error}</div>}
+        </>
+      ) : route ? (
+        <div className="alert warn small">
+          {host} already goes to {route.server || route.address} on the <Link to="/tunnel">Tunnel page</Link>. Change it
+          to &ldquo;Home Lab Manager&rdquo; there for this site.
+        </div>
+      ) : (
+        <>
+          <button type="button" className="btn small" onClick={publish} disabled={busy || !saved}>
+            {busy ? "Publishing…" : "Publish on Cloudflare"}
+          </button>{" "}
+          <span className="muted">
+            {saved
+              ? "Adds a Cloudflare Tunnel route (and its DNS record) for this domain, to hlm."
+              : "Save the site first."}
+          </span>
+        </>
+      )}
+      {error && <div className="alert error small">{error}</div>}
+    </div>
   );
 }

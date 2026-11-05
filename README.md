@@ -1418,9 +1418,14 @@ Status page** and add the servers to show; it's at `/status`.
   [server groups](#roles-and-server-groups) you tick (all of them if you tick none), can have its own title and
   message, and has **its own two passwords** (or none): on a site's domain only that site's passwords work, and a
   password given on one site doesn't open another. A site's domain reaches only the status page: every other path (the
-  rest of the web UI and API, even with a token) answers 404 there, and `/` goes to `/status`. Point a
-  [Cloudflare Tunnel](#web-addresses-with-cloudflare-tunnel) route (to hlm's address and port) or a proxy for each
-  domain at hlm. On any other address, such as hlm's own, the page shows every server with the page-wide passwords.
+  rest of the web UI and API, even with a token) answers 404 there, and `/` goes to `/status`. On any other address,
+  such as hlm's own, the page shows every server with the page-wide passwords.
+- **Sites on Cloudflare:** with [Cloudflare Tunnel](#web-addresses-with-cloudflare-tunnel) set up, each site has
+  **Publish on Cloudflare**, which adds a tunnel route for its domain (and the DNS record) to hlm itself, and then
+  shows whether it's published. On the Tunnel page the same route reads **Home Lab Manager (status page)**, a choice
+  for any hostname. hlm works out where cloudflared reaches it: its own port, or the port its container publishes on
+  the host (it says so if it doesn't publish one). It's sent as HTTP, which hlm accepts from the tunnel even with
+  HTTPS on. Without the tunnel, point any proxy for the domain at hlm.
 - **Only from (optional):** addresses or ranges, such as a VPN's, that may see it. Behind a tunnel or proxy that's the
   tunnel's or proxy's address.
 - **Passwords (optional), two of them** (page-wide, and per site): one to see the page at all, and one for the details: players' names, the

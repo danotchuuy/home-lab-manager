@@ -21,6 +21,9 @@
 >   it ends the cookie), and the page is cached in full and redacted per visitor.
 > - **Added: sites** (requested), replacing the single status-only hostname: each domain shows the page's servers in
 >   chosen server groups, with its own title, message and passwords; cookies are bound to their site.
+> - **Added: sites on Cloudflare** (requested): tunnel routes can go to hlm itself (`Route.Hlm`, "Home Lab Manager"
+>   on the Tunnel page), with hlm's port worked out from HLM_LISTEN and its container's published port; each site has
+>   "Publish on Cloudflare" and shows its route's state.
 > - **The SPA route** is handled before the app (`main.tsx`), so `/status` loads without the header, sign-in or any
 >   admin API call.
 

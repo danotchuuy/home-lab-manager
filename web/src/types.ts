@@ -965,6 +965,8 @@ export interface TunnelRoute {
   port: number;
   scheme: "http" | "https";
   noTLSVerify?: boolean;
+  /** Goes to Home Lab Manager itself (such as a status page site); hlm works out its port. */
+  hlm?: boolean;
 }
 
 export interface TunnelRouteState extends TunnelRoute {

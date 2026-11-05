@@ -4159,3 +4159,7 @@ pre .muted {
   flex-wrap: wrap;
   gap: 0.3rem 1rem;
 }
+
+.status-site-cloudflare {
+  margin: 0.5rem 0;
+}

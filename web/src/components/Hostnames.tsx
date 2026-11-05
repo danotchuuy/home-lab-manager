@@ -11,6 +11,8 @@ interface Row {
   server: string;
   /** Goes to another web server at `address` rather than a game server. */
   other: boolean;
+  /** Goes to Home Lab Manager itself (its status page sites). */
+  hlm: boolean;
   address: string;
   port: number;
   scheme: "http" | "https";
@@ -23,6 +25,8 @@ let nextKey = 0;
 
 /** The server menu's choice for another web server. */
 const OTHER = "\u0000other";
+/** The server menu's choice for hlm itself. */
+const HLM = "\u0000hlm";
 
 function toRow(r: TunnelRouteState, zones: CloudflareZone[]): Row {
   const zone = zones.find((z) => z.id === r.zoneId) ?? zones.find((z) => r.hostname.endsWith(`.${z.name}`));
@@ -33,6 +37,7 @@ function toRow(r: TunnelRouteState, zones: CloudflareZone[]): Row {
     zoneId: zone?.id ?? "",
     server: r.server ?? "",
     other: !!r.address,
+    hlm: !!r.hlm,
     address: r.address ?? "",
     port: r.port,
     scheme: r.scheme,
@@ -48,6 +53,7 @@ function hostname(row: Row, zones: CloudflareZone[]): string {
 }
 
 function toRoute(row: Row, zones: CloudflareZone[]): TunnelRoute {
+  if (row.hlm) return { hostname: hostname(row, zones), zoneId: row.zoneId, hlm: true, port: 0, scheme: "http" };
   return {
     hostname: hostname(row, zones),
     zoneId: row.zoneId,
@@ -172,7 +178,7 @@ export function HostnamesEditor({
     const target = srv ? defaultPort(srv) : { port: 80, scheme: "http" as const };
     setRows((rs) => [
       ...rs,
-      { key: nextKey++, sub: "", zoneId: zones[0]?.id ?? "", server: srv?.name ?? "", other: !srv, address: "", ...target, noTLSVerify: false },
+      { key: nextKey++, sub: "", zoneId: zones[0]?.id ?? "", server: srv?.name ?? "", other: !srv, hlm: false, address: "", ...target, noTLSVerify: false },
     ]);
     setDirty(true);
   };
@@ -237,18 +243,22 @@ export function HostnamesEditor({
                     </td>
                     <td>
                       <select
-                        value={row.other ? OTHER : row.server}
+                        value={row.hlm ? HLM : row.other ? OTHER : row.server}
                         onChange={(e) => {
+                          if (e.target.value === HLM) {
+                            update(row.key, { hlm: true, other: false, port: 0, scheme: "http" });
+                            return;
+                          }
                           if (e.target.value === OTHER) {
-                            update(row.key, { other: true, port: row.other ? row.port : 80, scheme: row.other ? row.scheme : "http" });
+                            update(row.key, { hlm: false, other: true, port: row.other ? row.port : 80, scheme: row.other ? row.scheme : "http" });
                             return;
                           }
                           const next = data.servers.find((s) => s.name === e.target.value);
-                          update(row.key, { other: false, server: e.target.value, ...defaultPort(next) });
+                          update(row.key, { hlm: false, other: false, server: e.target.value, ...defaultPort(next) });
                         }}
                         aria-label="Server"
                       >
-                        {!row.other && !srv && <option value={row.server}>{row.server || "choose…"}</option>}
+                        {!row.other && !row.hlm && !srv && <option value={row.server}>{row.server || "choose…"}</option>}
                         {withPorts.map((s) => (
                           <option key={s.name} value={s.name}>
                             {s.name}
@@ -256,6 +266,7 @@ export function HostnamesEditor({
                           </option>
                         ))}
                         <option value={OTHER}>Other server…</option>
+                        <option value={HLM}>Home Lab Manager (status page)</option>
                       </select>
                       {row.other && (
                         <input
@@ -269,7 +280,9 @@ export function HostnamesEditor({
                       )}
                     </td>
                     <td>
-                      {row.other ? (
+                      {row.hlm ? (
+                        <span className="muted small">hlm&apos;s own</span>
+                      ) : row.other ? (
                         <input
                           type="number"
                           className="port-input"
@@ -292,6 +305,9 @@ export function HostnamesEditor({
                       )}
                     </td>
                     <td>
+                      {row.hlm ? (
+                        <span className="muted small">automatic</span>
+                      ) : (
                       <select
                         value={row.scheme}
                         onChange={(e) => update(row.key, { scheme: e.target.value as Row["scheme"] })}
@@ -300,7 +316,8 @@ export function HostnamesEditor({
                         <option value="http">HTTP</option>
                         <option value="https">HTTPS</option>
                       </select>
-                      {row.scheme === "https" && (
+                      )}
+                      {!row.hlm && row.scheme === "https" && (
                         <label className="radio small">
                           <input
                             type="checkbox"
