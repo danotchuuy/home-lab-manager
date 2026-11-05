@@ -1,8 +1,38 @@
 import { Fragment, useState } from "react";
+import type { CrashLoop } from "../types";
+import { timeAgo } from "../util";
 
 export function StateBadge({ state, health }: { state: string; health?: string }) {
   const label = health && state === "running" ? `${state} · ${health}` : state;
   return <span className={`badge state-${state}`}>{label}</span>;
+}
+
+/** Docker's health check state, for a running server that has one. */
+export function HealthBadge({ state, health }: { state: string; health?: string }) {
+  if (!health || state !== "running") return null;
+  const text: Record<string, string> = {
+    healthy: "Its health check is passing",
+    unhealthy: "Its health check is failing",
+    starting: "Its health check hasn't passed yet since it started",
+  };
+  return (
+    <span className={`badge health-${health}`} title={text[health] ?? `Health: ${health}`}>
+      {health}
+    </span>
+  );
+}
+
+/** Shown when hlm stopped a server for a crash loop. */
+export function CrashLoopBadge({ crashLoop }: { crashLoop?: CrashLoop }) {
+  if (!crashLoop) return null;
+  return (
+    <span
+      className="badge crash-loop"
+      title={`It exited (or had to be restarted) ${crashLoop.exits} times in ${crashLoop.windowMinutes} minutes (last: ${crashLoop.reason ?? "unknown"}), so hlm stopped it ${timeAgo(crashLoop.since)}. It stays stopped until someone starts it.`}
+    >
+      Crash loop: stopped by hlm
+    </span>
+  );
 }
 
 /** An app's icon; `glyph` is shown instead when there's no image (🎮 by default). */

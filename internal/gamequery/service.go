@@ -281,6 +281,24 @@ func (s *Service) Players(name string) (int, bool) {
 	return sv.result.Players, true
 }
 
+// Responding says whether a server answers its status query; ok is false
+// while that isn't known (it's starting, stopped or can't be asked).
+func (s *Service) Responding(name string) (responding, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sv := s.servers[name]
+	if sv == nil {
+		return false, false
+	}
+	switch sv.status {
+	case StatusOnline:
+		return true, true
+	case StatusNotResponding:
+		return false, true
+	}
+	return false, false
+}
+
 // Run polls running servers until ctx ends.
 func (s *Service) Run(ctx context.Context) {
 	t := time.NewTicker(5 * time.Second)

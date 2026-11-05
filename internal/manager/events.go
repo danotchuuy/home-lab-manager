@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"io"
 	"strings"
 	"sync"
 	"time"
@@ -162,6 +161,11 @@ func (m *Manager) serverEvent(ctx context.Context, e docker.EventMessage, name s
 		return // an install or update reports its own outcome
 	}
 	code := e.Actor.Attributes["exitCode"]
+	if e.Action == "die" && crashed {
+		// Any exit nobody asked for counts towards a crash loop, even a
+		// clean one: Docker restarts those too.
+		m.exited(ctx, e.Actor.ID, name, e.When(), code, oom)
+	}
 	switch {
 	case e.Action == "die" && crashed && (oom || code != "0"):
 		msg := fmt.Sprintf("%s stopped on its own with exit code %s.", name, cmp.Or(code, "unknown"))
@@ -186,19 +190,7 @@ func (m *Manager) serverEvent(ctx context.Context, e docker.EventMessage, name s
 
 // lastOutput returns the end of a container's output, for crash reports.
 func (m *Manager) lastOutput(ctx context.Context, id string) string {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	r, err := m.docker.Logs(ctx, id, docker.LogsOptions{Tail: "15"})
-	if err != nil {
-		return ""
-	}
-	defer r.Close()
-	data, _ := io.ReadAll(io.LimitReader(r, 64<<10))
-	out := stripANSI(strings.TrimSpace(string(data)))
-	if len(out) > 1200 {
-		out = "…" + out[len(out)-1200:]
-	}
-	return out
+	return m.outputTail(ctx, id, 15, 1200)
 }
 
 // stripANSI removes terminal escape codes, which notifications can't show.

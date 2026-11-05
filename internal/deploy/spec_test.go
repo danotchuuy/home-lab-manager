@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/danotchuuy/home-lab-manager/internal/catalog"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
@@ -148,6 +149,45 @@ func TestExtraParams(t *testing.T) {
 	}
 	if len(warnings) != 1 {
 		t.Errorf("warnings = %v, want one for --mystery-flag", warnings)
+	}
+}
+
+func TestHealthParams(t *testing.T) {
+	var c docker.CreateRequest
+	c.Labels = map[string]string{}
+	var warnings []string
+	err := applyExtraParams(&c, `--health-cmd "curl -f http://localhost:8080/ || exit 1" --health-interval=30s --health-timeout 5s --health-start-period=10m --health-retries 4`, &warnings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := docker.Healthcheck{Test: []string{"CMD-SHELL", "curl -f http://localhost:8080/ || exit 1"},
+		Interval: int64(30 * time.Second), Timeout: int64(5 * time.Second), StartPeriod: int64(10 * time.Minute), Retries: 4}
+	if c.Healthcheck == nil || !reflect.DeepEqual(*c.Healthcheck, want) || len(warnings) != 0 {
+		t.Errorf("healthcheck = %+v, warnings %v", c.Healthcheck, warnings)
+	}
+
+	// Only timings keep the image's command.
+	c = docker.CreateRequest{Labels: map[string]string{}}
+	if err := applyExtraParams(&c, "--health-start-period 15m", &warnings); err != nil {
+		t.Fatal(err)
+	}
+	if c.Healthcheck == nil || c.Healthcheck.Test != nil || c.Healthcheck.StartPeriod != int64(15*time.Minute) {
+		t.Errorf("timings only = %+v", c.Healthcheck)
+	}
+
+	c = docker.CreateRequest{Labels: map[string]string{}}
+	if err := applyExtraParams(&c, "--no-healthcheck", &warnings); err != nil {
+		t.Fatal(err)
+	}
+	if c.Healthcheck == nil || !slices.Equal(c.Healthcheck.Test, []string{"NONE"}) {
+		t.Errorf("--no-healthcheck = %+v", c.Healthcheck)
+	}
+
+	for _, bad := range []string{"--health-interval 30", "--health-retries x", "--health-timeout=-5s"} {
+		c = docker.CreateRequest{Labels: map[string]string{}}
+		if err := applyExtraParams(&c, bad, &warnings); err == nil {
+			t.Errorf("%s: no error", bad)
+		}
 	}
 }
 

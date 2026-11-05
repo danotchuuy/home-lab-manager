@@ -13,7 +13,7 @@ the API and UI it needs, who may use it, how to test it, and a task list. They'r
 | 06 | [Audit log](06-audit-log.md) | High | — | Done |
 | 07 | [Private registry credentials](07-registry-credentials.md) | Medium | — | Done |
 | 08 | [Metrics history and Prometheus](08-metrics-history-prometheus.md) | Medium | — | Done |
-| 09 | [Health checks and crash-loop protection](09-health-crash-loop.md) | Medium | 01 for alerts | Planned |
+| 09 | [Health checks and crash-loop protection](09-health-crash-loop.md) | Medium | 01 for alerts | Done |
 | 10 | [Clone, export and import servers](10-clone-export-import.md) | Medium | — | Planned |
 | 11 | [Backup improvements](11-backup-improvements.md) | Medium | 01 for alerts | Planned |
 | 12 | [Two-factor sign-in](12-two-factor.md) | Medium | — | Planned |

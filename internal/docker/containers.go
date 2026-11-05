@@ -70,6 +70,8 @@ type ContainerJSON struct {
 		Tty          bool                `json:"Tty"`
 		OpenStdin    bool                `json:"OpenStdin"`
 		ExposedPorts map[string]struct{} `json:"ExposedPorts"`
+		// Healthcheck is the container's check: its own, or the image's.
+		Healthcheck *Healthcheck `json:"Healthcheck,omitempty"`
 	} `json:"Config"`
 	NetworkSettings struct {
 		Networks map[string]EndpointSettings `json:"Networks"`
@@ -81,6 +83,17 @@ type ContainerJSON struct {
 		PortBindings  map[string][]PortBinding `json:"PortBindings"`
 		RestartPolicy RestartPolicy            `json:"RestartPolicy"`
 	} `json:"HostConfig"`
+}
+
+// Healthcheck is a container's health check. An empty Test keeps the
+// image's command; ["NONE"] turns the image's check off. Durations are in
+// nanoseconds, and 0 means Docker's default.
+type Healthcheck struct {
+	Test        []string `json:"Test,omitempty"`
+	Interval    int64    `json:"Interval,omitempty"`
+	Timeout     int64    `json:"Timeout,omitempty"`
+	StartPeriod int64    `json:"StartPeriod,omitempty"`
+	Retries     int      `json:"Retries,omitempty"`
 }
 
 // CreateRequest is the body of a container create call.
@@ -96,6 +109,7 @@ type CreateRequest struct {
 	Tty          bool                `json:"Tty,omitempty"`
 	OpenStdin    bool                `json:"OpenStdin,omitempty"`
 	StopTimeout  *int                `json:"StopTimeout,omitempty"`
+	Healthcheck  *Healthcheck        `json:"Healthcheck,omitempty"`
 	HostConfig   HostConfig          `json:"HostConfig"`
 	// NetworkingConfig sets per-network options such as a static IP.
 	NetworkingConfig *NetworkingConfig `json:"NetworkingConfig,omitempty"`

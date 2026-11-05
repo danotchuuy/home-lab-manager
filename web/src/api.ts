@@ -7,6 +7,9 @@ import type {
   HistoryRange,
   MetricHistory,
   MetricsSettings,
+  HealthCheck,
+  HealthSettings,
+  ServerHealth,
   RegistryLogin,
   AutoUpdates,
   APIKeyInfo,
@@ -600,6 +603,14 @@ export const api = {
     json<{ settings: QuerySettings; result: QueryResult }>(`/api/servers/${encodeURIComponent(id)}/query/test`, {
       method: "POST",
       body: JSON.stringify(set),
+    }),
+  serverHealth: (id: string) => json<ServerHealth>(`/api/servers/${encodeURIComponent(id)}/health`),
+  setServerHealth: (id: string, set: HealthSettings) =>
+    json<ServerHealth>(`/api/servers/${encodeURIComponent(id)}/health`, { method: "PUT", body: JSON.stringify(set) }),
+  testServerHealth: (id: string, check?: HealthCheck) =>
+    json<{ healthy: boolean; exitCode: number; output: string }>(`/api/servers/${encodeURIComponent(id)}/health/test`, {
+      method: "POST",
+      body: JSON.stringify({ check }),
     }),
   updatePolicy: (id: string) => json<ServerUpdatePolicy>(`/api/servers/${encodeURIComponent(id)}/update-policy`),
   setUpdatePolicy: (id: string, p: UpdatePolicy) =>

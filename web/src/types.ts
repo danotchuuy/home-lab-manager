@@ -167,6 +167,70 @@ export interface Server {
   groups?: string[];
   /** Settings left out of request because they look like secrets; managers see them. */
   hidden?: string[];
+  /** Set when hlm stopped the server because it kept exiting. */
+  crashLoop?: CrashLoop;
+}
+
+/** A server hlm stopped because it exited too often in a short time. */
+export interface CrashLoop {
+  since: string;
+  exits: number;
+  windowMinutes: number;
+  exitCode?: string;
+  reason?: string;
+}
+
+export type HealthCheckKind = "" | "none" | "tcp" | "http" | "command";
+
+/** A custom health check; timings of 0 (or left out) use the defaults. */
+export interface HealthCheck {
+  kind: HealthCheckKind;
+  port?: number;
+  path?: string;
+  command?: string;
+  /** Seconds. */
+  interval?: number;
+  /** Seconds. */
+  timeout?: number;
+  retries?: number;
+  /** Minutes; left out for the default, 0 for none. */
+  startPeriod?: number;
+}
+
+/** A server's health settings (PUT /api/servers/{id}/health). */
+export interface HealthSettings {
+  crashLoop: { off?: boolean; exits?: number; minutes?: number };
+  check: HealthCheck;
+  /** Minutes of failing health before hlm restarts it; 0 or left out is off. */
+  restartAfter?: number;
+  /** "" for Docker's health check, "query" for the game's status query. */
+  signal?: "" | "query";
+}
+
+export interface DockerHealthcheck {
+  Test?: string[];
+  Interval?: number;
+  Timeout?: number;
+  StartPeriod?: number;
+  Retries?: number;
+}
+
+/** GET /api/servers/{id}/health. */
+export interface ServerHealth {
+  settings: HealthSettings;
+  defaults: { exits: number; minutes: number; interval: number; timeout: number; retries: number; startPeriod: number };
+  /** Docker's view, while running: starting, healthy or unhealthy. */
+  health?: string;
+  crashLoop?: CrashLoop;
+  recentExits: number;
+  /** The container's check now (operators only). */
+  currentCheck?: DockerHealthcheck;
+  /** The container's check is the one hlm set. */
+  custom: boolean;
+  /** The container has the check the settings ask for. */
+  applied: boolean;
+  unhealthySince?: string;
+  queryAvailable: boolean;
 }
 
 /** A role on a server, each including the ones before. */

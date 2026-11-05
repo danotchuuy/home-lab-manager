@@ -38,6 +38,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/forwarding"
 	"github.com/danotchuuy/home-lab-manager/internal/gamequery"
+	"github.com/danotchuuy/home-lab-manager/internal/health"
 	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
 	"github.com/danotchuuy/home-lab-manager/internal/metrics"
@@ -245,6 +246,13 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("open audit log: %w", err)
 	}
 	go auditLog.Run(ctx)
+	// Crash-loop limits and custom health checks, per server.
+	healthStore := health.NewStore(store)
+	mgr.UseHealthPolicy(healthStore)
+	mgr.UseAudit(auditLog)
+	if err := mgr.UseCrashLoopStore(filepath.Join(dataDir, "crash-loops.json")); err != nil {
+		log.Warn("read servers stopped for crash loops", "err", err)
+	}
 	fwd := forwarding.New(store, mgr, host.LANAddress, log)
 	mgr.UseIPChecker(func(ctx context.Context, ip string, ignore []string) (string, string, error) {
 		if !fwd.Configured() {
@@ -433,6 +441,12 @@ func run(log *slog.Logger) error {
 		Notifier: notifier, Players: queries.Players, Audit: auditLog, Location: sched.Location, ZoneName: sched.ZoneName, Log: log,
 	})
 	go autoUpdates.Run(ctx)
+	// Servers whose health keeps failing are restarted, if they want that.
+	healthMonitor := health.NewMonitor(health.Options{
+		Store: healthStore, Servers: mgr, Responding: queries.Responding, Busy: backups.Busy,
+		Notifier: notifier, Audit: auditLog, Log: log,
+	})
+	go healthMonitor.Run(ctx)
 	checkEvery := autoUpdates.CheckInterval
 	if updateCheckEnv != "" {
 		checkEvery = func() time.Duration { return updateCheck }
@@ -465,6 +479,8 @@ func run(log *slog.Logger) error {
 		History:       history,
 		Sampler:       sampler,
 		MetricsConfig: metrics.NewConfig(store),
+		Health:        healthStore,
+		HealthMonitor: healthMonitor,
 		// Set when HLM_UPDATE_CHECK overrides the setting.
 		UpdateCheckEnv: updateCheckEnv,
 		Token:          env("HLM_TOKEN", ""),
