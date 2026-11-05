@@ -25,6 +25,9 @@
 > - **Added: setting Docker up on an SSH host.** "Check for Docker" reports the host's OS and Docker state; hlm can
 >   install Docker CE following Docker's install pages (Ubuntu, Debian, Raspberry Pi OS, Fedora, CentOS Stream, RHEL),
 >   start it on boot and add the user to the `docker` group, as root (root or passwordless sudo).
+> - **Added: TLS set up over SSH.** For a TCP host, hlm can make a per-host CA (key discarded after signing), a server
+>   and a client certificate, install the server's, and start dockerd with `--tlsverify` on port 2376 through a
+>   systemd drop-in (rolled back if Docker doesn't start), then save the host with its client certificate.
 > - **Not built (yet):** the `hlm agent` mode (B) and enrolment tokens; host metrics, disk usage and deleted-server data
 >   for other hosts (the Host page is the local host's); Compose stacks on other hosts; "host" as an RBAC grant target.
 

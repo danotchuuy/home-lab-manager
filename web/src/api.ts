@@ -450,6 +450,9 @@ export const api = {
   /** Installs Docker CE on an SSH host (or starts it, or lets the user use it); streams the output. */
   setupDocker: (h: DockerHostInput, onEvent: (e: DeployEvent) => void) =>
     stream("/api/hosts/setup-docker", { method: "POST", body: JSON.stringify(h) }, onEvent),
+  /** Makes certificates and sets Docker's API up with TLS on a host over SSH, then saves the host; streams the output. */
+  setupTLS: (h: DockerHostInput & { port: number }, onEvent: (e: DeployEvent) => void) =>
+    stream("/api/hosts/setup-tls", { method: "POST", body: JSON.stringify(h) }, onEvent),
   /** Makes hlm's SSH key, if there isn't one. */
   hostsSSHKey: () => json<SSHKeyInfo>("/api/hosts/ssh-key", { method: "POST" }),
   reconfigure: (id: string, req: DeployRequest, onEvent: (e: DeployEvent) => void) =>

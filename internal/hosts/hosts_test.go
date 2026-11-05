@@ -69,6 +69,8 @@ type sshOptions struct {
 	dockerDenied bool
 	// shell runs other commands with sh on this machine.
 	shell bool
+	// exec, when set, answers every command.
+	exec func(cmd string, stdin io.Reader, stdout, stderr io.Writer) int
 }
 
 // sshServer accepts hlm's key and forwards direct-streamlocal channels
@@ -166,6 +168,11 @@ func serveSession(nch ssh.NewChannel, o sshOptions) {
 		var cmd struct{ Command string }
 		ssh.Unmarshal(req.Payload, &cmd)
 		req.Reply(true, nil)
+		if o.exec != nil {
+			code := o.exec(cmd.Command, ch, ch, ch.Stderr())
+			ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Code uint32 }{uint32(code)}))
+			return
+		}
 		if o.shell && !strings.HasPrefix(cmd.Command, "docker") {
 			c := exec.Command("sh", "-c", cmd.Command)
 			c.Stdout, c.Stderr = ch, ch.Stderr()
@@ -384,9 +391,9 @@ func TestInspectOverSSH(t *testing.T) {
 	}
 }
 
-// certs makes a CA, a server certificate for 127.0.0.1 and a client
+// testCerts makes a CA, a server certificate for 127.0.0.1 and a client
 // certificate, in PEM.
-func certs(t *testing.T) (caPEM string, server tls.Certificate, clientCert, clientKey string, pool *x509.CertPool) {
+func testCerts(t *testing.T) (caPEM string, server tls.Certificate, clientCert, clientKey string, pool *x509.CertPool) {
 	t.Helper()
 	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	ca := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test CA"}, IsCA: true,
@@ -415,7 +422,7 @@ func certs(t *testing.T) (caPEM string, server tls.Certificate, clientCert, clie
 }
 
 func TestTLSHost(t *testing.T) {
-	caPEM, serverCert, clientCert, clientKey, pool := certs(t)
+	caPEM, serverCert, clientCert, clientKey, pool := testCerts(t)
 	ds := httptest.NewUnstartedServer(&fakeDocker{})
 	ds.TLS = &tls.Config{Certificates: []tls.Certificate{serverCert}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: pool}
 	ds.Config.ErrorLog = log.New(io.Discard, "", 0) // refused handshakes are expected

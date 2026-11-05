@@ -35,6 +35,10 @@ type Inspection struct {
 	DockerVersion string `json:"dockerVersion,omitempty"`
 	InGroup       bool   `json:"inGroup"`
 	Systemd       bool   `json:"systemd"`
+	// Hostname and IPs (space-separated) name the host, for its TLS
+	// certificate.
+	Hostname string `json:"hostname,omitempty"`
+	IPs      string `json:"ips,omitempty"`
 
 	// Ready is set when hlm can use Docker there as it is.
 	Ready bool `json:"ready"`
@@ -60,6 +64,8 @@ echo "name=$PRETTY_NAME"
 echo "arch=$(uname -m)"
 echo "uid=$(id -u)"
 echo "user=$(id -un)"
+echo "hostname=$(hostname -f 2>/dev/null || hostname 2>/dev/null || cat /etc/hostname 2>/dev/null)"
+echo "ips=$(hostname -I 2>/dev/null)"
 command -v docker >/dev/null 2>&1 && echo "docker=yes"
 [ -S /var/run/docker.sock ] && echo "socket=yes"
 v=$(docker version --format '{{.Server.Version}}' 2>/dev/null) && [ -n "$v" ] && echo "server=$v"
@@ -71,8 +77,8 @@ true`
 // sshTarget is the SSH part of an input, for checking a host before it's
 // saved (its data folder may not be filled in yet).
 func sshTarget(in Input) (remote.Target, error) {
-	if in.Kind != KindSSH || in.SSH == nil {
-		return remote.Target{}, errors.New("only hosts reached over SSH can be checked and set up from hlm")
+	if in.SSH == nil {
+		return remote.Target{}, errors.New("hlm needs to sign in to the host over SSH for this")
 	}
 	t := *in.SSH
 	t.Host, t.User = strings.TrimSpace(t.Host), strings.TrimSpace(t.User)
@@ -162,6 +168,10 @@ func parseProbe(out string) Inspection {
 			in.Sudo = true
 		case "systemd":
 			in.Systemd = true
+		case "hostname":
+			in.Hostname = v
+		case "ips":
+			in.IPs = v
 		}
 	}
 	if in.OS == "" {

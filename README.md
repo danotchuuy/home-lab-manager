@@ -253,6 +253,24 @@ alerts as usual.
   first, and the output as they run. They run as root, so the user has to be root or have passwordless `sudo`;
   otherwise copy the commands and run them yourself. Other systems (Unraid, Alpine, Arch, …) aren't covered: install
   Docker there yourself.
+- **TLS set up for you.** Choose **Docker's API over TCP with TLS**, then **Let hlm make the certificates and set
+  Docker up for TLS, over SSH**. hlm signs in once (as root or a user with passwordless `sudo`; **Check for Docker**
+  first, which also installs Docker if needed) and follows Docker's
+  [Protect the Docker daemon socket](https://docs.docker.com/engine/security/protect-access/):
+  - it makes a CA for that host, a server certificate for its Docker (for the address hlm uses, plus the host's name
+    and addresses) and a client certificate for hlm, all lasting 10 years. The CA's key is thrown away once both are
+    signed, so the certificates can't be used on another host, and nothing else can be signed with it;
+  - it installs the server's certificate and key in `/etc/docker/hlm-tls/` (the key readable by root only, sent over
+    the SSH connection's input, never on a command line), and adds a systemd drop-in,
+    `/etc/systemd/system/docker.service.d/hlm-tls.conf`, that keeps the unit's own `dockerd` command and adds
+    `-H tcp://0.0.0.0:2376 --tlsverify --tlscacert=… --tlscert=… --tlskey=…`;
+  - it restarts Docker (and so its running containers). If Docker doesn't start, the drop-in is removed and Docker
+    started as before. If `/etc/docker/daemon.json` already sets `hosts` or TLS options, nothing is changed;
+  - it connects over TLS with its client certificate and saves the host. The client key stays in hlm's encrypted
+    settings; the browser never sees it. Open the port in the host's firewall for hlm's machine.
+
+  Setting TLS up again replaces all three certificates. To undo it, delete the drop-in and `/etc/docker/hlm-tls`, then
+  `systemctl daemon-reload && systemctl restart docker`.
 - **TCP with TLS.** For a daemon started with `--tlsverify`: its address (`tcp://nas.lan:2376`), the CA that signed its
   certificate and a client certificate and key. The daemon's certificate is always checked, and plain TCP isn't
   accepted. The client key is kept encrypted with hlm's settings and never shown again.
@@ -1812,6 +1830,7 @@ when the `HLM_*` one isn't set.
 | `POST /api/hosts/{id}/check`                   | Connect to a saved host now. Admins.                                              |
 | `POST /api/hosts/ssh-key`                      | Make hlm's SSH key, if there isn't one. Admins.                                   |
 | `POST /api/hosts/inspect`                      | A host (as for `test`, SSH only): its Linux, whether Docker is installed, running and usable, and the setup commands hlm would run (`script`, `canSetUp`, `reason`). Admins. |
+| `POST /api/hosts/setup-tls`                    | `{…host, ssh: {host, port, user, hostKey}, port?}`: make a CA and certificates, set Docker's API up with TLS on the host over SSH, then save it as a TCP host. Streams NDJSON. Confirmed session. |
 | `POST /api/hosts/setup-docker`                 | Install Docker CE on an SSH host (or start it, or add the user to the `docker` group), streaming the output as NDJSON. [Confirmed](#confirming-its-you) session. |
 | `GET /api/stacks`, `GET /api/stacks/{name}`   | [Compose stacks](#compose-stacks) and their services' state (the services the caller can see); admins also get the file and `.env`. |
 | `POST /api/stacks/preview`                     | `{name, yaml, env, existing}`: what creating (or, with `existing`, changing) the stack would do, per service. Admins. |
@@ -1950,6 +1969,7 @@ make test
 HLM_DOCKER_TESTS=1 go test ./internal/files ./internal/backup
 # Also install Docker CE in throwaway Ubuntu, Debian, Fedora and CentOS containers (downloads a few hundred MB):
 HLM_DOCKER_TESTS=1 HLM_INSTALL_TESTS=1 go test ./internal/hosts -run DockerInstallSteps
+# (HLM_DOCKER_TESTS=1 alone also runs the TLS setup script in a busybox container.)
 # Also build every game server template in a real feed with default values:
 curl -o /tmp/feed.json https://assets.ca.unraid.net/feed/applicationFeed.json
 HLM_FEED_FILE=/tmp/feed.json go test ./internal/deploy -run WholeFeed -v

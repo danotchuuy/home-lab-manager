@@ -198,6 +198,33 @@ func (s *server) setUpDocker(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// setUpTLS makes certificates for a host and sets Docker's API over TCP
+// with TLS up there over SSH, then saves the host, streaming the output.
+func (s *server) setUpTLS(w http.ResponseWriter, r *http.Request) {
+	var in hosts.TLSInput
+	if err := json.NewDecoder(io.LimitReader(r.Body, 256<<10)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	_, err := s.Hosts.Get(in.ID)
+	create := errors.Is(err, hosts.ErrNotFound)
+	if err != nil && !create {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	audit.Add(r.Context(), "host", in.ID)
+	s.stream(w, r, func(ctx context.Context, emit func(manager.Event)) error {
+		h, err := s.Hosts.SetUpTLS(ctx, in, create, func(line string) {
+			emit(manager.Event{Stage: "log", Message: line})
+		})
+		if err != nil {
+			return err
+		}
+		emit(manager.Event{Stage: "done", Message: "Docker on " + h.Name + " now takes TLS connections at " + h.URL + ", and the host is saved."})
+		return nil
+	})
+}
+
 // sshKeyForHosts makes hlm's SSH key, if there isn't one, for hosts
 // reached over SSH.
 func (s *server) sshKeyForHosts(w http.ResponseWriter, r *http.Request) {

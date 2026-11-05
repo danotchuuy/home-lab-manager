@@ -152,6 +152,7 @@ func (s *server) routes() []route {
 		{"POST /api/hosts/ssh-key", admin, s.sshKeyForHosts},
 		{"POST /api/hosts/inspect", admin, s.inspectHost},
 		{"POST /api/hosts/setup-docker", confirmed, s.setUpDocker},
+		{"POST /api/hosts/setup-tls", confirmed, s.setUpTLS},
 		{"POST /api/hosts", confirmed, s.createHost},
 		{"PUT /api/hosts/{id}", confirmed, s.updateHost},
 		{"DELETE /api/hosts/{id}", confirmed, s.deleteHost},

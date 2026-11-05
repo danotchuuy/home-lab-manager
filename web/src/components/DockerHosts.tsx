@@ -210,6 +210,9 @@ function HostForm({
   const [pending, setPending] = useState<Action>("test");
   const [inspection, setInspection] = useState<HostInspection>();
   const [setupEvents, setSetupEvents] = useState<DeployEvent[]>([]);
+  // For a TCP host: hlm sets TLS up over SSH, rather than being given the certificates.
+  const [auto, setAuto] = useState(!initial);
+  const [tlsPort, setTLSPort] = useState(2376);
 
   const set = <K extends keyof DockerHostInput>(k: K, v: DockerHostInput[K]) => {
     setForm((f) => ({ ...f, [k]: v }));
@@ -228,6 +231,16 @@ function HostForm({
       ? { ...f, url: undefined, ca: undefined, cert: undefined, key: undefined }
       : { ...f, ssh: undefined, socket: undefined };
 
+  // The host as hlm signs in to it over SSH (to check it, or set Docker or TLS up).
+  const sshPayload = (f: DockerHostInput): DockerHostInput => ({
+    ...f,
+    kind: "ssh",
+    url: undefined,
+    ca: undefined,
+    cert: undefined,
+    key: undefined,
+  });
+
   async function run(what: Action, f = form) {
     setBusy(what);
     setError(undefined);
@@ -235,7 +248,7 @@ function HostForm({
       if (what === "test") {
         setVersion(await api.testHost(payload(f)));
         setInspection(undefined);
-      } else if (what === "check") setInspection(await api.inspectHost(payload(f)));
+      } else if (what === "check") setInspection(await api.inspectHost(sshPayload(f)));
       else {
         await (initial ? api.updateHost(payload(f)) : api.createHost(payload(f)));
         onDone();
@@ -274,7 +287,7 @@ function HostForm({
     setSetupEvents([]);
     let ok = false;
     try {
-      await api.setupDocker(payload(form), (e) => {
+      await api.setupDocker(sshPayload(form), (e) => {
         setSetupEvents((prev) => [...prev, e]);
         if (e.stage === "done") ok = true;
       });
@@ -283,7 +296,34 @@ function HostForm({
     } finally {
       setBusy(undefined);
     }
-    if (ok) await run("test");
+    if (ok) await run(form.kind === "ssh" ? "test" : "check");
+  }
+
+  async function setUpTLS() {
+    if (
+      !confirm(
+        `Set Docker on ${form.ssh?.host} up for TLS on port ${tlsPort}? Docker restarts, and so do its running containers.`,
+      )
+    )
+      return;
+    setBusy("tls");
+    setError(undefined);
+    setSetupEvents([]);
+    let ok = false;
+    try {
+      await api.setupTLS(
+        { ...form, kind: "tcp", url: undefined, ca: undefined, cert: undefined, key: undefined, port: tlsPort },
+        (e) => {
+          setSetupEvents((prev) => [...prev, e]);
+          if (e.stage === "done") ok = true;
+        },
+      );
+    } catch (e) {
+      setSetupEvents((prev) => [...prev, { stage: "error", message: (e as Error).message }]);
+    } finally {
+      setBusy(undefined);
+    }
+    if (ok) setTimeout(onDone, 1500);
   }
 
   async function makeKey() {
@@ -300,6 +340,107 @@ function HostForm({
   }
 
   const ssh = form.kind === "ssh";
+  // Signing in over SSH: to use the host, or to set TLS up on it.
+  const viaSSH = ssh || auto;
+  const sshFields = (
+    <>
+      <div className="field-grid">
+        <label className="field">
+          <span className="field-label">SSH host</span>
+          <input
+            value={form.ssh?.host ?? ""}
+            onChange={(e) => setSSH("host", e.target.value)}
+            placeholder="192.168.1.20"
+            spellCheck={false}
+            required
+          />
+        </label>
+        <label className="field">
+          <span className="field-label">Port</span>
+          <input
+            type="number"
+            value={form.ssh?.port ?? 22}
+            onChange={(e) => setSSH("port", Number(e.target.value))}
+            min={1}
+            max={65535}
+          />
+        </label>
+        <label className="field">
+          <span className="field-label">User</span>
+          <input
+            value={form.ssh?.user ?? ""}
+            onChange={(e) => setSSH("user", e.target.value)}
+            placeholder="hlm"
+            spellCheck={false}
+            required
+          />
+          <span className="field-help">
+            {ssh ? (
+              <>
+                A user in the host&apos;s <code>docker</code> group (or root).
+              </>
+            ) : (
+              <>
+                Root, or a user with passwordless <code>sudo</code>: setting TLS up changes how Docker starts.
+              </>
+            )}
+          </span>
+        </label>
+        {ssh && (
+          <label className="field">
+            <span className="field-label">Docker socket</span>
+            <input
+              value={form.socket ?? ""}
+              onChange={(e) => set("socket", e.target.value)}
+              placeholder="/var/run/docker.sock"
+              spellCheck={false}
+            />
+          </label>
+        )}
+      </div>
+      {sshKey ? (
+        <div className="field">
+          <span className="field-label">hlm&apos;s public key</span>
+          <code className="ssh-key">{sshKey.public}</code>
+          <span className="field-help">
+            Add it to <code>~{form.ssh?.user || "user"}/.ssh/authorized_keys</code> on the host. It&apos;s the same key
+            the Proxy page uses.
+          </span>
+        </div>
+      ) : (
+        <p className="muted small">
+          hlm doesn&apos;t have an SSH key yet.{" "}
+          <button type="button" className="link-button" onClick={makeKey}>
+            Make one
+          </button>
+        </p>
+      )}
+      {hostKey && (
+        <div className="alert warn cert-prompt">
+          <strong>First connection to {form.ssh?.host}.</strong> Check that this is the host&apos;s{" "}
+          {hostKey.type.toUpperCase()} key fingerprint (on the host:{" "}
+          <code>ssh-keygen -lf /etc/ssh/ssh_host_{hostKey.type}_key.pub</code>):
+          <code className="fingerprint">{hostKey.fingerprint}</code>
+          <div className="btn-row">
+            <button type="button" className="btn small primary" onClick={trust}>
+              It matches, trust it
+            </button>
+            <button type="button" className="btn small ghost" onClick={() => setHostKey(undefined)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+      {form.ssh?.hostKey && !hostKey && (
+        <p className="muted small no-margin">
+          Trusting the host&apos;s key.{" "}
+          <button type="button" className="link-button" onClick={() => setSSH("hostKey", "")}>
+            forget it
+          </button>
+        </p>
+      )}
+    </>
+  );
   return (
     <form className="config-form host-form" onSubmit={submit}>
       <h3>{initial ? `Change ${initial.name}` : "Add a Docker host"}</h3>
@@ -332,150 +473,103 @@ function HostForm({
       </div>
 
       {ssh ? (
-        <>
-          <div className="field-grid">
-            <label className="field">
-              <span className="field-label">SSH host</span>
-              <input
-                value={form.ssh?.host ?? ""}
-                onChange={(e) => setSSH("host", e.target.value)}
-                placeholder="192.168.1.20"
-                spellCheck={false}
-                required
-              />
-            </label>
-            <label className="field">
-              <span className="field-label">Port</span>
-              <input
-                type="number"
-                value={form.ssh?.port ?? 22}
-                onChange={(e) => setSSH("port", Number(e.target.value))}
-                min={1}
-                max={65535}
-              />
-            </label>
-            <label className="field">
-              <span className="field-label">User</span>
-              <input
-                value={form.ssh?.user ?? ""}
-                onChange={(e) => setSSH("user", e.target.value)}
-                placeholder="hlm"
-                spellCheck={false}
-                required
-              />
-              <span className="field-help">
-                A user in the host&apos;s <code>docker</code> group (or root).
-              </span>
-            </label>
-            <label className="field">
-              <span className="field-label">Docker socket</span>
-              <input
-                value={form.socket ?? ""}
-                onChange={(e) => set("socket", e.target.value)}
-                placeholder="/var/run/docker.sock"
-                spellCheck={false}
-              />
-            </label>
-          </div>
-          {sshKey ? (
-            <div className="field">
-              <span className="field-label">hlm&apos;s public key</span>
-              <code className="ssh-key">{sshKey.public}</code>
-              <span className="field-help">
-                Add it to <code>~{form.ssh?.user || "user"}/.ssh/authorized_keys</code> on the host. It&apos;s the same
-                key the Proxy page uses.
-              </span>
-            </div>
-          ) : (
-            <p className="muted small">
-              hlm doesn&apos;t have an SSH key yet.{" "}
-              <button type="button" className="link-button" onClick={makeKey}>
-                Make one
-              </button>
-            </p>
-          )}
-          {hostKey && (
-            <div className="alert warn cert-prompt">
-              <strong>First connection to {form.ssh?.host}.</strong> Check that this is the host&apos;s{" "}
-              {hostKey.type.toUpperCase()} key fingerprint (on the host:{" "}
-              <code>ssh-keygen -lf /etc/ssh/ssh_host_{hostKey.type}_key.pub</code>):
-              <code className="fingerprint">{hostKey.fingerprint}</code>
-              <div className="btn-row">
-                <button type="button" className="btn small primary" onClick={trust}>
-                  It matches, trust it
-                </button>
-                <button type="button" className="btn small ghost" onClick={() => setHostKey(undefined)}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-          {form.ssh?.hostKey && !hostKey && (
-            <p className="muted small no-margin">
-              Trusting the host&apos;s key.{" "}
-              <button type="button" className="link-button" onClick={() => setSSH("hostKey", "")}>
-                forget it
-              </button>
-            </p>
-          )}
-        </>
+        <>{sshFields}</>
       ) : (
         <>
-          <div className="field-grid">
-            <label className="field">
-              <span className="field-label">Address</span>
-              <input
-                value={form.url ?? ""}
-                onChange={(e) => set("url", e.target.value)}
-                placeholder="tcp://nas.lan:2376"
-                spellCheck={false}
-                required
-              />
-              <span className="field-help">
-                Docker has to be set up for TLS (<code>--tlsverify</code>). hlm always checks the daemon&apos;s
-                certificate, and won&apos;t use plain TCP.
-              </span>
+          <div className="field">
+            <label className="radio small">
+              <input type="radio" checked={auto} onChange={() => setAuto(true)} />
+              Let hlm make the certificates and set Docker up for TLS, over SSH
+            </label>
+            <label className="radio small">
+              <input type="radio" checked={!auto} onChange={() => setAuto(false)} />I have the certificates (Docker is
+              already set up with <code>--tlsverify</code>)
             </label>
           </div>
-          <label className="field">
-            <span className="field-label">CA certificate (ca.pem)</span>
-            <textarea
-              className="code-input"
-              rows={3}
-              value={form.ca ?? ""}
-              onChange={(e) => set("ca", e.target.value)}
-              placeholder="-----BEGIN CERTIFICATE-----"
-              spellCheck={false}
-            />
-            <span className="field-help">
-              What signed the daemon&apos;s certificate. Empty uses the usual public authorities.
-            </span>
-          </label>
-          <div className="field-grid">
-            <label className="field">
-              <span className="field-label">Client certificate (cert.pem)</span>
-              <textarea
-                className="code-input"
-                rows={3}
-                value={form.cert ?? ""}
-                onChange={(e) => set("cert", e.target.value)}
-                placeholder="-----BEGIN CERTIFICATE-----"
-                spellCheck={false}
-              />
-            </label>
-            <label className="field">
-              <span className="field-label">Client key (key.pem)</span>
-              <textarea
-                className="code-input"
-                rows={3}
-                value={form.key ?? ""}
-                onChange={(e) => set("key", e.target.value)}
-                placeholder={initial?.hasKey ? "Saved: leave empty to keep it" : "-----BEGIN PRIVATE KEY-----"}
-                spellCheck={false}
-              />
-              <span className="field-help">Kept encrypted with hlm&apos;s settings; never shown again.</span>
-            </label>
-          </div>
+          {auto ? (
+            <>
+              <p className="muted small no-margin">
+                hlm signs in once, makes a CA for this host, a certificate for its Docker and one for hlm, and starts
+                Docker with its API on a TCP port, accepting only hlm&apos;s certificate (as in Docker&apos;s{" "}
+                <a href="https://docs.docker.com/engine/security/protect-access/" target="_blank" rel="noreferrer">
+                  Protect the Docker daemon socket
+                </a>
+                ). After that, it connects over TLS, not SSH.
+              </p>
+              {sshFields}
+              <div className="field-grid">
+                <label className="field">
+                  <span className="field-label">Docker&apos;s TLS port</span>
+                  <input
+                    type="number"
+                    value={tlsPort}
+                    onChange={(e) => setTLSPort(Number(e.target.value))}
+                    min={1}
+                    max={65535}
+                  />
+                  <span className="field-help">Open it in the host&apos;s firewall for this machine.</span>
+                </label>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="field-grid">
+                <label className="field">
+                  <span className="field-label">Address</span>
+                  <input
+                    value={form.url ?? ""}
+                    onChange={(e) => set("url", e.target.value)}
+                    placeholder="tcp://nas.lan:2376"
+                    spellCheck={false}
+                    required
+                  />
+                  <span className="field-help">
+                    Docker has to be set up for TLS (<code>--tlsverify</code>). hlm always checks the daemon&apos;s
+                    certificate, and won&apos;t use plain TCP.
+                  </span>
+                </label>
+              </div>
+              <label className="field">
+                <span className="field-label">CA certificate (ca.pem)</span>
+                <textarea
+                  className="code-input"
+                  rows={3}
+                  value={form.ca ?? ""}
+                  onChange={(e) => set("ca", e.target.value)}
+                  placeholder="-----BEGIN CERTIFICATE-----"
+                  spellCheck={false}
+                />
+                <span className="field-help">
+                  What signed the daemon&apos;s certificate. Empty uses the usual public authorities.
+                </span>
+              </label>
+              <div className="field-grid">
+                <label className="field">
+                  <span className="field-label">Client certificate (cert.pem)</span>
+                  <textarea
+                    className="code-input"
+                    rows={3}
+                    value={form.cert ?? ""}
+                    onChange={(e) => set("cert", e.target.value)}
+                    placeholder="-----BEGIN CERTIFICATE-----"
+                    spellCheck={false}
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-label">Client key (key.pem)</span>
+                  <textarea
+                    className="code-input"
+                    rows={3}
+                    value={form.key ?? ""}
+                    onChange={(e) => set("key", e.target.value)}
+                    placeholder={initial?.hasKey ? "Saved: leave empty to keep it" : "-----BEGIN PRIVATE KEY-----"}
+                    spellCheck={false}
+                  />
+                  <span className="field-help">Kept encrypted with hlm&apos;s settings; never shown again.</span>
+                </label>
+              </div>
+            </>
+          )}
         </>
       )}
 
@@ -496,7 +590,7 @@ function HostForm({
           <input
             value={form.address ?? ""}
             onChange={(e) => set("address", e.target.value)}
-            placeholder={ssh ? form.ssh?.host : "the address's host"}
+            placeholder={viaSSH ? form.ssh?.host : "the address's host"}
             spellCheck={false}
           />
           <span className="field-help">
@@ -507,7 +601,7 @@ function HostForm({
       </div>
 
       {error && <div className="alert error small">{error}</div>}
-      {ssh && inspection && (
+      {viaSSH && inspection && (
         <HostCheck inspection={inspection} busy={busy === "setup"} disabled={!!busy} onSetUp={setUpDocker} />
       )}
       {setupEvents.length > 0 && <SetupLog events={setupEvents} />}
@@ -517,17 +611,31 @@ function HostForm({
         </div>
       )}
       <div className="btn-row">
-        <button type="button" className="btn" onClick={() => run("test")} disabled={!!busy}>
-          {busy === "test" ? "Testing…" : "Test connection"}
-        </button>
-        {ssh && (
+        {!(auto && !ssh) && (
+          <button type="button" className="btn" onClick={() => run("test")} disabled={!!busy}>
+            {busy === "test" ? "Testing…" : "Test connection"}
+          </button>
+        )}
+        {viaSSH && (
           <button type="button" className="btn" onClick={() => run("check")} disabled={!!busy}>
             {busy === "check" ? "Checking…" : "Check for Docker"}
           </button>
         )}
-        <button type="submit" className="btn primary" disabled={!!busy || (ssh && !form.ssh?.hostKey)}>
-          {busy === "save" ? "Saving…" : initial ? "Save" : "Add host"}
-        </button>
+        {auto && !ssh ? (
+          <button
+            type="button"
+            className="btn primary"
+            onClick={setUpTLS}
+            disabled={!!busy || !form.ssh?.hostKey || !inspection?.ready}
+            title={!inspection?.ready ? "Check for Docker first: it has to be installed and running" : undefined}
+          >
+            {busy === "tls" ? "Setting up…" : initial ? "Set TLS up and save" : "Set TLS up and add host"}
+          </button>
+        ) : (
+          <button type="submit" className="btn primary" disabled={!!busy || (ssh && !form.ssh?.hostKey)}>
+            {busy === "save" ? "Saving…" : initial ? "Save" : "Add host"}
+          </button>
+        )}
         <button type="button" className="btn ghost" onClick={onCancel}>
           Cancel
         </button>
