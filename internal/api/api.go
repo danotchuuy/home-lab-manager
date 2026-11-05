@@ -49,6 +49,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/s3"
 	"github.com/danotchuuy/home-lab-manager/internal/schedule"
 	"github.com/danotchuuy/home-lab-manager/internal/selfupdate"
+	"github.com/danotchuuy/home-lab-manager/internal/stack"
 	"github.com/danotchuuy/home-lab-manager/internal/tlscert"
 	"github.com/danotchuuy/home-lab-manager/internal/transfer"
 	"github.com/danotchuuy/home-lab-manager/internal/unifi"
@@ -98,6 +99,8 @@ type Options struct {
 	HealthMonitor *health.Monitor
 	// Transfer exports, imports and clones servers.
 	Transfer *transfer.Service
+	// Stacks runs Docker Compose stacks.
+	Stacks *stack.Service
 	// UpdateCheckEnv is HLM_UPDATE_CHECK, which overrides the setting for
 	// how often updates are checked for, if set.
 	UpdateCheckEnv string

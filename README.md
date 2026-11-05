@@ -707,6 +707,51 @@ its own. With `HLM_SECRET_KEY`, there's no key file to include.
 To restore, stop hlm, extract a backup into its data directory (`/data` in the Docker image), put back the key if it
 wasn't included, and start hlm again.
 
+## Compose stacks
+
+Some apps need several containers: an app with its database and cache, or a game server with a web map or a bot.
+**Catalog → Add a Compose stack** takes a `docker-compose.yml` (pasted, or loaded from a file) and an optional `.env`.
+**Check** shows what happens to each service: its image, ports, data and where it starts. Then **Create the stack**:
+
+- hlm creates the stack's networks (`<stack>_default`, and any under `networks:`), where services reach each other by
+  name.
+- It pulls each service's image and creates its container, in `depends_on` order, waiting for
+  `condition: service_healthy` (a health check passing) and `service_completed_successfully` (a one-off job finishing
+  with exit code 0).
+- Each service is one of hlm's servers, named `<stack>-<service>` (or its `container_name`). Its console, files,
+  backups, schedule, port forwarding, metrics and alerts work as for any other server.
+- On the Servers page, a stack is one card that opens to its services, with **Start**, **Stop** and **Restart** (in
+  dependency order, stopping in reverse), **Update** (pull each image and recreate the services whose image changed)
+  and **Edit**.
+- **Edit** shows the file and `.env`. **Check** says which services an edit creates, recreates, leaves alone (their
+  settings didn't change) or removes. Applying recreates only those; a service that fails to come back gets its old
+  container back.
+- **Delete stack** removes its containers and networks. Data folders and named volumes are kept, and listed on the
+  Host page, as for deleted servers.
+
+What hlm reads from the file:
+
+- **Variables.** `${VAR}`, `${VAR:-default}`, `${VAR:?message}` and the rest of Compose's forms, from the `.env`
+  only: hlm's own environment is never used. `env_file: .env` passes the `.env`'s variables to a service.
+- **Data folders.** Relative paths (`./data`) go in `<appdata>/<stack>/`, and can't leave it. Absolute paths and named
+  volumes (`<stack>_<name>`, or the `name:` given) are used as they are.
+- **Services:** `image`, `command`, `entrypoint`, `environment`, `env_file`, `ports` and `expose`, `volumes`, `tmpfs`,
+  `networks` (with aliases), `network_mode` (including `service:<name>`), `depends_on`, `restart`, `healthcheck`,
+  `labels`, `devices`, `cap_add`/`cap_drop`, `user`, `working_dir`, `hostname`, `privileged`, `init`, `tty`,
+  `stdin_open`, `read_only`, `mem_limit`, `cpus`, `pids_limit`, `shm_size`, `ulimits`, `extra_hosts`, `dns`,
+  `security_opt`, `sysctls`, `stop_grace_period`, `stop_signal`, `deploy.resources.limits` and `deploy.restart_policy`.
+- YAML anchors and `<<` merges work. As in Compose, a merge isn't deep: a service's own `environment:` replaces a
+  merged one.
+- **Not supported** (refused, saying so): `build` (build the image elsewhere and push it), `extends`, `profiles`,
+  `configs`/`secrets` (mount files instead), `include`, and swarm `deploy` settings other than resource limits. Keys
+  that only matter to Docker Compose (like `logging`) are ignored, with a warning.
+
+The file and `.env` are kept in hlm's encrypted settings (`.env` files usually hold passwords), so they're in
+[configuration backups](#backing-up-hlms-own-configuration). Creating, editing and deleting stacks takes an admin.
+Operators of every service in a stack can start, stop, restart and update it. Server groups give access to services
+one by one, as to any server. A stack's services are changed and updated from the stack, not each server's
+**Settings**.
+
 ## Export, import and clone
 
 **Export settings** (a server's **Settings** tab) downloads `<server>.hlm.json`, which holds:
@@ -1712,6 +1757,11 @@ when the `HLM_*` one isn't set.
 | `POST /api/servers/{id}/backups`               | Start a backup now (202); progress shows in `GET .../backups`.                     |
 | `POST /api/servers/{id}/backups/restore`       | `{key, target?, backupFirst}`: start restoring a backup (202); progress shows in `GET .../backups`. |
 | `GET /api/servers/{id}/backups/download?key=&target=` | Download one of the server's backups (decrypted).                           |
+| `GET /api/stacks`, `GET /api/stacks/{name}`   | [Compose stacks](#compose-stacks) and their services' state (the services the caller can see); admins also get the file and `.env`. |
+| `POST /api/stacks/preview`                     | `{name, yaml, env, existing}`: what creating (or, with `existing`, changing) the stack would do, per service. Admins. |
+| `POST /api/stacks`, `PUT /api/stacks/{name}`   | `{name, yaml, env}`: create a stack, or apply a changed file. Streams NDJSON. Admins. |
+| `POST /api/stacks/{name}/{action}`             | `start`, `stop`, `restart` or `update` the whole stack. Streams NDJSON. Operators of every service. |
+| `DELETE /api/stacks/{name}`                    | Remove the stack's containers and networks (data is kept). Admins.              |
 | `GET /api/servers/{id}/export?secrets=0\|1`    | The server's settings as an [export file](#export-import-and-clone). Operators; `secrets=1` (passwords included) takes a manager in a [confirmed](#confirming-its-you) browser session. |
 | `POST /api/servers/import/preview`             | Read an export file: the install form's template and settings, warnings, what was left out and what comes along. Admins. |
 | `POST /api/servers/import`                     | `{export, request}`: install a server from an export file with the form's settings, and give it the file's other settings. Streams NDJSON. Admins. |

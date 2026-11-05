@@ -3593,3 +3593,71 @@ code.secret {
 .require-2fa select {
   width: auto;
 }
+
+/* Compose stacks */
+.stack-list {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.stack-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.stack-head .btn-row {
+  margin-left: auto;
+}
+
+.stack-toggle {
+  font-size: 1.05rem;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.stack-name {
+  font-weight: 600;
+}
+
+.stack-partial {
+  color: var(--warn);
+}
+
+ul.stack-services {
+  list-style: none;
+  padding: 0;
+  margin: 0.75rem 0 0;
+}
+
+ul.stack-services li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.4rem 0;
+  border-top: 1px solid var(--border);
+}
+
+textarea.code-input {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.stack-editor .upload {
+  width: fit-content;
+}
+
+.change-create,
+.change-update {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.change-remove {
+  color: var(--danger);
+  font-weight: 600;
+}

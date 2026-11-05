@@ -81,9 +81,9 @@ export function ServerDetailPage() {
   );
 
   useEffect(() => {
-    if (tab !== "settings" || config || !operator) return;
+    if (tab !== "settings" || config || !operator || server?.stack) return;
     api.serverConfig(name).then(setConfig, (e) => setConfigError(e.message));
-  }, [tab, name, config, operator]);
+  }, [tab, name, config, operator, server?.stack]);
 
   async function act(action: "start" | "stop" | "restart") {
     setBusy(true);
@@ -180,6 +180,20 @@ export function ServerDetailPage() {
 
       {error && <div className="alert error">{error}</div>}
 
+      {server.stack && (
+        <div className="alert info">
+          Part of the Compose stack <strong>{server.stack}</strong> (its <code>{server.stackService}</code> service). Its
+          settings come from the stack&apos;s file: change them, or update it, from the stack
+          {admin ? (
+            <>
+              {" "}
+              (<Link to={`/stacks/${encodeURIComponent(server.stack)}`}>edit the stack</Link>)
+            </>
+          ) : null}
+          .
+        </div>
+      )}
+
       {server.crashLoop && (
         <div className="alert error crash-loop-alert">
           <div>
@@ -275,33 +289,49 @@ export function ServerDetailPage() {
 
       {tab === "settings" && (
         <div className="card">
-          <div className="settings-actions">
-            <div>
-              <h2>Update</h2>
-              <p className="muted small">Pull the latest image and recreate the container with the same settings.</p>
-            </div>
-            <button className="btn" disabled={busy} onClick={() => runStream((cb) => api.update(name, cb))}>
-              Update image
-            </button>
-          </div>
-          <ServerUpdatePolicyCard server={server.name} canManage={manager} />
-          <hr />
-          <ServerHealthCard server={server.name} running={running} canManage={manager} />
-          <hr />
+          {!server.stack && (
+            <>
+              <div className="settings-actions">
+                <div>
+                  <h2>Update</h2>
+                  <p className="muted small">Pull the latest image and recreate the container with the same settings.</p>
+                </div>
+                <button className="btn" disabled={busy} onClick={() => runStream((cb) => api.update(name, cb))}>
+                  Update image
+                </button>
+              </div>
+              <ServerUpdatePolicyCard server={server.name} canManage={manager} />
+              <hr />
+              <ServerHealthCard server={server.name} running={running} canManage={manager} />
+              <hr />
+            </>
+          )}
           <ConfigFilesCard server={server.name} canManage={manager} />
           <hr />
-          <ExportCard server={server.name} canManage={manager} canClone={admin} />
-          <hr />
+          {!server.stack && (
+            <>
+              <ExportCard server={server.name} canManage={manager} canClone={admin} />
+              <hr />
+            </>
+          )}
           {manager && (
             <>
               <ServerActivity server={server.name} />
               <hr />
             </>
           )}
-          <h2>Configuration</h2>
-          <p className="muted small">Saving recreates the container. The old one is restored if the new one fails to start.</p>
+          {server.stack ? (
+            <p className="muted small">
+              This service&apos;s settings (image, ports, volumes, environment) are in the stack&apos;s Compose file.
+            </p>
+          ) : (
+            <>
+              <h2>Configuration</h2>
+              <p className="muted small">Saving recreates the container. The old one is restored if the new one fails to start.</p>
+            </>
+          )}
           {configError && <div className="alert error">{configError}</div>}
-          {!config && !configError && <Spinner />}
+          {!config && !configError && !server.stack && <Spinner />}
           {config?.hidden && config.hidden.length > 0 && (
             <div className="alert info small">
               Settings that look like passwords, keys or tokens are blank here: only managers of this server can see

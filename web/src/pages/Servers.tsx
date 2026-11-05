@@ -6,6 +6,7 @@ import { AppIcon, CONNECTION_GLYPH, CrashLoopBadge, HealthBadge, Spinner, StateB
 import { GameStatusBadge } from "../components/GameStatus";
 import { InstallCard, JobStatus } from "../components/JobProgress";
 import { ResourceSummary } from "../components/Resources";
+import { StackList } from "../components/StackList";
 import { UpdateProgress } from "../components/UpdateProgress";
 import type {
   AutoUpdateState,
@@ -149,9 +150,11 @@ export function ServersPage() {
     }
   }
 
-  const updatable = servers?.filter((s) => s.update?.state === "available" && can(s, "operator")) ?? [];
+  // Stacks' services are updated with their stack.
+  const updatable = servers?.filter((s) => s.update?.state === "available" && can(s, "operator") && !s.stack) ?? [];
   const groups = [...new Set(servers?.flatMap((s) => s.groups ?? []))].sort();
-  const shown = servers?.filter((s) => !group || s.groups?.includes(group));
+  const shown = servers?.filter((s) => !s.stack && (!group || s.groups?.includes(group)));
+  const serverGroups = Object.fromEntries((servers ?? []).map((s) => [s.name, s.groups]));
 
   async function checkUpdates() {
     setChecking(true);
@@ -302,6 +305,8 @@ export function ServersPage() {
           )}
         </div>
       )}
+
+      <StackList group={group} groups={serverGroups} />
 
       <div className="server-list">
         {shown?.map((s) => {

@@ -109,8 +109,12 @@ type CreateRequest struct {
 	Tty          bool                `json:"Tty,omitempty"`
 	OpenStdin    bool                `json:"OpenStdin,omitempty"`
 	StopTimeout  *int                `json:"StopTimeout,omitempty"`
-	Healthcheck  *Healthcheck        `json:"Healthcheck,omitempty"`
-	HostConfig   HostConfig          `json:"HostConfig"`
+	StopSignal   string              `json:"StopSignal,omitempty"`
+	WorkingDir   string              `json:"WorkingDir,omitempty"`
+	// Volumes are anonymous volumes, by container path.
+	Volumes     map[string]struct{} `json:"Volumes,omitempty"`
+	Healthcheck *Healthcheck        `json:"Healthcheck,omitempty"`
+	HostConfig  HostConfig          `json:"HostConfig"`
 	// NetworkingConfig sets per-network options such as a static IP.
 	NetworkingConfig *NetworkingConfig `json:"NetworkingConfig,omitempty"`
 }
@@ -151,7 +155,8 @@ type PortBinding struct {
 
 // RestartPolicy controls what the daemon does when a container exits.
 type RestartPolicy struct {
-	Name string `json:"Name,omitempty"`
+	Name              string `json:"Name,omitempty"`
+	MaximumRetryCount int    `json:"MaximumRetryCount,omitempty"`
 }
 
 // DeviceMapping passes a host device into the container.

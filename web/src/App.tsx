@@ -13,6 +13,7 @@ import { TunnelPage } from "./pages/Tunnel";
 import { InstallPage } from "./pages/Install";
 import { ImportServerPage } from "./pages/ImportServer";
 import { CloneServerPage } from "./pages/CloneServer";
+import { StackEditorPage } from "./pages/StackEditor";
 import { ServerDetailPage } from "./pages/ServerDetail";
 import { ServersPage } from "./pages/Servers";
 import { SystemPage } from "./pages/System";
@@ -128,6 +129,8 @@ export function App() {
           <Route path="/servers/:name" element={<ServerDetailPage />} />
           <Route path="/servers/:name/clone" element={<CloneServerPage />} />
           <Route path="/import" element={<ImportServerPage />} />
+          <Route path="/stacks/new" element={<StackEditorPage />} />
+          <Route path="/stacks/:name" element={<StackEditorPage />} />
           <Route path="/connections/:name" element={<ConnectionDetailPage />} />
           <Route path="/host" element={<HostPage />} />
           <Route path="/system" element={<SystemPage />} />
