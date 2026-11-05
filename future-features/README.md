@@ -16,7 +16,7 @@ the API and UI it needs, who may use it, how to test it, and a task list. They'r
 | 09 | [Health checks and crash-loop protection](09-health-crash-loop.md) | Medium | 01 for alerts | Done |
 | 10 | [Clone, export and import servers](10-clone-export-import.md) | Medium | — | Done |
 | 11 | [Backup improvements](11-backup-improvements.md) | Medium | 01 for alerts | Done |
-| 12 | [Two-factor sign-in](12-two-factor.md) | Medium | — | Done (TOTP); passkeys later |
+| 12 | [Two-factor sign-in](12-two-factor.md) | Medium | — | Done |
 | 13 | [Docker Compose stacks](13-compose-stacks.md) | Low | — | Done |
 | 14 | [Multiple Docker hosts](14-multi-host.md) | Low | — | Done |
 | 15 | [Image and disk cleanup](15-cleanup.md) | Low | — | Done |

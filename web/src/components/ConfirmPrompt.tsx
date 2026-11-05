@@ -1,10 +1,13 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, setConfirmer } from "../api";
+import { getPasskey, passkeyError, passkeysUnavailable } from "../passkeys";
 
 interface Ask {
   method: string;
   /** The account uses two-factor, so a code is needed too. */
   twoFactor: boolean;
+  /** The account has passkeys, which confirm on their own. */
+  passkey: boolean;
   resolve: (ok: boolean) => void;
 }
 
@@ -22,7 +25,9 @@ export function ConfirmPrompt() {
   const [error, setError] = useState<string>();
 
   useEffect(() => {
-    setConfirmer((method, twoFactor) => new Promise<boolean>((resolve) => setAsk({ method, twoFactor, resolve })));
+    setConfirmer(
+      (method, twoFactor, passkey) => new Promise<boolean>((resolve) => setAsk({ method, twoFactor, passkey, resolve })),
+    );
     return () => setConfirmer(undefined);
   }, []);
 
@@ -49,7 +54,23 @@ export function ConfirmPrompt() {
     }
   }
 
+  async function withPasskey() {
+    setBusy(true);
+    setError(undefined);
+    try {
+      await api.passkeyConfirm(await getPasskey(await api.beginPasskeyConfirm()));
+      done(true);
+    } catch (err) {
+      setError(passkeyError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const back = window.location.pathname + window.location.search + window.location.hash;
+  const passkeyProblem = passkeysUnavailable();
+  // With passkeys but no authenticator app, the password alone isn't enough.
+  const passwordForm = !ask.passkey || ask.twoFactor;
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
       <div className="card modal">
@@ -70,16 +91,35 @@ export function ConfirmPrompt() {
             </div>
           </>
         ) : (
-          <form onSubmit={submit} className="modal-form">
-            <label className="field">
-              <span className="field-label">Your password</span>
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" autoFocus required />
-            </label>
-            {ask.twoFactor && (
-              <label className="field">
-                <span className="field-label">Code from your authenticator app (or a recovery code)</span>
-                <input value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" required />
-              </label>
+          <>
+            {ask.passkey && (
+              <div className="modal-form">
+                {passkeyProblem && <p className="muted small no-margin">{passkeyProblem}</p>}
+                {!passwordForm && error && <div className="alert error">{error}</div>}
+                <div className="btn-row">
+                  <button type="button" className="btn primary" onClick={withPasskey} disabled={busy || !!passkeyProblem}>
+                    {busy ? "Waiting for the passkey…" : "Use your passkey"}
+                  </button>
+                  {!passwordForm && (
+                    <button type="button" className="btn ghost" onClick={() => done(false)}>
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+            {ask.passkey && passwordForm && <div className="sign-in-or">or</div>}
+            {passwordForm && (
+              <form onSubmit={submit} className="modal-form">
+                <label className="field">
+                  <span className="field-label">Your password</span>
+                  <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" autoFocus required />
+                </label>
+                {ask.twoFactor && (
+                  <label className="field">
+                    <span className="field-label">Code from your authenticator app (or a recovery code)</span>
+                    <input value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" required />
+                  </label>
             )}
             {error && <div className="alert error">{error}</div>}
             <div className="btn-row">
@@ -91,6 +131,8 @@ export function ConfirmPrompt() {
               </button>
             </div>
           </form>
+            )}
+          </>
         )}
       </div>
     </div>

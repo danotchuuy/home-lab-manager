@@ -128,12 +128,15 @@ type Service struct {
 	// restart, whose use isn't remembered, don't work after it.
 	boot string
 
-	sshMu      sync.Mutex
-	sshSpent   map[string]time.Time // used challenges, until they expire
-	accountsMu sync.Mutex           // serializes changes to the account list
-	keyMu      sync.Mutex
-	keySeen    map[string]time.Time // API keys' last use, by ID
-	keySaved   map[string]time.Time // when keySeen was last saved
+	sshMu     sync.Mutex
+	sshSpent  map[string]time.Time // used challenges, until they expire
+	passkeyMu sync.Mutex
+	// passkeySpent are passkey challenges used, until they expire.
+	passkeySpent map[string]time.Time
+	accountsMu   sync.Mutex // serializes changes to the account list
+	keyMu        sync.Mutex
+	keySeen      map[string]time.Time // API keys' last use, by ID
+	keySaved     map[string]time.Time // when keySeen was last saved
 }
 
 // New creates the service. oidcOff (HLM_OIDC=off) ignores the OIDC settings.
@@ -199,8 +202,8 @@ func (s *Service) SaveConfig(r *http.Request, in Config) (Config, error) {
 		if !ok {
 			return Config{}, errors.New("sign in first, to require two-factor")
 		}
-		if u.Method == MethodLocal && !s.HasTwoFactor(u.Username) {
-			return Config{}, errors.New("set up two-factor for your own account first (My account → Two-factor), so requiring it can't lock you out")
+		if u.Method == MethodLocal && !s.HasTwoFactor(u.Username) && !s.HasPasskeys(u.Username) {
+			return Config{}, errors.New("set up two-factor for your own account first (a passkey or the authenticator app, under My account), so requiring it can't lock you out")
 		}
 	}
 	if err := s.secrets.Set(secretConfig, in); err != nil {
@@ -229,7 +232,9 @@ type Status struct {
 type TwoFactorStatus struct {
 	Enabled      bool `json:"enabled"`
 	RecoveryLeft int  `json:"recoveryLeft"`
-	Required     bool `json:"required"`
+	// Passkeys is how many passkeys the account has.
+	Passkeys int  `json:"passkeys"`
+	Required bool `json:"required"`
 }
 
 // Status returns the sign-in options and the request's user.
@@ -241,7 +246,7 @@ func (s *Service) Status(r *http.Request) Status {
 	if u, ok := s.Session(r); ok {
 		st.User = &u
 		if a, ok := s.account(u.Username); ok && u.Method == MethodLocal {
-			st.TwoFactor = &TwoFactorStatus{Enabled: a.TwoFactor != nil, Required: s.mustUseTwoFactor(a)}
+			st.TwoFactor = &TwoFactorStatus{Enabled: a.TwoFactor != nil, Required: s.mustUseTwoFactor(a), Passkeys: len(a.Passkeys)}
 			if a.TwoFactor != nil {
 				st.TwoFactor.RecoveryLeft = len(a.TwoFactor.Recovery)
 			}

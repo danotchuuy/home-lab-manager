@@ -24,6 +24,18 @@ var auditNames = map[string]string{
 	"POST /api/auth/ssh/challenge": "-",
 	"POST /api/auth/ssh/login":     "-",
 	"POST /api/auth/confirm":       "-",
+	// Passkey sign-ins and confirmations are recorded by the sign-in
+	// service; starting a ceremony changes nothing.
+	"POST /api/auth/login/passkey/begin":                "-",
+	"POST /api/auth/login/passkey":                      "-",
+	"POST /api/auth/login/2fa/passkey/begin":            "-",
+	"POST /api/auth/login/2fa/passkey":                  "-",
+	"POST /api/auth/login/2fa/setup/passkey/begin":      "-",
+	"POST /api/auth/login/2fa/setup/passkey":            "-",
+	"POST /api/auth/confirm/passkey/begin":              "-",
+	"POST /api/auth/confirm/passkey":                    "-",
+	"POST /api/auth/accounts/{username}/passkeys/begin": "-",
+	"POST /api/auth/accounts/{username}/passkeys":       "-", // recorded by the sign-in service
 	// Not changes.
 	"POST /api/auth/download-ticket":                    "-",
 	"POST /api/servers/check-ports":                     "-",

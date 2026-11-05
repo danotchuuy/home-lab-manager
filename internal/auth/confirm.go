@@ -33,6 +33,10 @@ func (s *Service) Confirmed(u User) bool {
 // without its code.
 var ErrCodeNeeded = errors.New("enter the code from your authenticator app too")
 
+// ErrPasskeyNeeded is returned when confirming, with a password, an account
+// whose second factor is a passkey.
+var ErrPasskeyNeeded = errors.New("confirm with your passkey: this account's second factor is a passkey")
+
 // ConfirmPassword confirms the request's session with its account's password,
 // and code if it uses two-factor.
 func (s *Service) ConfirmPassword(w http.ResponseWriter, r *http.Request, password, code string) (User, error) {
@@ -48,6 +52,10 @@ func (s *Service) ConfirmPassword(w http.ResponseWriter, r *http.Request, passwo
 		s.record(audit.Entry{Actor: u.Username, ActorKind: audit.ActorLocal, IP: clientIP(r), Action: "auth.confirm",
 			Result: audit.ResultDenied, Error: "wrong password"})
 		return User{}, err
+	}
+	if !s.HasTwoFactor(u.Username) && s.HasPasskeys(u.Username) {
+		// The password alone isn't enough where there's a second factor.
+		return User{}, ErrPasskeyNeeded
 	}
 	if s.HasTwoFactor(u.Username) {
 		if cleanCode(code) == "" {

@@ -169,7 +169,9 @@ func (s *server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/auth/status", "/api/auth/login", "/api/auth/logout", "/api/auth/ssh/challenge", "/api/auth/ssh/login",
-			"/api/auth/login/2fa", "/api/auth/login/2fa/setup", "/api/auth/login/2fa/enable":
+			"/api/auth/login/2fa", "/api/auth/login/2fa/setup", "/api/auth/login/2fa/enable",
+			"/api/auth/login/passkey/begin", "/api/auth/login/passkey", "/api/auth/login/2fa/passkey/begin",
+			"/api/auth/login/2fa/passkey", "/api/auth/login/2fa/setup/passkey/begin", "/api/auth/login/2fa/setup/passkey":
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -2448,7 +2450,8 @@ func (s *server) localLogin(w http.ResponseWriter, r *http.Request) {
 		if tf.Setup {
 			writeJSON(w, http.StatusOK, map[string]bool{"twoFactorSetup": true})
 		} else {
-			writeJSON(w, http.StatusOK, map[string]bool{"twoFactor": true})
+			// Which second factors the account has.
+			writeJSON(w, http.StatusOK, map[string]bool{"twoFactor": true, "code": tf.Code, "passkey": tf.Passkey})
 		}
 	case errors.As(err, &le):
 		if le.RetryAfter > 0 {

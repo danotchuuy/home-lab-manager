@@ -1622,8 +1622,8 @@ account's other sessions; removing an account ends all of them.
 
 ### Two-factor sign-in
 
-Local accounts can add a second step to signing in: a 6-digit code from an authenticator app (Aegis, 2FAS, Google
-Authenticator, 1Password, Bitwarden, …), so a leaked password alone isn't enough. Single sign-on users get theirs from
+Local accounts can add a second step to signing in: a [passkey](#passkeys), or a 6-digit code from an authenticator
+app (Aegis, 2FAS, Google Authenticator, 1Password, Bitwarden, …), so a leaked password alone isn't enough. Single sign-on users get theirs from
 their provider. API keys, SSH tokens and `HLM_TOKEN` aren't affected; they're already a separate credential, limited by
 **allowed from**.
 
@@ -1641,16 +1641,41 @@ their provider. API keys, SSH tokens and `HLM_TOKEN` aren't affected; they're al
   - Confirming it's you asks for a code too.
 - **Requiring it.** **System → Sign-in → Require two-factor sign-in for local accounts**: for admins, or for every
   local account.
+  - A passkey or the authenticator app counts.
   - It can only be turned on by someone who has it themselves (or who signed in with single sign-on), so it can't lock
     out the person turning it on.
-  - Accounts that have to use it and don't yet set it up right after their password at the next sign-in.
-  - They can't turn it off themselves while it's required.
+  - Accounts that have to use it and don't yet set it up right after their password at the next sign-in: a passkey
+    or the app.
+  - They can't turn off their last second factor themselves while it's required.
 - **Lost phone.**
   - Use a recovery code.
-  - Or an admin clicks **Reset** in the accounts table (the account then signs in with its password, or sets it up
-    again if required).
-  - Or, on the host: `hlm reset-password <user> --reset-2fa`.
-- **Passkeys** (WebAuthn) aren't supported yet.
+  - Or another passkey on the account.
+  - Or an admin clicks **Reset** in the accounts table, which turns off the app and removes the account's passkeys
+    (it then signs in with its password, or sets two-factor up again if required).
+  - Or, on the host: `hlm reset-password <user> --reset-2fa` (the same).
+
+### Passkeys
+
+A passkey signs in with your fingerprint, face, device PIN or a security key, instead of a password. It's a key pair
+kept by your device, your password manager or a security key; hlm keeps only the public half. It can't be phished:
+browsers only use it on the site it was made for.
+
+- **Adding one.** **My account** (members) or **System → Sign-in** (admins) → **Passkeys** → **Add a passkey**, after
+  confirming it's you. Give it a name (hlm suggests one, like "Firefox on Linux"). An account can have up to 20. They
+  can be renamed and removed there; the table shows where each works, when it was added and last used, and whether
+  it's **synced** (in a password manager or a platform account, so on several devices).
+- **Signing in.** **Sign in with a passkey** on the sign-in form needs no username or password: the authenticator
+  has to verify you (PIN, fingerprint or face), so it's two factors in one. A passkey also works as the **second
+  factor** after the password, in place of the app's code, and to **confirm it's you**. An account whose only second
+  factor is a passkey confirms with it (its password alone isn't enough).
+- **Where it works.** Browsers only allow passkeys on **HTTPS with a name** (see [HTTPS](#https)), or on
+  `http://localhost`: not over plain HTTP on the network, and not on an IP address. A passkey belongs to the address
+  hlm was opened on when it was added (its WebAuthn relying party ID), and works there; add one on each address you use
+  hlm at. The forms say when passkeys aren't available on the current page.
+- **Checks.** hlm asks for "none" attestation, as most sites do, so it doesn't care who made the authenticator; it
+  checks the challenge (random, used once, valid for 5 minutes), the page's origin, the relying party, that you were
+  present (and verified, where it stands alone), the signature (ES256, EdDSA or RS256) and the signature counter, which
+  catches a copied security key. Failed attempts count towards the account's sign-in lockout.
 
 ### Roles and server groups
 
@@ -1947,13 +1972,19 @@ when the `HLM_*` one isn't set.
 |------------------------------------------------|-----------------------------------------------------------------------------------|
 | `GET /api/status`                              | Docker and catalog status.                                                        |
 | `GET /api/auth/status`                         | How to sign in, and who is signed in. Needs no sign-in.                           |
-| `POST /api/auth/login`                         | `{username, password}`: sign in with a local account (send `X-HLM-Request: 1`). Needs no sign-in. For an account with two-factor, the answer is `{twoFactor: true}` (or `{twoFactorSetup: true}` when it has to set it up) and a short-lived cookie for the next step. |
+| `POST /api/auth/login`                         | `{username, password}`: sign in with a local account (send `X-HLM-Request: 1`). Needs no sign-in. For an account with two-factor, the answer is `{twoFactor: true, code, passkey}` (which second factors it has; or `{twoFactorSetup: true}` when it has to set one up) and a short-lived cookie for the next step. |
+| `POST /api/auth/login/passkey/begin`, `POST /api/auth/login/passkey` | [Sign in with a passkey](#passkeys) alone: the WebAuthn request options, then the browser's assertion (`{id, clientDataJSON, authenticatorData, signature, userHandle}`, base64url). Needs no sign-in. |
+| `POST /api/auth/login/2fa/passkey/begin`, `.../2fa/passkey` | A passkey as the second factor, after the password. |
+| `POST /api/auth/login/2fa/setup/passkey/begin`, `.../setup/passkey` | During sign-in, for an account that has to use two-factor: add a passkey (`{name, clientDataJSON, attestationObject, transports}`) and finish signing in. |
 | `POST /api/auth/login/2fa`                     | `{code}`: finish signing in with an authenticator or recovery code.               |
 | `POST /api/auth/login/2fa/setup`, `.../enable` | During sign-in, for an account that has to use two-factor: get the secret (`{secret, url, qr}`), then `{code}` to turn it on and finish signing in (`{recoveryCodes}`). |
+| `GET /api/auth/accounts/{username}/passkeys`   | An account's passkeys (its owner, or an admin): `[{id, name, rpId, synced, created, lastUsed}]`. |
+| `POST /api/auth/accounts/{username}/passkeys/begin`, `POST .../passkeys` | Add a passkey to your own account: the WebAuthn creation options (a confirmed session), then `{name, clientDataJSON, attestationObject, transports}`. |
+| `PUT/DELETE /api/auth/accounts/{username}/passkeys/{id}` | Rename your passkey (`{name}`), or remove one (confirmed: your own, keeping a required second factor; or, as an admin, anyone's). |
 | `POST /api/auth/accounts/{username}/2fa/setup` | Start setting up your own two-factor: `{secret, url, qr}` (a [confirmed](#confirming-its-you) session). |
 | `POST /api/auth/accounts/{username}/2fa/enable` | `{code}`: turn it on; answers the recovery codes, once.                         |
 | `POST /api/auth/accounts/{username}/2fa/recovery` | New recovery codes for your own account (confirmed).                          |
-| `DELETE /api/auth/accounts/{username}/2fa`     | Turn off your own two-factor (unless it's required), or, as an admin, reset someone's (confirmed). |
+| `DELETE /api/auth/accounts/{username}/2fa`     | Turn off your own authenticator app (unless it's your required, last second factor), or, as an admin, reset someone's two-factor: the app and passkeys (confirmed). |
 | `POST /api/auth/logout`                        | Ends the session (send `X-HLM-Request: 1`).                                       |
 | `GET/PUT /api/auth/config`                     | `{required, sessionHours, requireTwoFactor}` (`requireTwoFactor`: empty, `admins` or `all`). Requiring sign-in needs a signed-in session; requiring two-factor, one that has it (or single sign-on). |
 | `GET/POST /api/auth/accounts`                  | Local accounts; `POST {username, password, role}` adds one.                       |
@@ -1962,6 +1993,7 @@ when the `HLM_*` one isn't set.
 | `DELETE /api/auth/accounts/{username}`         | Removes an account.                                                               |
 | `GET/POST /api/auth/accounts/{username}/ssh-keys`, `PUT/DELETE …/ssh-keys/{id}` | [SSH keys](#ssh-keys) of an account, for an admin or the account itself. `POST {publicKey, name?, allowFrom?}` and `PUT {allowFrom}` need a [confirmed](#confirming-its-you) session. |
 | `POST /api/auth/confirm`                       | Confirm a password session for 10 minutes: `{password, code?}` (the code for accounts with two-factor). Single sign-on confirms at `/auth/login?confirm=1`. |
+| `POST /api/auth/confirm/passkey/begin`, `POST /api/auth/confirm/passkey` | Confirm with a passkey instead (it has to verify you). |
 | `GET/PUT /api/system/https`, `POST /api/system/https/renew` | [HTTPS](#https) settings and certificate status; `PUT {enabled, domain, email?, staging?}` needs a [confirmed](#confirming-its-you) session. |
 | `POST /api/auth/download-ticket`               | `{url}` of a backup download returns a URL that works once, for a minute, from the same address: for downloads when signed in with a token. |
 | `POST /api/auth/ssh/challenge`, `POST /api/auth/ssh/login` | Sign in with an SSH key: `{username}` returns `{challenge}`; `{challenge, signature}` returns `{token, expires}`. |

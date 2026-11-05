@@ -165,8 +165,10 @@ func (s *server) stepUp(w http.ResponseWriter, r *http.Request) bool {
 			"error":  "confirm it's you first: this changes who can get in",
 			"code":   "confirm_required",
 			"method": u.Method,
-			// The prompt asks for the authenticator app's code too.
+			// The prompt asks for the authenticator app's code too, or offers
+			// the account's passkeys.
 			"twoFactor": u.Method == auth.MethodLocal && s.Auth.HasTwoFactor(u.Username),
+			"passkey":   u.Method == auth.MethodLocal && s.Auth.HasPasskeys(u.Username),
 		})
 		return false
 	}

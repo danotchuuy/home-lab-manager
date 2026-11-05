@@ -2,10 +2,18 @@
 
 **Priority:** Medium · **Depends on:** nothing
 
-> **Status: TOTP done; passkeys not started** (branch `feature/12-two-factor`). See the README's
-> [Two-factor sign-in](../README.md#two-factor-sign-in). Passkeys (v2) were left for later by choice: they need
-> CBOR/COSE parsing, and adding `go-webauthn` (or writing a parser) is a separate decision. Where the TOTP result
-> differs from this plan:
+> **Status: done** (TOTP on branch `feature/12-two-factor`; passkeys on `feature/12-passkeys`). See the README's
+> [Two-factor sign-in](../README.md#two-factor-sign-in) and [Passkeys](../README.md#passkeys).
+>
+> **Passkeys (v2):** decided with the user: an **in-repo** WebAuthn implementation (`internal/webauthn`: a small CBOR
+> decoder, COSE keys for ES256, EdDSA and RS256, and the registration and assertion checks) rather than
+> `go-webauthn` and its ten dependencies, since attestation is "none" and isn't verified; and passkeys usable **both**
+> passwordless (user verification required) and as the second factor, and for confirming. They count as two-factor
+> where it's required (including setting one up during sign-in). Each passkey is scoped to the hostname it was added
+> on (the relying party ID, from the request's host; the stored RP ID is what assertions are checked against).
+> Challenges are single-use, in a signed 5-minute cookie. An admin's reset (and `--reset-2fa`) removes passkeys too.
+>
+> Where the TOTP result differs from this plan:
 >
 > - **QR code:** drawn by hlm on the server, by a small in-repo encoder (`internal/qr`: byte mode, level M, versions
 >   1–10), returned as SVG with the setup. Not client-side, but the secret still never leaves hlm. The encoder's output
@@ -93,5 +101,5 @@ lockout backoff). SSO users get MFA from their provider, but local accounts — 
 - [x] Require-2FA setting + forced setup
 - [x] Admin reset + CLI flag
 - [x] UI: setup with QR, recovery codes, sign-in code page
-- [ ] (v2) Passkeys
+- [x] (v2) Passkeys
 - [x] README section

@@ -56,6 +56,10 @@ type Account struct {
 	// Pending a new one being set up.
 	TwoFactor *TwoFactor        `json:"twoFactor,omitempty"`
 	Pending   *pendingTwoFactor `json:"pendingTwoFactor,omitempty"`
+	// Passkeys can sign in alone, or be the second factor.
+	Passkeys []Passkey `json:"passkeys,omitempty"`
+	// WebAuthnID is the account's user handle for passkeys (base64url).
+	WebAuthnID string `json:"webauthnId,omitempty"`
 }
 
 // role returns the account's global role. An account without one predates
@@ -72,6 +76,7 @@ func (a Account) info() AccountInfo {
 	if a.TwoFactor != nil {
 		i.TwoFactor, i.RecoveryLeft = true, len(a.TwoFactor.Recovery)
 	}
+	i.Passkeys = len(a.Passkeys)
 	return i
 }
 
@@ -90,6 +95,7 @@ type AccountInfo struct {
 	// how many of its recovery codes are unused.
 	TwoFactor    bool `json:"twoFactor"`
 	RecoveryLeft int  `json:"recoveryLeft,omitempty"`
+	Passkeys     int  `json:"passkeys,omitempty"`
 }
 
 func (s *Service) accounts() []Account {
@@ -463,12 +469,12 @@ func (s *Service) LocalLogin(w http.ResponseWriter, r *http.Request) (User, erro
 	}
 	// The password is right; a second factor may still be needed. Failures
 	// aren't forgotten until it's given, so codes count towards them too.
-	if a.TwoFactor != nil || s.mustUseTwoFactor(a) {
-		setup := a.TwoFactor == nil
+	if a.hasSecondFactor() || s.mustUseTwoFactor(a) {
+		setup := !a.hasSecondFactor()
 		if err := s.startHalf(w, r, a, setup); err != nil {
 			return User{}, err
 		}
-		return User{}, &TwoFactorNeeded{Setup: setup}
+		return User{}, &TwoFactorNeeded{Setup: setup, Code: a.TwoFactor != nil, Passkey: len(a.Passkeys) > 0}
 	}
 	return s.finishLogin(w, r, a, "")
 }
