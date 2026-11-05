@@ -17,12 +17,19 @@ export function StatusPageSettings() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [done, setDone] = useState(false);
+  // Whether each password is set, and what a save changes: a new one, "" to remove it, or undefined to keep it.
+  const [has, setHas] = useState({ view: false, details: false });
+  const [viewPassword, setViewPassword] = useState<string>();
+  const [detailsPassword, setDetailsPassword] = useState<string>();
+  // Bumped on each save, to reset the password fields.
+  const [saves, setSaves] = useState(0);
 
   useEffect(() => {
     api.statusPageSettings().then(
       (r) => {
         setSet(r.settings);
         setSaved(r.settings);
+        setHas({ view: r.hasViewPassword, details: r.hasDetailsPassword });
       },
       (e) => setError((e as Error).message),
     );
@@ -78,9 +85,18 @@ export function StatusPageSettings() {
     setBusy(true);
     setError(undefined);
     try {
-      const r = await api.saveStatusPage({ ...set, allowFrom: set.allowFrom?.filter((a) => a.trim()) });
+      const r = await api.saveStatusPage({
+        ...set,
+        allowFrom: set.allowFrom?.filter((a) => a.trim()),
+        viewPassword,
+        detailsPassword,
+      });
       setSet(r.settings);
       setSaved(r.settings);
+      setHas({ view: r.hasViewPassword, details: r.hasDetailsPassword });
+      setViewPassword(undefined);
+      setDetailsPassword(undefined);
+      setSaves((n) => n + 1);
       setDone(true);
     } catch (e) {
       setError((e as Error).message);
@@ -152,6 +168,37 @@ export function StatusPageSettings() {
           proxy, that&apos;s the tunnel&apos;s address.
         </span>
       </label>
+
+      <div className="field-grid">
+        <PasswordField
+          key={`view-${saves}`}
+          label="Password to see the page (optional)"
+          help="Without it, the page shows nothing. Leave it off for a page anyone can see."
+          isSet={has.view}
+          value={viewPassword}
+          onChange={(v) => {
+            setViewPassword(v);
+            setDone(false);
+          }}
+        />
+        <PasswordField
+          key={`details-${saves}`}
+          label="Password for names and addresses (optional)"
+          help="Players' names, the addresses to connect to and your notes need it; the rest of the page doesn't. It also opens the page."
+          isSet={has.details}
+          value={detailsPassword}
+          onChange={(v) => {
+            setDetailsPassword(v);
+            setDone(false);
+          }}
+        />
+      </div>
+      {(has.view || has.details) && (
+        <p className="muted small no-margin">
+          A password is asked for once per browser, for 30 days, or until it&apos;s changed. With a password to see the
+          page, badges only work in a browser that has given it.
+        </p>
+      )}
 
       <h3>Servers</h3>
       {set.servers.length === 0 && <p className="muted small">No servers on the page yet.</p>}
@@ -323,6 +370,77 @@ export function StatusPageSettings() {
           {busy ? "Saving…" : "Save"}
         </button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * A password that's kept unless it's changed or removed: value is undefined
+ * to keep it, "" to remove it, or the new password.
+ */
+function PasswordField({
+  label,
+  help,
+  isSet,
+  value,
+  onChange,
+}: {
+  label: string;
+  help: string;
+  isSet: boolean;
+  value: string | undefined;
+  onChange: (v: string | undefined) => void;
+}) {
+  const [changing, setChanging] = useState(false);
+  const removing = isSet && value === "";
+  const typing = !isSet || changing;
+  return (
+    <div className="field">
+      <span className="field-label">{label}</span>
+      {removing ? (
+        <div className="small">
+          Removed when you save.{" "}
+          <button type="button" className="link-button" onClick={() => onChange(undefined)}>
+            Keep it
+          </button>
+        </div>
+      ) : typing ? (
+        <>
+          <input
+            type="password"
+            autoComplete="new-password"
+            aria-label={label}
+            value={value ?? ""}
+            placeholder={isSet ? "New password" : "None"}
+            autoFocus={changing}
+            onChange={(e) => onChange(e.target.value || undefined)}
+          />
+          {isSet && (
+            <button
+              type="button"
+              className="link-button small"
+              onClick={() => {
+                setChanging(false);
+                onChange(undefined);
+              }}
+            >
+              Keep the current one
+            </button>
+          )}
+        </>
+      ) : (
+        <div className="small">
+          Set.{" "}
+          <button type="button" className="link-button" onClick={() => setChanging(true)}>
+            Change
+          </button>
+          {" · "}
+          <button type="button" className="link-button" onClick={() => onChange("")}>
+            Remove
+          </button>
+        </div>
+      )}
+      <span className="field-help">{help}</span>
     </div>
   );
 }

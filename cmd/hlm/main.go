@@ -505,8 +505,9 @@ func run(log *slog.Logger) error {
 	// UniFi's port forwards.
 	statusPage := statuspage.New(statuspage.Options{
 		Secrets: store, Servers: mgr, Query: queries,
-		Uptime:  func(name string, rng time.Duration) (float64, bool) { return metrics.Uptime(history, name, rng) },
-		Suggest: suggestAddresses(mgr, fwd, relay),
+		Uptime:       func(name string, rng time.Duration) (float64, bool) { return metrics.Uptime(history, name, rng) },
+		Suggest:      suggestAddresses(mgr, fwd, relay),
+		HashPassword: auth.HashPassword, PasswordMatches: auth.PasswordMatches,
 	})
 	// Docker Compose stacks.
 	stacks := stack.New(store, dc, mgr, log)

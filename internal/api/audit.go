@@ -34,6 +34,8 @@ var auditNames = map[string]string{
 	"POST /api/servers/import/preview":                  "-",
 	"POST /api/hosts/inspect":                           "-",
 	"POST /api/host/cleanup":                            "host.cleanup",
+	"POST /api/status-page/unlock":                      "-",
+	"POST /api/status-page/lock":                        "-",
 	"PUT /api/servers/{id}/favourite":                   "-",
 	"POST /api/servers/bulk":                            "servers.bulk",
 	"POST /api/hosts/setup-docker":                      "hosts.setup-docker",

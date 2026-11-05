@@ -153,6 +153,8 @@ func (s *server) routes() []route {
 		{"PUT /api/system/cleanup", admin, s.saveCleanupSettings},
 		{"GET /api/status-page", public, s.publicStatus},
 		{"GET /api/status-page/{file}", public, s.publicStatusServer},
+		{"POST /api/status-page/unlock", public, s.unlockStatus},
+		{"POST /api/status-page/lock", public, s.lockStatus},
 		{"GET /api/system/status-page", admin, s.statusPageSettings},
 		{"GET /api/system/status-page/suggest", admin, s.statusPageSuggest},
 		{"PUT /api/system/status-page", admin, s.saveStatusPage},

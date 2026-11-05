@@ -4146,3 +4146,10 @@ pre .muted {
 .status-entry-options .spacer {
   flex: 1;
 }
+.status-password {
+  max-width: 26rem;
+}
+.status-password.compact {
+  max-width: none;
+  margin-top: 0.8rem;
+}

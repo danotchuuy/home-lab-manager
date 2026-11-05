@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"github.com/danotchuuy/home-lab-manager/internal/auth"
 	"github.com/danotchuuy/home-lab-manager/internal/statuspage"
 )
@@ -18,6 +19,49 @@ import (
 // statusLimiter keeps one address from hammering the public endpoints (the
 // page itself is cached, so this is about abuse, not cost).
 var statusLimiter = &statuspage.Limiter{Rate: 2, Burst: 60}
+
+// unlockLimiter slows down guessing the page's passwords: five tries, then
+// one every 12 seconds, per address.
+var unlockLimiter = &statuspage.Limiter{Rate: 1.0 / 12, Burst: 5}
+
+func remoteHost(r *http.Request) string {
+	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return h
+	}
+	return r.RemoteAddr
+}
+
+// statusAccess is what the visitor's cookie lets them see.
+func (s *server) statusAccess(r *http.Request) statuspage.Access {
+	cookie := ""
+	if c, err := r.Cookie(statuspage.CookieName); err == nil {
+		cookie = c.Value
+	}
+	a, err := s.StatusPage.AccessFor(cookie, time.Now())
+	if err != nil {
+		return statuspage.Access{ViewLocked: true, DetailsLocked: true}
+	}
+	return a
+}
+
+// statusViewGate is statusGate, then 401 while the page needs its view
+// password (saying so, with the page's title, for the password form).
+func (s *server) statusViewGate(w http.ResponseWriter, r *http.Request) (statuspage.Access, bool) {
+	if !s.statusGate(w, r) {
+		return statuspage.Access{}, false
+	}
+	a := s.statusAccess(r)
+	if a.ViewLocked {
+		title := statuspage.DefaultTitle
+		if set, err := s.StatusPage.Settings(); err == nil && set.Title != "" {
+			title = set.Title
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "this page needs a password", "passwordRequired": true, "title": title})
+		return a, false
+	}
+	return a, true
+}
 
 // statusGate answers 404 while the page is off or the caller isn't allowed
 // to see it, and 429 when they ask too often.
@@ -33,22 +77,25 @@ func (s *server) statusGate(w http.ResponseWriter, r *http.Request) bool {
 		writeError(w, http.StatusNotFound, statuspage.ErrDisabled)
 		return false
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	if !statusLimiter.Allow(host, time.Now()) {
+	if !statusLimiter.Allow(remoteHost(r), time.Now()) {
 		w.Header().Set("Retry-After", "30")
 		writeError(w, http.StatusTooManyRequests, errors.New("too many requests; try again shortly"))
 		return false
 	}
-	w.Header().Set("Cache-Control", "public, max-age=15")
-	w.Header().Set("Access-Control-Allow-Origin", "*") // badges and JSON may be embedded elsewhere
+	if set.ViewHash == "" && set.DetailsHash == "" {
+		w.Header().Set("Cache-Control", "public, max-age=15")
+		w.Header().Set("Access-Control-Allow-Origin", "*") // badges and JSON may be embedded elsewhere
+	} else {
+		// What's shown depends on the visitor's cookie.
+		w.Header().Set("Cache-Control", "private, no-store")
+		w.Header().Set("Vary", "Cookie")
+	}
 	return true
 }
 
 func (s *server) publicStatus(w http.ResponseWriter, r *http.Request) {
-	if !s.statusGate(w, r) {
+	access, ok := s.statusViewGate(w, r)
+	if !ok {
 		return
 	}
 	page, err := s.StatusPage.Page(r.Context(), time.Now())
@@ -56,13 +103,62 @@ func (s *server) publicStatus(w http.ResponseWriter, r *http.Request) {
 		writeStatusError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, page)
+	writeJSON(w, http.StatusOK, struct {
+		statuspage.Page
+		Access statuspage.Access `json:"access"`
+	}{statuspage.Redact(page, access), access})
+}
+
+// unlockStatus checks a status page password, and remembers the access it
+// gives in a cookie.
+func (s *server) unlockStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.statusGate(w, r) {
+		return
+	}
+	// As for the rest of the API: other sites can't send this header.
+	if r.Header.Get(csrfHeader) == "" {
+		writeError(w, http.StatusForbidden, errors.New("send the "+csrfHeader+" header"))
+		return
+	}
+	if !unlockLimiter.Allow(remoteHost(r), time.Now()) {
+		w.Header().Set("Retry-After", "12")
+		writeError(w, http.StatusTooManyRequests, errors.New("too many tries; wait a moment"))
+		return
+	}
+	var in struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	_, token, expiry, err := s.StatusPage.Unlock(in.Password, time.Now())
+	if err != nil {
+		if errors.Is(err, statuspage.ErrWrongPassword) {
+			writeError(w, http.StatusUnauthorized, err)
+			return
+		}
+		writeStatusError(w, err)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: statuspage.CookieName, Value: token, Path: "/", Expires: expiry, HttpOnly: true,
+		SameSite: http.SameSiteLaxMode, Secure: r.TLS != nil})
+	a, _ := s.StatusPage.AccessFor(token, time.Now())
+	writeJSON(w, http.StatusOK, a)
+}
+
+// lockStatus forgets the visitor's status page password.
+func (s *server) lockStatus(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{Name: statuspage.CookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true,
+		SameSite: http.SameSiteLaxMode, Secure: r.TLS != nil})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // publicStatusServer is one server's JSON ({slug}.json) or badge
 // ({slug}.svg).
 func (s *server) publicStatusServer(w http.ResponseWriter, r *http.Request) {
-	if !s.statusGate(w, r) {
+	access, ok := s.statusViewGate(w, r)
+	if !ok {
 		return
 	}
 	file := r.PathValue("file")
@@ -77,7 +173,7 @@ func (s *server) publicStatusServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if kind == "json" {
-		writeJSON(w, http.StatusOK, srv)
+		writeJSON(w, http.StatusOK, statuspage.Redact(statuspage.Page{Servers: []statuspage.Server{srv}}, access).Servers[0])
 		return
 	}
 	w.Header().Set("Content-Type", "image/svg+xml")
@@ -93,15 +189,22 @@ func writeStatusError(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusBadGateway, errors.New("the status isn't available right now"))
 }
 
-// statusPageSettings returns the settings, with addresses hlm can suggest
-// for the servers on the page.
+// statusSettingsView is the settings as admins see them: whether each
+// password is set, never its hash.
+func statusSettingsView(set statuspage.Settings) map[string]any {
+	hasView, hasDetails := set.ViewHash != "", set.DetailsHash != ""
+	set.ViewHash, set.DetailsHash = "", ""
+	return map[string]any{"settings": set, "hasViewPassword": hasView, "hasDetailsPassword": hasDetails}
+}
+
+// statusPageSettings returns the settings.
 func (s *server) statusPageSettings(w http.ResponseWriter, r *http.Request) {
 	set, err := s.StatusPage.Settings()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"settings": set})
+	writeJSON(w, http.StatusOK, statusSettingsView(set))
 }
 
 // statusPageSuggest offers addresses for one server (?server=).
@@ -114,18 +217,30 @@ func (s *server) statusPageSuggest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, list)
 }
 
+// saveStatusPage saves the settings. viewPassword and detailsPassword set
+// a password, "" removes it, and leaving them out keeps it.
 func (s *server) saveStatusPage(w http.ResponseWriter, r *http.Request) {
-	var in statuspage.Settings
+	var in struct {
+		statuspage.Settings
+		ViewPassword    *string `json:"viewPassword"`
+		DetailsPassword *string `json:"detailsPassword"`
+	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 256<<10)).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	set, err := s.StatusPage.Save(in, auth.ParseAllowFrom)
+	if in.ViewPassword != nil {
+		audit.Add(r.Context(), "viewPassword", map[bool]string{true: "removed", false: "set"}[*in.ViewPassword == ""])
+	}
+	if in.DetailsPassword != nil {
+		audit.Add(r.Context(), "detailsPassword", map[bool]string{true: "removed", false: "set"}[*in.DetailsPassword == ""])
+	}
+	set, err := s.StatusPage.SavePasswords(in.Settings, in.ViewPassword, in.DetailsPassword, auth.ParseAllowFrom)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"settings": set})
+	writeJSON(w, http.StatusOK, statusSettingsView(set))
 }
 
 // statusOnlyPaths are what a status-only hostname reaches: the page, its
@@ -139,6 +254,16 @@ func statusOnlyPath(p string) bool {
 		return true
 	}
 	return false
+}
+
+// statusMethodOK: the page is read-only, apart from giving and forgetting
+// its password.
+func statusMethodOK(r *http.Request) bool {
+	switch r.URL.Path {
+	case "/api/status-page/unlock", "/api/status-page/lock":
+		return r.Method == http.MethodPost
+	}
+	return r.Method == http.MethodGet || r.Method == http.MethodHead
 }
 
 // statusHost limits the status page's own hostname, if one is set, to the
@@ -156,7 +281,7 @@ func (s *server) statusHost(next http.Handler) http.Handler {
 					case r.URL.Path == "/":
 						http.Redirect(w, r, "/status", http.StatusFound)
 						return
-					case !statusOnlyPath(r.URL.Path) || (r.Method != http.MethodGet && r.Method != http.MethodHead):
+					case !statusOnlyPath(r.URL.Path) || !statusMethodOK(r):
 						http.NotFound(w, r)
 						return
 					}

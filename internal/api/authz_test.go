@@ -98,6 +98,8 @@ var expected = map[string]string{
 	"GET /api/hosts":                                    "signedIn",
 	"GET /api/status-page":                              "public",
 	"GET /api/status-page/{file}":                       "public",
+	"POST /api/status-page/unlock":                      "public",
+	"POST /api/status-page/lock":                        "public",
 	"PUT /api/servers/{id}/tags":                        "manager",
 	"PUT /api/servers/{id}/favourite":                   "viewer",
 	"POST /api/servers/bulk":                            "signedIn",

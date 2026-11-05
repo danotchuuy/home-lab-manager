@@ -16,6 +16,9 @@
 > - **Badge names** are slugs of the display names (`viking-world`), not server names, which stay internal.
 > - **Rate limit:** a token bucket per address (2/s, bursts of 60) on top of the 15-second cache. Addresses are the
 >   connection's (forwarded headers aren't trusted), so behind a tunnel everyone shares one.
+> - **Added: two optional passwords** (requested): one to see the page, one for names, addresses and notes, as argon2id
+>   hashes; a visitor gets an HMAC-signed, HttpOnly cookie for their level (bound to that password's hash, so changing
+>   it ends the cookie), and the page is cached in full and redacted per visitor.
 > - **The SPA route** is handled before the app (`main.tsx`), so `/status` loads without the header, sign-in or any
 >   admin API call.
 

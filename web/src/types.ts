@@ -1930,4 +1930,6 @@ export interface PublicStatusPage {
   message?: string;
   servers: PublicStatusServer[];
   updated: string;
+  /** What the visitor's password (if any) lets them see. */
+  access?: { level: number; viewLocked: boolean; detailsLocked: boolean; unlocked: boolean };
 }

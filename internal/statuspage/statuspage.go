@@ -60,6 +60,10 @@ type Settings struct {
 	Hostname string `json:"hostname,omitempty"`
 	// AllowFrom, if set, limits the page to these addresses and ranges.
 	AllowFrom []string `json:"allowFrom,omitempty"`
+	// ViewHash and DetailsHash are the passwords' hashes (see access.go);
+	// the API never sends them.
+	ViewHash    string `json:"viewHash,omitempty"`
+	DetailsHash string `json:"detailsHash,omitempty"`
 }
 
 // DefaultTitle is the page's title when none is set.
@@ -121,6 +125,10 @@ type Options struct {
 	// Suggest offers addresses players could use to reach a server, for
 	// the settings form.
 	Suggest func(ctx context.Context, server string) []Suggestion
+	// HashPassword and PasswordMatches hash and check the page's passwords
+	// (auth.HashPassword and auth.PasswordMatches).
+	HashPassword    func(string) string
+	PasswordMatches func(hash, password string) bool
 }
 
 // Suggestion is an address the settings form offers.
@@ -174,8 +182,47 @@ const (
 var hostnamePattern = regexp.MustCompile(`^(?i)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`)
 
 // Save checks and stores the settings. parseAllowFrom checks AllowFrom (as
-// the API keys' allow-from lists are checked).
+// the API keys' allow-from lists are checked). The passwords' hashes are
+// kept as they were: change them with SavePasswords.
 func (s *Service) Save(in Settings, parseAllowFrom func([]string) ([]string, error)) (Settings, error) {
+	cur, err := s.Settings()
+	if err != nil {
+		return Settings{}, err
+	}
+	in.ViewHash, in.DetailsHash = cur.ViewHash, cur.DetailsHash
+	return s.save(in, parseAllowFrom)
+}
+
+// SavePasswords sets, keeps (nil) or removes ("") the view and details
+// passwords along with the other settings.
+func (s *Service) SavePasswords(in Settings, view, details PasswordChange, parseAllowFrom func([]string) ([]string, error)) (Settings, error) {
+	cur, err := s.Settings()
+	if err != nil {
+		return Settings{}, err
+	}
+	in.ViewHash, in.DetailsHash = cur.ViewHash, cur.DetailsHash
+	for _, c := range []struct {
+		change PasswordChange
+		hash   *string
+	}{{view, &in.ViewHash}, {details, &in.DetailsHash}} {
+		switch {
+		case c.change == nil:
+		case *c.change == "":
+			*c.hash = ""
+		default:
+			if err := checkNewPassword(*c.change); err != nil {
+				return Settings{}, err
+			}
+			if s.opts.HashPassword == nil {
+				return Settings{}, errors.New("passwords can't be set here")
+			}
+			*c.hash = s.opts.HashPassword(*c.change)
+		}
+	}
+	return s.save(in, parseAllowFrom)
+}
+
+func (s *Service) save(in Settings, parseAllowFrom func([]string) ([]string, error)) (Settings, error) {
 	in.Title = strings.TrimSpace(in.Title)
 	in.Message = strings.TrimSpace(in.Message)
 	in.Hostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(in.Hostname), "."))
@@ -260,7 +307,7 @@ func (s *Service) ForgetServer(name string) error {
 		return nil
 	}
 	set.Servers = keep
-	_, err = s.Save(set, nil)
+	_, err = s.save(set, nil)
 	return err
 }
 
