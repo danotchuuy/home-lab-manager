@@ -1072,7 +1072,8 @@ func (s *server) proxyConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"configured": ok, "settings": st, "key": key, "upstream": state})
+	statusSites, _ := s.Proxy.StatusSites()
+	writeJSON(w, http.StatusOK, map[string]any{"configured": ok, "settings": st, "key": key, "upstream": state, "statusSites": statusSites})
 }
 
 // checkProxyWAN looks up the home address from UniFi now, updating the

@@ -1425,7 +1425,18 @@ Status page** and add the servers to show; it's at `/status`.
   shows whether it's published. On the Tunnel page the same route reads **Home Lab Manager (status page)**, a choice
   for any hostname. hlm works out where cloudflared reaches it: its own port, or the port its container publishes on
   the host (it says so if it doesn't publish one). It's sent as HTTP, which hlm accepts from the tunnel even with
-  HTTPS on. Without the tunnel, point any proxy for the domain at hlm.
+  HTTPS on.
+- **Sites on the proxy server:** with the [proxy server](#relaying-through-a-proxy-server-nginx-over-ssh) and its
+  [WireGuard tunnel](#wireguard-tunnel-to-this-host) set up (and the tunnel chosen as the home address), tick **Serve the
+  status page's sites here too** on the Proxy page and apply. nginx there answers each site's domain (point its DNS at
+  the proxy server) and passes only the status page's paths to hlm through the tunnel, so hlm's own port is never
+  opened to the internet; everything else on those domains is 404 at the proxy as well as at hlm. With **HTTPS**,
+  certbot on the proxy server gets a free Let's Encrypt certificate for each domain (and its timer renews them,
+  reloading nginx); plain HTTP redirects to HTTPS once a domain has one. hlm writes only
+  `/etc/nginx/conf.d/hlm-status.conf` (nginx has to read `conf.d` in its `http` block, as Debian's, Ubuntu's and
+  Fedora's do), checks it with `nginx -t` and puts the previous one back if it's refused. The proxy's Linode firewall,
+  if hlm manages it, gets ports 80 and 443 opened. Each site's settings show whether the proxy serves it, and over
+  HTTP or HTTPS.
 - **Only from (optional):** addresses or ranges, such as a VPN's, that may see it. Behind a tunnel or proxy that's the
   tunnel's or proxy's address.
 - **Passwords (optional), two of them** (page-wide, and per site): one to see the page at all, and one for the details: players' names, the

@@ -379,7 +379,7 @@ func run(log *slog.Logger) error {
 	updater.UseNotifier(notifier)
 	// Tunnel routes to hlm itself (status page sites) go to its port, as
 	// its container publishes it if it runs in one.
-	tunnel.UseSelf(func(ctx context.Context) (cftunnel.SelfOrigin, error) {
+	selfOrigin := func(ctx context.Context) (cftunnel.SelfOrigin, error) {
 		_, p, err := net.SplitHostPort(listen)
 		if err != nil {
 			return cftunnel.SelfOrigin{}, err
@@ -394,7 +394,8 @@ func run(log *slog.Logger) error {
 			so.Container = &info
 		}
 		return so, nil
-	})
+	}
+	tunnel.UseSelf(selfOrigin)
 	// After UseConnection and UseSelf, which say which containers are whose.
 	go mgr.WatchEvents(ctx)
 	if updateCheck > 0 {
@@ -539,6 +540,26 @@ func run(log *slog.Logger) error {
 			return out, nil
 		},
 	})
+	// The proxy server can serve the status page's sites too, through the
+	// WireGuard tunnel to hlm's port on this host.
+	relay.UseStatusSites(func(ctx context.Context) ([]string, int, error) {
+		set, err := statusPage.Settings()
+		if err != nil {
+			return nil, 0, err
+		}
+		var domains []string
+		if set.Enabled {
+			for _, site := range set.Sites {
+				domains = append(domains, site.Hostname)
+			}
+		}
+		so, err := selfOrigin(ctx)
+		if err != nil {
+			return nil, 0, err
+		}
+		port, err := hostPortOf(so)
+		return domains, port, err
+	})
 	// Docker Compose stacks.
 	stacks := stack.New(store, dc, mgr, log)
 	handler := api.Handler(api.Options{
@@ -584,7 +605,7 @@ func run(log *slog.Logger) error {
 
 	srv := &http.Server{
 		Addr:              listen,
-		Handler:           certs.Redirect(handler),
+		Handler:           statusSitesFirst(statusPage, certs.Redirect(handler), handler),
 		ReadHeaderTimeout: 10 * time.Second,
 		// Close idle keep-alive connections, so that turning HTTPS off (or
 		// on) reaches browsers within a couple of minutes.
@@ -779,4 +800,32 @@ func decryptBackup(args []string) error {
 		out = f
 	}
 	return backup.Decrypt(out, in, key)
+}
+
+// hostPortOf is the port hlm is reached on at the Docker host: its own, or
+// the one its container publishes for it.
+func hostPortOf(so cftunnel.SelfOrigin) (int, error) {
+	info := so.Container
+	if info == nil || info.HostConfig.NetworkMode == "host" {
+		return so.Port, nil
+	}
+	for _, b := range info.HostConfig.PortBindings[strconv.Itoa(so.Port)+"/tcp"] {
+		if p, err := strconv.Atoi(b.HostPort); err == nil && p > 0 {
+			return p, nil
+		}
+	}
+	return 0, fmt.Errorf("hlm's container doesn't publish its port %d on the host, so the WireGuard tunnel can't reach it: publish it (-p %d:%d)", so.Port, so.Port, so.Port)
+}
+
+// statusSitesFirst sends requests for the status page's sites straight to
+// the handler: they come through a proxy or tunnel, which may speak plain
+// HTTP to hlm, and mustn't be redirected to hlm's own HTTPS address.
+func statusSitesFirst(sp *statuspage.Service, redirected, direct http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if sp.IsSiteHost(r.Host) {
+			direct.ServeHTTP(w, r)
+			return
+		}
+		redirected.ServeHTTP(w, r)
+	})
 }

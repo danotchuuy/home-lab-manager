@@ -672,6 +672,19 @@ export interface ProxySettings {
   upstreamPorts?: "internet" | "local";
   logMode: "noip" | "off";
   servers: string[];
+  /** Serve the status page's sites on the proxy (through the WireGuard tunnel), with HTTPS if statusHttps. */
+  statusPage?: boolean;
+  statusHttps?: boolean;
+  statusEmail?: string;
+}
+
+/** How serving the status page's sites on the proxy last went. */
+export interface ProxyStatusSites {
+  domains: string[];
+  https: string[];
+  failed?: Record<string, string>;
+  output?: string;
+  error?: string;
 }
 
 export interface FirewallRule {

@@ -4,6 +4,7 @@ import { api, ApiError } from "../api";
 import { Ago, Spinner } from "../components/common";
 import { ProxyFirewall } from "../components/ProxyFirewall";
 import { WireGuardTunnel } from "../components/WireGuardTunnel";
+import type { ProxyStatusSites } from "../types";
 import type {
   Adoption,
   FirewallSync,
@@ -207,8 +208,11 @@ export function ProxyPage() {
       const r = await api.applyProxy();
       setPreview({ config: r.config, servers: r.servers, path: configFile });
       setResult({
-        text: "Applied: nginx on the proxy server now relays the selected servers." + firewallNote(r.firewall),
-        output: r.output,
+        text:
+          "Applied: nginx on the proxy server now relays the selected servers." +
+          statusNote(r.status) +
+          firewallNote(r.firewall),
+        output: [r.output, r.status?.output].filter(Boolean).join("\n"),
       });
       setFwVersion((v) => v + 1);
       await refreshUpstream();
@@ -521,6 +525,42 @@ export function ProxyPage() {
           </div>
         </div>
 
+        <fieldset className="config-section">
+          <legend>Status page sites</legend>
+          <label className="radio">
+            <input type="checkbox" checked={!!form.statusPage} onChange={(e) => set("statusPage", e.target.checked)} />
+            Serve the <Link to="/system#status-page">status page&apos;s sites</Link> here too
+          </label>
+          <span className="field-help">
+            nginx on the proxy server answers each site&apos;s domain (point its DNS at the proxy server) and passes only the
+            status page to hlm, through the WireGuard tunnel: hlm&apos;s own port isn&apos;t opened to the internet. So the
+            WireGuard tunnel has to be the home address.
+            {form.statusPage && form.upstreamSource !== "wireguard" && (
+              <strong className="form-error"> Choose the WireGuard tunnel as the home address above.</strong>
+            )}
+          </span>
+          {form.statusPage && (
+            <div className="field-grid">
+              <label className="radio">
+                <input type="checkbox" checked={!!form.statusHttps} onChange={(e) => set("statusHttps", e.target.checked)} />
+                HTTPS, with free Let&apos;s Encrypt certificates (certbot on the proxy server gets and renews them)
+              </label>
+              {form.statusHttps && (
+                <label className="field">
+                  <span className="field-label">Email for Let&apos;s Encrypt (optional)</span>
+                  <input
+                    type="email"
+                    value={form.statusEmail ?? ""}
+                    onChange={(e) => set("statusEmail", e.target.value)}
+                    placeholder="you@example.com"
+                  />
+                  <span className="field-help">Where Let&apos;s Encrypt sends notices about the certificates.</span>
+                </label>
+              )}
+            </div>
+          )}
+        </fieldset>
+
         <div className="form-footer">
           <button type="button" className="btn small" onClick={() => test()} disabled={!!busy || !form.host}>
             {busy === "test" ? "Connecting…" : "Test connection"}
@@ -722,4 +762,16 @@ function ServerInfo({
       )}
     </div>
   );
+}
+
+/** What applying did for the status page's sites. */
+function statusNote(r?: ProxyStatusSites): string {
+  if (!r) return "";
+  if (r.error) return ` The status page's sites weren't served: ${r.error}`;
+  if (r.domains.length === 0) return " There are no status page sites to serve yet.";
+  const http = r.domains.filter((d) => !r.https.includes(d));
+  let note = ` Status page sites: ${r.https.length ? `${r.https.join(", ")} over HTTPS` : ""}${r.https.length && http.length ? "; " : ""}${http.length ? `${http.join(", ")} over HTTP` : ""}.`;
+  const failed = Object.entries(r.failed ?? {});
+  if (failed.length) note += ` No certificate yet for ${failed.map(([d, why]) => `${d} (${why})`).join(", ")}; is its DNS pointing at the proxy server?`;
+  return note;
 }

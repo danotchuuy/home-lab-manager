@@ -425,6 +425,10 @@ func (s *Service) wantedRules(servers []Proxied) []linode.Rule {
 	if wg, ok, err := s.tunnel(); err == nil && ok {
 		rules = append(rules, wireGuardRule(wg.ListenPort))
 	}
+	// HTTP and HTTPS for the status page's sites, while relays are applied.
+	if st, ok, err := s.Settings(); err == nil && ok && st.StatusPage && servers != nil {
+		rules = append(rules, statusRule())
+	}
 	return rules
 }
 

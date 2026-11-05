@@ -24,6 +24,10 @@
 > - **Added: sites on Cloudflare** (requested): tunnel routes can go to hlm itself (`Route.Hlm`, "Home Lab Manager"
 >   on the Tunnel page), with hlm's port worked out from HLM_LISTEN and its container's published port; each site has
 >   "Publish on Cloudflare" and shows its route's state.
+> - **Added: sites on the nginx proxy** (requested): through the WireGuard tunnel only (hlm's port is never forwarded
+>   from the internet), as an http-block `conf.d/hlm-status.conf` passing only the status page's paths, with optional
+>   Let's Encrypt certificates from certbot (webroot challenges) on the proxy, and 80/443 on its firewall. Status
+>   sites' domains skip hlm's HTTPS redirect, since proxies and tunnels may speak plain HTTP to hlm.
 > - **The SPA route** is handled before the app (`main.tsx`), so `/status` loads without the header, sign-in or any
 >   admin API call.
 

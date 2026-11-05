@@ -8,6 +8,7 @@ import type {
   StatusPageEntry,
   StatusPageSettings as Settings,
   StatusSite,
+  ProxyStatusSites,
   TunnelRoute,
   TunnelRoutes,
 } from "../types";
@@ -39,6 +40,13 @@ export function StatusPageSettings() {
   // Cloudflare Tunnel isn't set up.
   const [tunnel, setTunnel] = useState<TunnelRoutes>();
   const [savedHosts, setSavedHosts] = useState<string[]>([]);
+  // The nginx proxy server, which can serve the sites too.
+  const [proxy, setProxy] = useState<{
+    configured: boolean;
+    on: boolean;
+    host: string;
+    result?: ProxyStatusSites | null;
+  }>();
   const [groups, setGroups] = useState<ServerGroup[]>([]);
 
   useEffect(() => {
@@ -55,6 +63,16 @@ export function StatusPageSettings() {
     api.servers().then(setServers, () => {});
     api.groups().then(setGroups, () => {});
     api.tunnelRoutes().then(setTunnel, () => setTunnel(undefined));
+    api.proxy().then(
+      (p) =>
+        setProxy({
+          configured: p.configured,
+          on: !!p.settings.statusPage,
+          host: p.settings.host,
+          result: p.statusSites,
+        }),
+      () => setProxy(undefined),
+    );
   }, []);
 
   if (!set) return error ? <div className="alert error small">{error}</div> : <Spinner />;
@@ -233,12 +251,15 @@ export function StatusPageSettings() {
           site={site}
           groups={groups}
           cloudflare={
-            <SiteCloudflare
-              hostname={site.hostname}
-              saved={savedHosts.includes(site.hostname)}
-              tunnel={tunnel}
-              onChange={setTunnel}
-            />
+            <>
+              <SiteCloudflare
+                hostname={site.hostname}
+                saved={savedHosts.includes(site.hostname)}
+                tunnel={tunnel}
+                onChange={setTunnel}
+              />
+              <SiteProxy hostname={site.hostname} proxy={proxy} />
+            </>
           }
           onChange={(c) => {
             setSites(sites.map((x, j) => (j === i ? { ...x, ...c } : x)));
@@ -695,5 +716,57 @@ function SiteCloudflare({
       )}
       {error && <div className="alert error small">{error}</div>}
     </div>
+  );
+}
+
+/** A site's domain on the nginx proxy server: whether it's served there, and how. */
+function SiteProxy({
+  hostname,
+  proxy,
+}: {
+  hostname: string;
+  proxy?: { configured: boolean; on: boolean; host: string; result?: ProxyStatusSites | null };
+}) {
+  const host = hostname.trim().toLowerCase().replace(/\.+$/, "");
+  if (!host || !proxy?.configured) return null;
+  if (!proxy.on) {
+    return (
+      <p className="muted small no-margin">
+        Or serve it on the proxy server ({proxy.host}): turn on{" "}
+        <Link to="/proxy">status page sites on the Proxy page</Link> and point {host}&apos;s DNS at it.
+      </p>
+    );
+  }
+  const r = proxy.result;
+  let state: ReactNode;
+  if (!r || !r.domains.includes(host)) {
+    state = r?.error ? (
+      <span className="form-error">{r.error}</span>
+    ) : (
+      <>
+        not applied yet: apply on the <Link to="/proxy">Proxy page</Link>
+      </>
+    );
+  } else if (r.https.includes(host)) {
+    state = (
+      <>
+        served over HTTPS:{" "}
+        <a href={`https://${host}/status`} target="_blank" rel="noreferrer">
+          https://{host}/status ↗
+        </a>
+      </>
+    );
+  } else {
+    state = (
+      <>
+        served over HTTP
+        {r.failed?.[host] && <span className="form-error"> (no certificate yet: {r.failed[host]})</span>}
+      </>
+    );
+  }
+  return (
+    <p className="small no-margin">
+      Proxy server ({proxy.host}): {state}
+    </p>
   );
 }

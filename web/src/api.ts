@@ -95,6 +95,7 @@ import type {
   AddressSuggestion,
   StatusPageSettings,
   StatusSite,
+  ProxyStatusSites,
   CleanupPlan,
   CleanupRequest,
   CleanupResult,
@@ -597,7 +598,13 @@ export const api = {
     json<{ removed: number }>(`/api/servers/${encodeURIComponent(id)}/portforward`, { method: "DELETE" }),
 
   proxy: () =>
-    json<{ configured: boolean; settings: ProxySettings; key: SSHKeyInfo | null; upstream: UpstreamState }>("/api/proxy"),
+    json<{
+      configured: boolean;
+      settings: ProxySettings;
+      key: SSHKeyInfo | null;
+      upstream: UpstreamState;
+      statusSites?: ProxyStatusSites | null;
+    }>("/api/proxy"),
   checkProxyWAN: () => json<UpstreamState>("/api/proxy/wan-check", { method: "POST" }),
   unifiWAN: (wan: string) => json<{ wan: string; address: string }>(`/api/integrations/unifi/wan?wan=${wan}`),
   saveProxy: (st: ProxySettings) => json<ProxySettings>("/api/proxy", { method: "PUT", body: JSON.stringify(st) }),
@@ -610,7 +617,7 @@ export const api = {
   installNginx: () => json<{ output: string }>("/api/proxy/install", { method: "POST" }),
   previewProxy: () => json<{ config: string; servers: ProxiedServer[]; path: string }>("/api/proxy/preview"),
   applyProxy: () =>
-    json<{ config: string; output: string; servers: ProxiedServer[]; firewall?: FirewallSync }>("/api/proxy/apply", {
+    json<{ config: string; output: string; servers: ProxiedServer[]; firewall?: FirewallSync; status?: ProxyStatusSites }>("/api/proxy/apply", {
       method: "POST",
     }),
   planAdoption: () => json<Adoption>("/api/proxy/adopt"),
