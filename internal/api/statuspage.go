@@ -37,7 +37,7 @@ func (s *server) statusAccess(r *http.Request) statuspage.Access {
 	if c, err := r.Cookie(statuspage.CookieName); err == nil {
 		cookie = c.Value
 	}
-	a, err := s.StatusPage.AccessFor(cookie, time.Now())
+	a, err := s.StatusPage.AccessFor(r.Host, cookie, time.Now())
 	if err != nil {
 		return statuspage.Access{ViewLocked: true, DetailsLocked: true}
 	}
@@ -53,8 +53,8 @@ func (s *server) statusViewGate(w http.ResponseWriter, r *http.Request) (statusp
 	a := s.statusAccess(r)
 	if a.ViewLocked {
 		title := statuspage.DefaultTitle
-		if set, err := s.StatusPage.Settings(); err == nil && set.Title != "" {
-			title = set.Title
+		if p, err := s.StatusPage.Page(r.Context(), r.Host, time.Now()); err == nil {
+			title = p.Title
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "this page needs a password", "passwordRequired": true, "title": title})
@@ -82,7 +82,7 @@ func (s *server) statusGate(w http.ResponseWriter, r *http.Request) bool {
 		writeError(w, http.StatusTooManyRequests, errors.New("too many requests; try again shortly"))
 		return false
 	}
-	if set.ViewHash == "" && set.DetailsHash == "" {
+	if set.ViewHash == "" && set.DetailsHash == "" && len(set.Sites) == 0 {
 		w.Header().Set("Cache-Control", "public, max-age=15")
 		w.Header().Set("Access-Control-Allow-Origin", "*") // badges and JSON may be embedded elsewhere
 	} else {
@@ -98,7 +98,7 @@ func (s *server) publicStatus(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	page, err := s.StatusPage.Page(r.Context(), time.Now())
+	page, err := s.StatusPage.Page(r.Context(), r.Host, time.Now())
 	if err != nil {
 		writeStatusError(w, err)
 		return
@@ -132,7 +132,7 @@ func (s *server) unlockStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	_, token, expiry, err := s.StatusPage.Unlock(in.Password, time.Now())
+	_, token, expiry, err := s.StatusPage.Unlock(r.Host, in.Password, time.Now())
 	if err != nil {
 		if errors.Is(err, statuspage.ErrWrongPassword) {
 			writeError(w, http.StatusUnauthorized, err)
@@ -143,7 +143,7 @@ func (s *server) unlockStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{Name: statuspage.CookieName, Value: token, Path: "/", Expires: expiry, HttpOnly: true,
 		SameSite: http.SameSiteLaxMode, Secure: r.TLS != nil})
-	a, _ := s.StatusPage.AccessFor(token, time.Now())
+	a, _ := s.StatusPage.AccessFor(r.Host, token, time.Now())
 	writeJSON(w, http.StatusOK, a)
 }
 
@@ -167,7 +167,7 @@ func (s *server) publicStatusServer(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	srv, err := s.StatusPage.ServerBySlug(r.Context(), slug, time.Now())
+	srv, err := s.StatusPage.ServerBySlug(r.Context(), r.Host, slug, time.Now())
 	if err != nil {
 		writeStatusError(w, err)
 		return
@@ -189,12 +189,26 @@ func writeStatusError(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusBadGateway, errors.New("the status isn't available right now"))
 }
 
-// statusSettingsView is the settings as admins see them: whether each
-// password is set, never its hash.
+// statusSite is a site as admins see it: whether each password is set,
+// never its hash.
+type statusSite struct {
+	statuspage.Site
+	HasViewPassword    bool `json:"hasViewPassword"`
+	HasDetailsPassword bool `json:"hasDetailsPassword"`
+}
+
+// statusSettingsView is the settings as admins see them.
 func statusSettingsView(set statuspage.Settings) map[string]any {
 	hasView, hasDetails := set.ViewHash != "", set.DetailsHash != ""
 	set.ViewHash, set.DetailsHash = "", ""
-	return map[string]any{"settings": set, "hasViewPassword": hasView, "hasDetailsPassword": hasDetails}
+	sites := make([]statusSite, len(set.Sites))
+	for i, site := range set.Sites {
+		v := statusSite{Site: site, HasViewPassword: site.ViewHash != "", HasDetailsPassword: site.DetailsHash != ""}
+		v.ViewHash, v.DetailsHash = "", ""
+		sites[i] = v
+	}
+	set.Sites = nil
+	return map[string]any{"settings": set, "sites": sites, "hasViewPassword": hasView, "hasDetailsPassword": hasDetails}
 }
 
 // statusPageSettings returns the settings.
@@ -224,10 +238,25 @@ func (s *server) saveStatusPage(w http.ResponseWriter, r *http.Request) {
 		statuspage.Settings
 		ViewPassword    *string `json:"viewPassword"`
 		DetailsPassword *string `json:"detailsPassword"`
+		// Sites, each with its own password changes.
+		Sites []struct {
+			statuspage.Site
+			ViewPassword    *string `json:"viewPassword"`
+			DetailsPassword *string `json:"detailsPassword"`
+		} `json:"sites"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 256<<10)).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
+	}
+	in.Settings.Sites = make([]statuspage.Site, len(in.Sites))
+	changes := make([]statuspage.SitePasswords, len(in.Sites))
+	for i, site := range in.Sites {
+		in.Settings.Sites[i] = site.Site
+		changes[i] = statuspage.SitePasswords{View: site.ViewPassword, Details: site.DetailsPassword}
+		if site.ViewPassword != nil || site.DetailsPassword != nil {
+			audit.Add(r.Context(), "sitePasswords", site.Hostname)
+		}
 	}
 	if in.ViewPassword != nil {
 		audit.Add(r.Context(), "viewPassword", map[bool]string{true: "removed", false: "set"}[*in.ViewPassword == ""])
@@ -235,7 +264,7 @@ func (s *server) saveStatusPage(w http.ResponseWriter, r *http.Request) {
 	if in.DetailsPassword != nil {
 		audit.Add(r.Context(), "detailsPassword", map[bool]string{true: "removed", false: "set"}[*in.DetailsPassword == ""])
 	}
-	set, err := s.StatusPage.SavePasswords(in.Settings, in.ViewPassword, in.DetailsPassword, auth.ParseAllowFrom)
+	set, err := s.StatusPage.SavePasswords(in.Settings, in.ViewPassword, in.DetailsPassword, changes, auth.ParseAllowFrom)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -266,26 +295,18 @@ func statusMethodOK(r *http.Request) bool {
 	return r.Method == http.MethodGet || r.Method == http.MethodHead
 }
 
-// statusHost limits the status page's own hostname, if one is set, to the
-// status page: everything else of hlm answers 404 there, whoever asks.
+// statusHost limits the status sites' domains to the status page:
+// everything else of hlm answers 404 there, whoever asks.
 func (s *server) statusHost(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.StatusPage != nil {
-			if set, err := s.StatusPage.Settings(); err == nil && set.Hostname != "" {
-				host := r.Host
-				if h, _, err := net.SplitHostPort(host); err == nil {
-					host = h
-				}
-				if strings.EqualFold(strings.TrimSuffix(host, "."), set.Hostname) {
-					switch {
-					case r.URL.Path == "/":
-						http.Redirect(w, r, "/status", http.StatusFound)
-						return
-					case !statusOnlyPath(r.URL.Path) || !statusMethodOK(r):
-						http.NotFound(w, r)
-						return
-					}
-				}
+		if s.StatusPage != nil && s.StatusPage.IsSiteHost(r.Host) {
+			switch {
+			case r.URL.Path == "/":
+				http.Redirect(w, r, "/status", http.StatusFound)
+				return
+			case !statusOnlyPath(r.URL.Path) || !statusMethodOK(r):
+				http.NotFound(w, r)
+				return
 			}
 		}
 		next.ServeHTTP(w, r)

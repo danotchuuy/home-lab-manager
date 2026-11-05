@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { AddressSuggestion, Server, StatusPageEntry, StatusPageSettings as Settings } from "../types";
+import type {
+  AddressSuggestion,
+  Server,
+  ServerGroup,
+  StatusPageEntry,
+  StatusPageSettings as Settings,
+  StatusSite,
+} from "../types";
 import { bareName } from "../util";
 import { Spinner } from "./common";
 import { CopyButton } from "./ConnectInfo";
@@ -23,6 +30,8 @@ export function StatusPageSettings() {
   const [detailsPassword, setDetailsPassword] = useState<string>();
   // Bumped on each save, to reset the password fields.
   const [saves, setSaves] = useState(0);
+  const [sites, setSites] = useState<StatusSite[]>([]);
+  const [groups, setGroups] = useState<ServerGroup[]>([]);
 
   useEffect(() => {
     api.statusPageSettings().then(
@@ -30,10 +39,12 @@ export function StatusPageSettings() {
         setSet(r.settings);
         setSaved(r.settings);
         setHas({ view: r.hasViewPassword, details: r.hasDetailsPassword });
+        setSites(r.sites);
       },
       (e) => setError((e as Error).message),
     );
     api.servers().then(setServers, () => {});
+    api.groups().then(setGroups, () => {});
   }, []);
 
   if (!set) return error ? <div className="alert error small">{error}</div> : <Spinner />;
@@ -90,10 +101,12 @@ export function StatusPageSettings() {
         allowFrom: set.allowFrom?.filter((a) => a.trim()),
         viewPassword,
         detailsPassword,
+        sites,
       });
       setSet(r.settings);
       setSaved(r.settings);
       setHas({ view: r.hasViewPassword, details: r.hasDetailsPassword });
+      setSites(r.sites);
       setViewPassword(undefined);
       setDetailsPassword(undefined);
       setSaves((n) => n + 1);
@@ -106,7 +119,8 @@ export function StatusPageSettings() {
   }
 
   const origin = window.location.origin;
-  const pageURL = set.hostname ? `https://${set.hostname}/status` : `${origin}/status`;
+  // Badges are shown for hlm's own address (a site's domain has the same paths, for its servers).
+  const pageURL = `${origin}/status`;
   return (
     <div className="status-settings config-form">
       <p className="muted small no-margin">
@@ -129,19 +143,6 @@ export function StatusPageSettings() {
             onChange={(e) => change({ title: e.target.value })}
             placeholder="Game servers"
           />
-        </label>
-        <label className="field">
-          <span className="field-label">Own hostname (optional)</span>
-          <input
-            value={set.hostname ?? ""}
-            onChange={(e) => change({ hostname: e.target.value })}
-            placeholder="status.example.com"
-            spellCheck={false}
-          />
-          <span className="field-help">
-            A name that reaches only the status page: the rest of hlm answers &ldquo;not found&rdquo; there. Point a
-            Cloudflare Tunnel route (or a proxy) for it at hlm.
-          </span>
         </label>
       </div>
       <label className="field">
@@ -172,7 +173,11 @@ export function StatusPageSettings() {
       <div className="field-grid">
         <PasswordField
           key={`view-${saves}`}
-          label="Password to see the page (optional)"
+          label={
+            sites.length
+              ? "Password to see the page on hlm's own address (optional)"
+              : "Password to see the page (optional)"
+          }
           help="Without it, the page shows nothing. Leave it off for a page anyone can see."
           isSet={has.view}
           value={viewPassword}
@@ -183,7 +188,11 @@ export function StatusPageSettings() {
         />
         <PasswordField
           key={`details-${saves}`}
-          label="Password for names and addresses (optional)"
+          label={
+            sites.length
+              ? "Password for names and addresses on hlm's own address (optional)"
+              : "Password for names and addresses (optional)"
+          }
           help="Players' names, the addresses to connect to and your notes need it; the rest of the page doesn't. It also opens the page."
           isSet={has.details}
           value={detailsPassword}
@@ -199,6 +208,41 @@ export function StatusPageSettings() {
           page, badges only work in a browser that has given it.
         </p>
       )}
+
+      <h3>Sites</h3>
+      <p className="muted small no-margin">
+        The page under its own domain, for a group of friends or the public: only the servers in the server groups you
+        choose, behind that site&apos;s own passwords (or none). A site&apos;s domain reaches only the status page: the
+        rest of hlm answers &ldquo;not found&rdquo; there. Point a Cloudflare Tunnel route (or a proxy) for it at hlm.
+        On any other address, such as hlm&apos;s own, the page shows every server below, with the passwords above.
+      </p>
+      {sites.map((site, i) => (
+        <SiteFields
+          key={(site.id ?? "new") + i + saves}
+          site={site}
+          groups={groups}
+          onChange={(c) => {
+            setSites(sites.map((x, j) => (j === i ? { ...x, ...c } : x)));
+            setDone(false);
+          }}
+          onRemove={() => {
+            setSites(sites.filter((_, j) => j !== i));
+            setDone(false);
+          }}
+        />
+      ))}
+      <div className="btn-row">
+        <button
+          type="button"
+          className="btn small"
+          onClick={() => {
+            setSites([...sites, { hostname: "", groups: [] }]);
+            setDone(false);
+          }}
+        >
+          Add a site
+        </button>
+      </div>
 
       <h3>Servers</h3>
       {set.servers.length === 0 && <p className="muted small">No servers on the page yet.</p>}
@@ -442,5 +486,104 @@ function PasswordField({
       )}
       <span className="field-help">{help}</span>
     </div>
+  );
+}
+
+/** One status site: its domain, which groups' servers it shows, and its own passwords. */
+function SiteFields({
+  site,
+  groups,
+  onChange,
+  onRemove,
+}: {
+  site: StatusSite;
+  groups: ServerGroup[];
+  onChange: (c: Partial<StatusSite>) => void;
+  onRemove: () => void;
+}) {
+  const label = site.hostname || "New site";
+  return (
+    <fieldset className="config-section status-site">
+      <legend>{label}</legend>
+      <div className="field-grid">
+        <label className="field">
+          <span className="field-label">Domain</span>
+          <input
+            value={site.hostname}
+            onChange={(e) => onChange({ hostname: e.target.value })}
+            placeholder="friends.example.com"
+            spellCheck={false}
+            required
+          />
+        </label>
+        <label className="field">
+          <span className="field-label">Title (optional)</span>
+          <input
+            value={site.title ?? ""}
+            onChange={(e) => onChange({ title: e.target.value })}
+            placeholder="The page's"
+          />
+        </label>
+      </div>
+      <div className="field">
+        <span className="field-label">Shows the servers in</span>
+        {groups.length === 0 ? (
+          <span className="field-help">
+            There are no server groups yet (System → Server groups), so it shows every server on the page.
+          </span>
+        ) : (
+          <div className="status-site-groups">
+            {groups.map((g) => (
+              <label key={g.id} className="radio small">
+                <input
+                  type="checkbox"
+                  checked={site.groups.includes(g.id)}
+                  onChange={(e) =>
+                    onChange({
+                      groups: e.target.checked ? [...site.groups, g.id] : site.groups.filter((x) => x !== g.id),
+                    })
+                  }
+                />
+                {g.name}
+              </label>
+            ))}
+          </div>
+        )}
+        <span className="field-help">
+          {site.groups.length === 0
+            ? "No group chosen: every server on the page."
+            : "Servers on the page that are in any of these groups."}
+        </span>
+      </div>
+      <label className="field">
+        <span className="field-label">Message (optional)</span>
+        <input
+          value={site.message ?? ""}
+          onChange={(e) => onChange({ message: e.target.value })}
+          placeholder="The page's"
+        />
+      </label>
+      <div className="field-grid">
+        <PasswordField
+          label={`Password to see ${label}`}
+          help="Optional. Only this site's passwords work here."
+          isSet={!!site.hasViewPassword}
+          value={site.viewPassword}
+          onChange={(v) => onChange({ viewPassword: v })}
+        />
+        <PasswordField
+          label={`Password for names and addresses on ${label}`}
+          help="Optional. It also opens the site."
+          isSet={!!site.hasDetailsPassword}
+          value={site.detailsPassword}
+          onChange={(v) => onChange({ detailsPassword: v })}
+        />
+      </div>
+      <div className="btn-row">
+        <button type="button" className="btn small ghost danger" onClick={onRemove}>
+          Remove this site
+        </button>
+      </div>
+    </fieldset>
   );
 }

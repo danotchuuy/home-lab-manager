@@ -508,6 +508,17 @@ func run(log *slog.Logger) error {
 		Uptime:       func(name string, rng time.Duration) (float64, bool) { return metrics.Uptime(history, name, rng) },
 		Suggest:      suggestAddresses(mgr, fwd, relay),
 		HashPassword: auth.HashPassword, PasswordMatches: auth.PasswordMatches,
+		Groups: func() (map[string][]string, error) {
+			list, err := groups.Groups()
+			if err != nil {
+				return nil, err
+			}
+			out := make(map[string][]string, len(list))
+			for _, g := range list {
+				out[g.ID] = g.Servers
+			}
+			return out, nil
+		},
 	})
 	// Docker Compose stacks.
 	stacks := stack.New(store, dc, mgr, log)

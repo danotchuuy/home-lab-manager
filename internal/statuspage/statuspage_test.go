@@ -60,7 +60,7 @@ func TestPage(t *testing.T) {
 	s, _ := setup(t)
 	ctx := context.Background()
 	now := time.Now()
-	if _, err := s.Page(ctx, now); !errors.Is(err, ErrDisabled) {
+	if _, err := s.Page(ctx, "", now); !errors.Is(err, ErrDisabled) {
 		t.Fatalf("disabled: %v", err)
 	}
 	if _, err := s.Save(Settings{Enabled: true, Message: "Maintenance Saturday", Servers: []Entry{
@@ -71,7 +71,7 @@ func TestPage(t *testing.T) {
 	}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	p, err := s.Page(ctx, now)
+	p, err := s.Page(ctx, "", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,12 +117,12 @@ func TestPage(t *testing.T) {
 
 	// Without players shown, neither counts nor names; names need players.
 	s.Save(Settings{Enabled: true, Servers: []Entry{{Server: "valheim", ShowNames: true}}}, nil)
-	p, _ = s.Page(ctx, now)
+	p, _ = s.Page(ctx, "", now)
 	if v := p.Servers[0]; v.Players != nil || v.PlayerNames != nil || v.Version != "" {
 		t.Errorf("players hidden = %+v", v)
 	}
 	s.Save(Settings{Enabled: true, Servers: []Entry{{Server: "valheim", ShowPlayers: true}}}, nil)
-	p, _ = s.Page(ctx, now)
+	p, _ = s.Page(ctx, "", now)
 	if v := p.Servers[0]; *v.Players != 3 || v.PlayerNames != nil {
 		t.Errorf("names hidden = %+v", v)
 	}
@@ -133,12 +133,12 @@ func TestCacheAndForget(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 	s.Save(Settings{Enabled: true, Servers: []Entry{{Server: "valheim"}, {Server: "ark"}}}, nil)
-	p, _ := s.Page(ctx, now)
+	p, _ := s.Page(ctx, "", now)
 	srvs.list[0].State = "exited"
-	if p2, _ := s.Page(ctx, now.Add(5*time.Second)); p2.Servers[0].State != p.Servers[0].State {
+	if p2, _ := s.Page(ctx, "", now.Add(5*time.Second)); p2.Servers[0].State != p.Servers[0].State {
 		t.Error("not cached")
 	}
-	if p3, _ := s.Page(ctx, now.Add(CacheFor+time.Second)); p3.Servers[0].State != StateOffline {
+	if p3, _ := s.Page(ctx, "", now.Add(CacheFor+time.Second)); p3.Servers[0].State != StateOffline {
 		t.Error("cached too long")
 	}
 	if err := s.ForgetServer("valheim"); err != nil {
@@ -148,10 +148,10 @@ func TestCacheAndForget(t *testing.T) {
 	if len(set.Servers) != 1 || set.Servers[0].Server != "ark" {
 		t.Errorf("after forgetting: %+v", set.Servers)
 	}
-	if _, err := s.ServerBySlug(ctx, "valheim", now.Add(time.Minute)); !errors.Is(err, ErrDisabled) {
+	if _, err := s.ServerBySlug(ctx, "", "valheim", now.Add(time.Minute)); !errors.Is(err, ErrDisabled) {
 		t.Errorf("forgotten server by slug: %v", err)
 	}
-	if srv, err := s.ServerBySlug(ctx, "ark", now.Add(time.Minute)); err != nil || srv.Name != "ARK" {
+	if srv, err := s.ServerBySlug(ctx, "", "ark", now.Add(time.Minute)); err != nil || srv.Name != "ARK" {
 		t.Errorf("ark by slug: %+v, %v", srv, err)
 	}
 }
@@ -159,8 +159,9 @@ func TestCacheAndForget(t *testing.T) {
 func TestSaveChecks(t *testing.T) {
 	s, _ := setup(t)
 	for _, bad := range []Settings{
-		{Hostname: "not a host"},
-		{Hostname: "192.168.1.5"},
+		{Sites: []Site{{Hostname: "not a host"}}},
+		{Sites: []Site{{Hostname: "192.168.1.5"}}},
+		{Sites: []Site{{Hostname: "a.example.com"}, {Hostname: "A.example.com"}}},
 		{Title: strings.Repeat("x", 201)},
 		{Servers: []Entry{{Server: "a", Hint: strings.Repeat("x", 201)}}},
 	} {
@@ -168,8 +169,8 @@ func TestSaveChecks(t *testing.T) {
 			t.Errorf("accepted %+v", bad)
 		}
 	}
-	set, err := s.Save(Settings{Hostname: "Status.Example.COM.", Servers: []Entry{{Server: "a"}, {Server: "a"}, {Server: " "}, {Server: "b@nas", ShowNames: true}}}, nil)
-	if err != nil || set.Hostname != "status.example.com" || len(set.Servers) != 2 || set.Servers[1].Slug != "b" || set.Servers[1].ShowNames {
+	set, err := s.Save(Settings{Sites: []Site{{Hostname: "Status.Example.COM."}}, Servers: []Entry{{Server: "a"}, {Server: "a"}, {Server: " "}, {Server: "b@nas", ShowNames: true}}}, nil)
+	if err != nil || set.Sites[0].Hostname != "status.example.com" || set.Sites[0].ID == "" || len(set.Servers) != 2 || set.Servers[1].Slug != "b" || set.Servers[1].ShowNames {
 		t.Errorf("saved %+v, %v", set, err)
 	}
 }

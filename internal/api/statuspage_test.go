@@ -68,7 +68,7 @@ func TestStatusPageAPI(t *testing.T) {
 
 	// Its own hostname reaches the status page and nothing else, even with
 	// the token.
-	sp.Save(statuspage.Settings{Enabled: true, Hostname: "status.example.com", Servers: []statuspage.Entry{{Server: "valheim"}}}, auth.ParseAllowFrom)
+	sp.Save(statuspage.Settings{Enabled: true, Sites: []statuspage.Site{{Hostname: "status.example.com"}}, Servers: []statuspage.Entry{{Server: "valheim"}}}, auth.ParseAllowFrom)
 	if w := get(h, "status.example.com", "/api/status-page", ""); w.Code != 200 {
 		t.Errorf("status host, page: %d", w.Code)
 	}
@@ -193,15 +193,90 @@ func TestStatusPagePasswords(t *testing.T) {
 		t.Errorf("guesses: %v", codes)
 	}
 
-	// On the status-only hostname, unlocking still works.
-	sp.Save(statuspage.Settings{Enabled: true, Hostname: "status.example.com", Servers: []statuspage.Entry{{Server: "valheim"}}}, nil)
+	// On a site's domain, unlocking works with that site's password.
+	sitePw := "site-only"
+	sp.SavePasswords(statuspage.Settings{Enabled: true, Sites: []statuspage.Site{{Hostname: "status.example.com"}}, Servers: []statuspage.Entry{{Server: "valheim"}}},
+		nil, nil, []statuspage.SitePasswords{{View: &sitePw}}, nil)
 	unlockLimiter = &statuspage.Limiter{Rate: 100, Burst: 100}
-	r := httptest.NewRequest("POST", "/api/status-page/unlock", strings.NewReader(`{"password":"friends-only"}`))
+	r := httptest.NewRequest("POST", "/api/status-page/unlock", strings.NewReader(`{"password":"site-only"}`))
 	r.Host, r.RemoteAddr = "status.example.com", "198.51.100.8:1"
 	r.Header.Set("X-HLM-Request", "1")
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	if w.Code != 200 {
 		t.Errorf("unlock on the status host: %d %s", w.Code, w.Body)
+	}
+}
+
+// Sites through the API: each domain shows its groups' servers, and checks
+// its own passwords.
+func TestStatusSitesAPI(t *testing.T) {
+	e := setup(t)
+	store, _ := secrets.Open(t.TempDir(), "")
+	sp := statuspage.New(statuspage.Options{Secrets: store, Servers: e.opts.Manager,
+		HashPassword: auth.HashPassword, PasswordMatches: auth.PasswordMatches,
+		Groups: func() (map[string][]string, error) {
+			list, err := e.groups.Groups()
+			out := map[string][]string{}
+			for _, g := range list {
+				out[g.ID] = g.Servers
+			}
+			return out, err
+		}})
+	e.opts.StatusPage = sp
+	h := Handler(e.opts)
+	oldStatus, oldUnlock := statusLimiter, unlockLimiter
+	t.Cleanup(func() { statusLimiter, unlockLimiter = oldStatus, oldUnlock })
+	statusLimiter, unlockLimiter = &statuspage.Limiter{Rate: 100, Burst: 100}, &statuspage.Limiter{Rate: 100, Burst: 100}
+
+	body := `{"enabled":true,"servers":[{"server":"valheim","displayName":"Vikings"},{"server":"plex","displayName":"Plex"}],` +
+		`"sites":[{"hostname":"friends.example.com","groups":["` + e.game.ID + `"],"title":"Friends","viewPassword":"for-friends"}]}`
+	w := call(h, "admin", "PUT", "/api/system/status-page", body, e.keys)
+	if w.Code != 200 || strings.Contains(w.Body.String(), "argon2") || !strings.Contains(w.Body.String(), `"hasViewPassword":true`) {
+		t.Fatalf("save: %d %s", w.Code, w.Body)
+	}
+	at := func(host, method, path, body, cookie string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Host, r.RemoteAddr = host, "198.51.100.9:1"
+		r.Header.Set("X-HLM-Request", "1")
+		if cookie != "" {
+			r.AddCookie(&http.Cookie{Name: statuspage.CookieName, Value: cookie})
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	// hlm's own address: everything, no password.
+	if w := at("hlm.lan", "GET", "/api/status-page", "", ""); w.Code != 200 || !strings.Contains(w.Body.String(), "Plex") {
+		t.Errorf("hlm's address: %d %s", w.Code, w.Body)
+	}
+	// The friends' domain: its password, then only its group's server.
+	if w := at("friends.example.com", "GET", "/api/status-page", "", ""); w.Code != 401 || !strings.Contains(w.Body.String(), `"title":"Friends"`) {
+		t.Errorf("friends, locked: %d %s", w.Code, w.Body)
+	}
+	if w := at("hlm.lan", "POST", "/api/status-page/unlock", `{"password":"for-friends"}`, ""); w.Code == 200 {
+		t.Error("the site's password worked on another address")
+	}
+	w = at("friends.example.com", "POST", "/api/status-page/unlock", `{"password":"for-friends"}`, "")
+	cookie := ""
+	for _, c := range w.Result().Cookies() {
+		cookie = c.Value
+	}
+	w = at("friends.example.com", "GET", "/api/status-page", "", cookie)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "Vikings") || strings.Contains(w.Body.String(), "Plex") {
+		t.Errorf("friends, unlocked: %d %s", w.Code, w.Body)
+	}
+	if w := at("friends.example.com", "GET", "/api/status-page/plex.svg", "", cookie); w.Code != 404 {
+		t.Errorf("another group's badge on the site: %d", w.Code)
+	}
+	// Its domain reaches nothing else of hlm.
+	if w := at("friends.example.com", "GET", "/api/servers", "", ""); w.Code != 404 {
+		t.Errorf("friends, /api/servers: %d", w.Code)
+	}
+	// The settings say which passwords are set, with the site's ID to keep them.
+	w = call(h, "admin", "GET", "/api/system/status-page", "", e.keys)
+	if !strings.Contains(w.Body.String(), `"hostname":"friends.example.com"`) || !strings.Contains(w.Body.String(), `"id":"`) ||
+		strings.Contains(w.Body.String(), "argon2") {
+		t.Errorf("settings: %s", w.Body)
 	}
 }

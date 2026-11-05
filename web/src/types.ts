@@ -1898,8 +1898,22 @@ export interface StatusPageSettings {
   title?: string;
   message?: string;
   servers: StatusPageEntry[];
-  hostname?: string;
   allowFrom?: string[];
+}
+
+/** The status page under its own domain: some server groups' servers, behind its own passwords. */
+export interface StatusSite {
+  id?: string;
+  hostname: string;
+  /** Server group IDs; none shows every server on the page. */
+  groups: string[];
+  title?: string;
+  message?: string;
+  hasViewPassword?: boolean;
+  hasDetailsPassword?: boolean;
+  /** On save: a new password, "" to remove it, or left out to keep it. */
+  viewPassword?: string;
+  detailsPassword?: string;
 }
 
 export interface AddressSuggestion {

@@ -6,6 +6,8 @@ package statuspage
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -55,15 +57,54 @@ type Settings struct {
 	Title   string  `json:"title,omitempty"`
 	Message string  `json:"message,omitempty"`
 	Servers []Entry `json:"servers"`
-	// Hostname, if set, is a name that only reaches the status page: the
-	// rest of hlm answers 404 there (for a tunnel or proxy route).
-	Hostname string `json:"hostname,omitempty"`
 	// AllowFrom, if set, limits the page to these addresses and ranges.
 	AllowFrom []string `json:"allowFrom,omitempty"`
-	// ViewHash and DetailsHash are the passwords' hashes (see access.go);
-	// the API never sends them.
+	// ViewHash and DetailsHash are the passwords' hashes (see access.go) on
+	// any address that isn't one of the Sites; the API never sends them.
 	ViewHash    string `json:"viewHash,omitempty"`
 	DetailsHash string `json:"detailsHash,omitempty"`
+	// Sites are the page under their own domains, each with some of the
+	// servers and its own passwords.
+	Sites []Site `json:"sites"`
+}
+
+// Site is the status page under its own domain: only the page's servers
+// in some server groups, behind its own passwords. A site's domain reaches
+// only the status page: the rest of hlm answers 404 there.
+type Site struct {
+	// ID keeps a site's passwords when its other settings change.
+	ID       string `json:"id"`
+	Hostname string `json:"hostname"`
+	// Groups are the IDs of the server groups whose servers it shows;
+	// none shows every server on the page.
+	Groups []string `json:"groups"`
+	// Title and Message replace the page's, if set.
+	Title       string `json:"title,omitempty"`
+	Message     string `json:"message,omitempty"`
+	ViewHash    string `json:"viewHash,omitempty"`
+	DetailsHash string `json:"detailsHash,omitempty"`
+}
+
+// siteFor is the site a request's Host is for, or nil for the page on any
+// other address.
+func siteFor(set Settings, host string) *Site {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(host, ".")
+	for i := range set.Sites {
+		if strings.EqualFold(set.Sites[i].Hostname, host) {
+			return &set.Sites[i]
+		}
+	}
+	return nil
+}
+
+// IsSiteHost reports whether a Host is one of the sites' domains, which
+// reach only the status page.
+func (s *Service) IsSiteHost(host string) bool {
+	set, err := s.Settings()
+	return err == nil && siteFor(set, host) != nil
 }
 
 // DefaultTitle is the page's title when none is set.
@@ -129,6 +170,8 @@ type Options struct {
 	// (auth.HashPassword and auth.PasswordMatches).
 	HashPassword    func(string) string
 	PasswordMatches func(hash, password string) bool
+	// Groups lists the server groups: their servers by group ID.
+	Groups func() (map[string][]string, error)
 }
 
 // Suggestion is an address the settings form offers.
@@ -145,6 +188,7 @@ type Service struct {
 	mu       sync.Mutex
 	settings *Settings // cached; see current
 	page     *Page
+	names    []string // the server behind each of page.Servers
 	built    time.Time
 }
 
@@ -183,49 +227,122 @@ var hostnamePattern = regexp.MustCompile(`^(?i)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])
 
 // Save checks and stores the settings. parseAllowFrom checks AllowFrom (as
 // the API keys' allow-from lists are checked). The passwords' hashes are
-// kept as they were: change them with SavePasswords.
+// kept as they were (a site's by its ID): change them with SavePasswords.
 func (s *Service) Save(in Settings, parseAllowFrom func([]string) ([]string, error)) (Settings, error) {
+	return s.SavePasswords(in, nil, nil, nil, parseAllowFrom)
+}
+
+// SitePasswords are the password changes for one of the sites.
+type SitePasswords struct {
+	View, Details PasswordChange
+}
+
+// SavePasswords sets, keeps (nil) or removes ("") the passwords along with
+// the other settings: view and details for any address that isn't a site,
+// and sites[i] for in.Sites[i].
+func (s *Service) SavePasswords(in Settings, view, details PasswordChange, sites []SitePasswords, parseAllowFrom func([]string) ([]string, error)) (Settings, error) {
 	cur, err := s.Settings()
 	if err != nil {
 		return Settings{}, err
 	}
 	in.ViewHash, in.DetailsHash = cur.ViewHash, cur.DetailsHash
+	if err := s.applyPasswords(&in.ViewHash, &in.DetailsHash, view, details); err != nil {
+		return Settings{}, err
+	}
+	in.Sites = slices.Clone(in.Sites)
+	for i := range in.Sites {
+		site := &in.Sites[i]
+		site.ViewHash, site.DetailsHash = "", ""
+		for _, old := range cur.Sites {
+			if site.ID != "" && old.ID == site.ID {
+				site.ViewHash, site.DetailsHash = old.ViewHash, old.DetailsHash
+			}
+		}
+		if i < len(sites) {
+			if err := s.applyPasswords(&site.ViewHash, &site.DetailsHash, sites[i].View, sites[i].Details); err != nil {
+				return Settings{}, fmt.Errorf("%s: %w", site.Hostname, err)
+			}
+		}
+	}
 	return s.save(in, parseAllowFrom)
 }
 
-// SavePasswords sets, keeps (nil) or removes ("") the view and details
-// passwords along with the other settings.
-func (s *Service) SavePasswords(in Settings, view, details PasswordChange, parseAllowFrom func([]string) ([]string, error)) (Settings, error) {
-	cur, err := s.Settings()
-	if err != nil {
-		return Settings{}, err
-	}
-	in.ViewHash, in.DetailsHash = cur.ViewHash, cur.DetailsHash
+func (s *Service) applyPasswords(viewHash, detailsHash *string, view, details PasswordChange) error {
 	for _, c := range []struct {
 		change PasswordChange
 		hash   *string
-	}{{view, &in.ViewHash}, {details, &in.DetailsHash}} {
+	}{{view, viewHash}, {details, detailsHash}} {
 		switch {
 		case c.change == nil:
 		case *c.change == "":
 			*c.hash = ""
 		default:
 			if err := checkNewPassword(*c.change); err != nil {
-				return Settings{}, err
+				return err
 			}
 			if s.opts.HashPassword == nil {
-				return Settings{}, errors.New("passwords can't be set here")
+				return errors.New("passwords can't be set here")
 			}
 			*c.hash = s.opts.HashPassword(*c.change)
 		}
 	}
-	return s.save(in, parseAllowFrom)
+	return nil
+}
+
+// checkSites tidies and checks the sites, giving new ones IDs.
+func (s *Service) checkSites(sites []Site) ([]Site, error) {
+	var known map[string][]string
+	if s.opts.Groups != nil {
+		g, err := s.opts.Groups()
+		if err != nil {
+			return nil, err
+		}
+		known = g
+	}
+	hosts := map[string]bool{}
+	out := []Site{}
+	for _, site := range sites {
+		site.Hostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(site.Hostname), "."))
+		site.Title, site.Message = strings.TrimSpace(site.Title), strings.TrimSpace(site.Message)
+		switch {
+		case site.Hostname == "":
+			return nil, errors.New("a site needs its domain, such as status.example.com")
+		case !hostnamePattern.MatchString(site.Hostname) || net.ParseIP(site.Hostname) != nil:
+			return nil, fmt.Errorf("%q: a site's domain is a name like status.example.com", site.Hostname)
+		case hosts[site.Hostname]:
+			return nil, fmt.Errorf("%s is there twice", site.Hostname)
+		case len(site.Title) > maxText || len(site.Message) > maxMessage:
+			return nil, fmt.Errorf("%s: the title is up to %d characters, the message %d", site.Hostname, maxText, maxMessage)
+		}
+		hosts[site.Hostname] = true
+		groups := []string{}
+		for _, g := range site.Groups {
+			if g == "" || slices.Contains(groups, g) {
+				continue
+			}
+			if known != nil {
+				if _, ok := known[g]; !ok {
+					return nil, fmt.Errorf("%s: there's no server group %q", site.Hostname, g)
+				}
+			}
+			groups = append(groups, g)
+		}
+		site.Groups = groups
+		if site.ID == "" {
+			b := make([]byte, 6)
+			if _, err := rand.Read(b); err != nil {
+				return nil, err
+			}
+			site.ID = hex.EncodeToString(b)
+		}
+		out = append(out, site)
+	}
+	return out, nil
 }
 
 func (s *Service) save(in Settings, parseAllowFrom func([]string) ([]string, error)) (Settings, error) {
 	in.Title = strings.TrimSpace(in.Title)
 	in.Message = strings.TrimSpace(in.Message)
-	in.Hostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(in.Hostname), "."))
 	switch {
 	case len(in.Title) > maxText:
 		return Settings{}, fmt.Errorf("the title is up to %d characters", maxText)
@@ -233,9 +350,14 @@ func (s *Service) save(in Settings, parseAllowFrom func([]string) ([]string, err
 		return Settings{}, fmt.Errorf("the message is up to %d characters", maxMessage)
 	case len(in.Servers) > maxServers:
 		return Settings{}, fmt.Errorf("up to %d servers", maxServers)
-	case in.Hostname != "" && (!hostnamePattern.MatchString(in.Hostname) || net.ParseIP(in.Hostname) != nil):
-		return Settings{}, errors.New("the hostname is a name like status.example.com")
+	case len(in.Sites) > maxServers:
+		return Settings{}, fmt.Errorf("up to %d sites", maxServers)
 	}
+	sites, err := s.checkSites(in.Sites)
+	if err != nil {
+		return Settings{}, err
+	}
+	in.Sites = sites
 	if parseAllowFrom != nil {
 		list, err := parseAllowFrom(in.AllowFrom)
 		if err != nil {
@@ -311,9 +433,10 @@ func (s *Service) ForgetServer(name string) error {
 	return err
 }
 
-// Page builds the public page, or reuses one built in the last CacheFor.
-// It's ErrDisabled while the page is off.
-func (s *Service) Page(ctx context.Context, now time.Time) (Page, error) {
+// Page builds the public page as it is on a host (a site's domain, or any
+// other), reusing the servers' states for CacheFor. It's ErrDisabled while
+// the page is off.
+func (s *Service) Page(ctx context.Context, host string, now time.Time) (Page, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	set, err := s.current()
@@ -323,27 +446,74 @@ func (s *Service) Page(ctx context.Context, now time.Time) (Page, error) {
 	if !set.Enabled {
 		return Page{}, ErrDisabled
 	}
-	if s.page != nil && now.Sub(s.built) < CacheFor {
-		return *s.page, nil
+	if s.page == nil || now.Sub(s.built) >= CacheFor {
+		if err := s.build(ctx, set, now); err != nil {
+			return Page{}, err
+		}
 	}
+	p := *s.page
+	p.Title, p.Message = set.Title, set.Message
+	site := siteFor(set, host)
+	if site != nil {
+		if site.Title != "" {
+			p.Title = site.Title
+		}
+		if site.Message != "" {
+			p.Message = site.Message
+		}
+		if len(site.Groups) > 0 {
+			in := s.groupServers(site.Groups)
+			p.Servers = []Server{}
+			for i, srv := range s.page.Servers {
+				if in[s.names[i]] {
+					p.Servers = append(p.Servers, srv)
+				}
+			}
+		}
+	}
+	if p.Title == "" {
+		p.Title = DefaultTitle
+	}
+	return p, nil
+}
+
+// groupServers are the servers in any of the groups.
+func (s *Service) groupServers(groups []string) map[string]bool {
+	out := map[string]bool{}
+	if s.opts.Groups == nil {
+		return out
+	}
+	all, err := s.opts.Groups()
+	if err != nil {
+		return out // show nothing rather than everything
+	}
+	for _, g := range groups {
+		for _, name := range all[g] {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+// build works out every server's public view, for every host's page.
+func (s *Service) build(ctx context.Context, set Settings, now time.Time) error {
 	list, err := s.opts.Servers.List(ctx)
 	if err != nil {
-		return Page{}, err
+		return err
 	}
 	byName := map[string]manager.Server{}
 	for _, srv := range list {
 		byName[srv.Name] = srv
 	}
-	p := Page{Title: set.Title, Message: set.Message, Servers: []Server{}, Updated: now.UTC()}
-	if p.Title == "" {
-		p.Title = DefaultTitle
-	}
+	p := Page{Servers: []Server{}, Updated: now.UTC()}
+	names := []string{}
 	for _, e := range set.Servers {
 		srv, exists := byName[e.Server]
 		p.Servers = append(p.Servers, s.server(e, srv, exists))
+		names = append(names, e.Server)
 	}
-	s.page, s.built = &p, now
-	return p, nil
+	s.page, s.names, s.built = &p, names, now
+	return nil
 }
 
 // server is one entry's public view: only allow-listed values, copied one
@@ -404,8 +574,8 @@ func (s *Service) server(e Entry, srv manager.Server, exists bool) Server {
 }
 
 // ServerBySlug returns one server of the page, for its JSON and badge.
-func (s *Service) ServerBySlug(ctx context.Context, slug string, now time.Time) (Server, error) {
-	p, err := s.Page(ctx, now)
+func (s *Service) ServerBySlug(ctx context.Context, host, slug string, now time.Time) (Server, error) {
+	p, err := s.Page(ctx, host, now)
 	if err != nil {
 		return Server{}, err
 	}

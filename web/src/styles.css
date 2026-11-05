@@ -4153,3 +4153,9 @@ pre .muted {
   max-width: none;
   margin-top: 0.8rem;
 }
+
+.status-site-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1rem;
+}

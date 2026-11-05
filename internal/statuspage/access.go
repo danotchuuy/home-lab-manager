@@ -66,21 +66,32 @@ func (s *Service) key() ([]byte, error) {
 	return k, s.opts.Secrets.Set(secretKeyName, k)
 }
 
-// sign makes a cookie value for a level until expiry. It's bound to the
-// level's password hash, so a new password ends it.
-func (s *Service) sign(level int, expiry time.Time, hash string) (string, error) {
+// sign makes a cookie value for a level until expiry, on a site ("" for
+// any other address). It's bound to the site and the level's password
+// hash, so it's no use on another site, and a new password ends it.
+func (s *Service) sign(level int, expiry time.Time, site, hash string) (string, error) {
 	k, err := s.key()
 	if err != nil {
 		return "", err
 	}
 	payload := strconv.Itoa(level) + "." + strconv.FormatInt(expiry.Unix(), 10)
 	m := hmac.New(sha256.New, k)
-	m.Write([]byte(payload + "|" + hash))
+	m.Write([]byte(payload + "|" + site + "|" + hash))
 	return payload + "." + base64.RawURLEncoding.EncodeToString(m.Sum(nil)), nil
 }
 
-// levelOf reads a cookie value: the level it gives, or LevelNone.
-func (s *Service) levelOf(set Settings, cookie string, now time.Time) int {
+// passwords are the hashes that apply on a host, and the site ID they're
+// bound to.
+func passwords(set Settings, host string) (scope, view, details string) {
+	if site := siteFor(set, host); site != nil {
+		return site.ID, site.ViewHash, site.DetailsHash
+	}
+	return "", set.ViewHash, set.DetailsHash
+}
+
+// levelOf reads a cookie value: the level it gives on a host, or LevelNone.
+func (s *Service) levelOf(set Settings, host, cookie string, now time.Time) int {
+	scope, viewHash, detailsHash := passwords(set, host)
 	parts := strings.Split(cookie, ".")
 	if len(parts) != 3 {
 		return LevelNone
@@ -90,14 +101,14 @@ func (s *Service) levelOf(set Settings, cookie string, now time.Time) int {
 	if err1 != nil || err2 != nil || now.Unix() > exp {
 		return LevelNone
 	}
-	hash := set.ViewHash
+	hash := viewHash
 	if level == LevelDetails {
-		hash = set.DetailsHash
+		hash = detailsHash
 	}
 	if hash == "" || (level != LevelView && level != LevelDetails) {
 		return LevelNone
 	}
-	want, err := s.sign(level, time.Unix(exp, 0), hash)
+	want, err := s.sign(level, time.Unix(exp, 0), scope, hash)
 	if err != nil || !hmac.Equal([]byte(want), []byte(cookie)) {
 		return LevelNone
 	}
@@ -115,31 +126,34 @@ type Access struct {
 	Unlocked bool `json:"unlocked"`
 }
 
-// AccessFor works out a visitor's access from their cookie.
-func (s *Service) AccessFor(cookie string, now time.Time) (Access, error) {
+// AccessFor works out a visitor's access on a host from their cookie: the
+// passwords are the host's site's, or the page's on any other address.
+func (s *Service) AccessFor(host, cookie string, now time.Time) (Access, error) {
 	set, err := s.Settings()
 	if err != nil {
 		return Access{}, err
 	}
-	return s.access(set, cookie, now), nil
+	return s.access(set, host, cookie, now), nil
 }
 
-func (s *Service) access(set Settings, cookie string, now time.Time) Access {
-	got := s.levelOf(set, cookie, now)
+func (s *Service) access(set Settings, host, cookie string, now time.Time) Access {
+	_, viewHash, detailsHash := passwords(set, host)
+	got := s.levelOf(set, host, cookie, now)
 	level := got
-	if set.ViewHash == "" && level < LevelView {
+	if viewHash == "" && level < LevelView {
 		level = LevelView
 	}
 	// Without a details password, whoever sees the page sees the details.
-	if set.DetailsHash == "" && level >= LevelView {
+	if detailsHash == "" && level >= LevelView {
 		level = LevelDetails
 	}
 	return Access{Level: level, ViewLocked: level < LevelView, DetailsLocked: level < LevelDetails, Unlocked: got > LevelNone}
 }
 
-// Unlock checks a password: the details one (which also lets the page be
-// seen) or the view one. It returns the level and a cookie value for it.
-func (s *Service) Unlock(password string, now time.Time) (int, string, time.Time, error) {
+// Unlock checks a password against a host's: the details one (which also
+// lets the page be seen) or the view one. It returns the level and a
+// cookie value for it.
+func (s *Service) Unlock(host, password string, now time.Time) (int, string, time.Time, error) {
 	set, err := s.Settings()
 	if err != nil {
 		return 0, "", time.Time{}, err
@@ -147,20 +161,21 @@ func (s *Service) Unlock(password string, now time.Time) (int, string, time.Time
 	if !set.Enabled {
 		return 0, "", time.Time{}, ErrDisabled
 	}
+	scope, viewHash, detailsHash := passwords(set, host)
 	level, hash := LevelNone, ""
 	// Check both, so the time taken doesn't say which matched.
-	details := set.DetailsHash != "" && s.matches(set.DetailsHash, password)
-	view := set.ViewHash != "" && s.matches(set.ViewHash, password)
+	details := detailsHash != "" && s.matches(detailsHash, password)
+	view := viewHash != "" && s.matches(viewHash, password)
 	switch {
 	case details:
-		level, hash = LevelDetails, set.DetailsHash
+		level, hash = LevelDetails, detailsHash
 	case view:
-		level, hash = LevelView, set.ViewHash
+		level, hash = LevelView, viewHash
 	default:
 		return 0, "", time.Time{}, ErrWrongPassword
 	}
 	expiry := now.Add(UnlockFor)
-	token, err := s.sign(level, expiry, hash)
+	token, err := s.sign(level, expiry, scope, hash)
 	return level, token, expiry, err
 }
 

@@ -29,23 +29,23 @@ func TestAccessLevels(t *testing.T) {
 	}
 	check := func(name, cookie string, w want) {
 		t.Helper()
-		a, err := s.AccessFor(cookie, now)
+		a, err := s.AccessFor("", cookie, now)
 		if err != nil || a.Level != w.level || a.ViewLocked != w.viewLocked || a.DetailsLocked != w.detailsLocked {
 			t.Errorf("%s: %+v, %v", name, a, err)
 		}
 	}
 
 	// No passwords: everything, to everyone.
-	s.SavePasswords(base, nil, nil, nil)
+	s.SavePasswords(base, nil, nil, nil, nil)
 	check("open", "", want{LevelDetails, false, false})
-	if _, _, _, err := s.Unlock("anything", now); !errors.Is(err, ErrWrongPassword) {
+	if _, _, _, err := s.Unlock("", "anything", now); !errors.Is(err, ErrWrongPassword) {
 		t.Errorf("unlock with no passwords: %v", err)
 	}
 
 	// Only a details password: the page is public, the details aren't.
-	s.SavePasswords(base, nil, ptr("details-pw"), nil)
+	s.SavePasswords(base, nil, ptr("details-pw"), nil, nil)
 	check("details only", "", want{LevelView, false, true})
-	lvl, tok, _, err := s.Unlock("details-pw", now)
+	lvl, tok, _, err := s.Unlock("", "details-pw", now)
 	if err != nil || lvl != LevelDetails {
 		t.Fatalf("unlock details: %d %v", lvl, err)
 	}
@@ -53,27 +53,27 @@ func TestAccessLevels(t *testing.T) {
 
 	// Both: nothing without one; the view password sees the page without
 	// details; the details password sees everything.
-	s.SavePasswords(base, ptr("view-pw"), nil, nil)
+	s.SavePasswords(base, ptr("view-pw"), nil, nil, nil)
 	check("both, none given", "", want{LevelNone, true, true})
 	check("both, details cookie from before", tok, want{LevelDetails, false, false})
-	_, viewTok, _, err := s.Unlock("view-pw", now)
+	_, viewTok, _, err := s.Unlock("", "view-pw", now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	check("both, view given", viewTok, want{LevelView, false, true})
-	if _, _, _, err := s.Unlock("nope", now); !errors.Is(err, ErrWrongPassword) {
+	if _, _, _, err := s.Unlock("", "nope", now); !errors.Is(err, ErrWrongPassword) {
 		t.Errorf("wrong password: %v", err)
 	}
 
 	// Cookies end with their password, their time, or any tampering.
 	check("expired", viewTok, want{LevelView, false, true})
-	if a, _ := s.AccessFor(viewTok, now.Add(UnlockFor+time.Minute)); !a.ViewLocked {
+	if a, _ := s.AccessFor("", viewTok, now.Add(UnlockFor+time.Minute)); !a.ViewLocked {
 		t.Error("expired cookie still works")
 	}
-	if a, _ := s.AccessFor(strings.Replace(viewTok, "1.", "2.", 1), now); !a.ViewLocked {
+	if a, _ := s.AccessFor("", strings.Replace(viewTok, "1.", "2.", 1), now); !a.ViewLocked {
 		t.Error("tampered cookie works")
 	}
-	s.SavePasswords(base, ptr("new-view-pw"), nil, nil)
+	s.SavePasswords(base, ptr("new-view-pw"), nil, nil, nil)
 	check("after a new view password", viewTok, want{LevelNone, true, true})
 	check("the details cookie still works", tok, want{LevelDetails, false, false})
 
@@ -82,9 +82,9 @@ func TestAccessLevels(t *testing.T) {
 	if set, _ := s.Settings(); set.ViewHash != "h:new-view-pw" || set.DetailsHash != "h:details-pw" {
 		t.Errorf("passwords after Save: %q %q", set.ViewHash, set.DetailsHash)
 	}
-	s.SavePasswords(base, ptr(""), nil, nil)
+	s.SavePasswords(base, ptr(""), nil, nil, nil)
 	check("view password removed", "", want{LevelView, false, true})
-	if _, err := s.SavePasswords(base, ptr("abc"), nil, nil); err == nil {
+	if _, err := s.SavePasswords(base, ptr("abc"), nil, nil, nil); err == nil {
 		t.Error("a 3-character password")
 	}
 }
@@ -92,8 +92,8 @@ func TestAccessLevels(t *testing.T) {
 func TestRedact(t *testing.T) {
 	s := withPasswords(t)
 	s.SavePasswords(Settings{Enabled: true, Servers: []Entry{{Server: "valheim", ShowPlayers: true, ShowNames: true, Address: "play.example.com:2456", Hint: "ask"}}},
-		nil, ptr("details-pw"), nil)
-	p, err := s.Page(context.Background(), time.Now())
+		nil, ptr("details-pw"), nil, nil)
+	p, err := s.Page(context.Background(), "", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

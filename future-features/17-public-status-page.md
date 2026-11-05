@@ -19,6 +19,8 @@
 > - **Added: two optional passwords** (requested): one to see the page, one for names, addresses and notes, as argon2id
 >   hashes; a visitor gets an HMAC-signed, HttpOnly cookie for their level (bound to that password's hash, so changing
 >   it ends the cookie), and the page is cached in full and redacted per visitor.
+> - **Added: sites** (requested), replacing the single status-only hostname: each domain shows the page's servers in
+>   chosen server groups, with its own title, message and passwords; cookies are bound to their site.
 > - **The SPA route** is handled before the app (`main.tsx`), so `/status` loads without the header, sign-in or any
 >   admin API call.
 

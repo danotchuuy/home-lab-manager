@@ -94,6 +94,7 @@ import type {
   HostInspection,
   AddressSuggestion,
   StatusPageSettings,
+  StatusSite,
   CleanupPlan,
   CleanupRequest,
   CleanupResult,
@@ -270,6 +271,7 @@ export async function download(path: string) {
 
 export interface StatusPageSettingsView {
   settings: StatusPageSettings;
+  sites: StatusSite[];
   hasViewPassword: boolean;
   hasDetailsPassword: boolean;
 }
@@ -486,7 +488,7 @@ export const api = {
     json<CleanupSettings>("/api/system/cleanup", { method: "PUT", body: JSON.stringify(s) }),
   statusPageSettings: () => json<StatusPageSettingsView>("/api/system/status-page"),
   /** viewPassword / detailsPassword: a new password, "" to remove it, or left out to keep it. */
-  saveStatusPage: (settings: StatusPageSettings & { viewPassword?: string; detailsPassword?: string }) =>
+  saveStatusPage: (settings: StatusPageSettings & { viewPassword?: string; detailsPassword?: string; sites: StatusSite[] }) =>
     json<StatusPageSettingsView>("/api/system/status-page", { method: "PUT", body: JSON.stringify(settings) }),
   statusPageSuggest: (server: string) =>
     json<AddressSuggestion[]>(`/api/system/status-page/suggest?server=${encodeURIComponent(server)}`),

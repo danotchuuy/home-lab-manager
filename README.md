@@ -1413,12 +1413,17 @@ Status page** and add the servers to show; it's at `/status`.
   The response is built from its own fields only.
 - **Badges** for a README or Discord: `/api/status-page/<name>.svg` ("Viking world | 3/10 online"), and the same as
   JSON at `.json`. The settings show each server's URL and a Markdown snippet.
-- **Own hostname (optional):** a name such as `status.example.com` that reaches only the status page: there, every
-  other path (the rest of the web UI and API, even with a token) answers 404 and `/` goes to `/status`. Point a
-  [Cloudflare Tunnel](#web-addresses-with-cloudflare-tunnel) route (to hlm's address and port) or a proxy at it.
+- **Sites (optional):** the page under its own domains, such as `friends.example.com` for a group of friends and
+  `status.example.com` for everyone. Each site shows the servers on the page that are in the
+  [server groups](#roles-and-server-groups) you tick (all of them if you tick none), can have its own title and
+  message, and has **its own two passwords** (or none): on a site's domain only that site's passwords work, and a
+  password given on one site doesn't open another. A site's domain reaches only the status page: every other path (the
+  rest of the web UI and API, even with a token) answers 404 there, and `/` goes to `/status`. Point a
+  [Cloudflare Tunnel](#web-addresses-with-cloudflare-tunnel) route (to hlm's address and port) or a proxy for each
+  domain at hlm. On any other address, such as hlm's own, the page shows every server with the page-wide passwords.
 - **Only from (optional):** addresses or ranges, such as a VPN's, that may see it. Behind a tunnel or proxy that's the
   tunnel's or proxy's address.
-- **Passwords (optional), two of them:** one to see the page at all, and one for the details: players' names, the
+- **Passwords (optional), two of them** (page-wide, and per site): one to see the page at all, and one for the details: players' names, the
   addresses to connect to and your notes. Either can be used alone (with only the second, the page is public but the
   details aren't), and the details password opens the page too. A visitor types one once; a signed cookie (HttpOnly,
   30 days) remembers it in that browser until it's changed, and **Forget the password on this device** drops it.
@@ -1916,7 +1921,7 @@ when the `HLM_*` one isn't set.
 | `GET /api/status-page`                         | The [public status page](#public-status-page) (no sign-in; 404 while it's off). |
 | `GET /api/status-page/{name}.json`, `.svg`     | One server of the page, as JSON or a badge.                                       |
 | `POST /api/status-page/unlock`, `.../lock`     | `{password}`: give the page's view or details password (sets the `hlm_status` cookie; send `X-HLM-Request: 1`), or forget it. |
-| `GET/PUT /api/system/status-page`              | The status page's settings `{enabled, title, message, servers: [{server, displayName, showPlayers, showNames, showVersion, address, hint}], hostname, allowFrom}`, plus `viewPassword`/`detailsPassword` on `PUT` (a new one; `""` removes it; left out keeps it). Answers `hasViewPassword`/`hasDetailsPassword`, never the passwords. Admins. |
+| `GET/PUT /api/system/status-page`              | The status page's settings `{enabled, title, message, servers: [{server, displayName, showPlayers, showNames, showVersion, address, hint}], allowFrom, sites: [{id, hostname, groups, title, message}]}`, plus `viewPassword`/`detailsPassword` on `PUT`, page-wide and on each site (a new one; `""` removes it; left out keeps it; a site keeps its passwords by its `id`). Answers `hasViewPassword`/`hasDetailsPassword` (and the same on each of `sites`), never the passwords. Admins. |
 | `GET /api/system/status-page/suggest?server=`  | Public addresses hlm can suggest for a server (from the proxy and UniFi). Admins. |
 | `GET /api/hosts`                               | [Docker hosts](#more-docker-hosts) and whether they could be reached. Admins also get how each is reached (never a client key) and hlm's SSH public key. |
 | `POST /api/hosts/test`                         | Connect to a host as given, without saving it: its Docker version, or (for SSH) the host key to confirm (`hostKey`, `hostKeyFingerprint`). Admins. |
