@@ -124,27 +124,8 @@ func (u *Updater) applyContainer(ctx context.Context, rel *Release, emit func(Ev
 	// copy of its config read at startup, and hand it to the helper too.
 	oldImg := *u.ownImage
 	oldJSON, _ := json.Marshal(oldImg)
-	body, _ := cloneConfig(raw, oldImg, image, img)
-	body["Entrypoint"] = img.Config.Entrypoint
-	body["Cmd"] = []string{HelperCommand, u.containerID, image, u.cfg.Version, rel.Version,
-		base64.StdEncoding.EncodeToString(oldJSON)}
-	labels, _ := body["Labels"].(map[string]any)
-	if labels == nil {
-		labels = map[string]any{}
-	}
-	for k := range labels {
-		if strings.HasPrefix(k, "com.docker.compose.") {
-			delete(labels, k) // don't let compose think the helper is its service
-		}
-	}
-	labels[labelHelper] = "true"
-	body["Labels"] = labels
-	delete(body, "ExposedPorts")
-	delete(body, "Healthcheck")
-	hc, _ := body["HostConfig"].(map[string]any)
-	delete(hc, "PortBindings")
-	hc["RestartPolicy"] = map[string]any{"Name": "no"}
-	delete(body, "NetworkingConfig") // the default endpoint is enough to reach Docker
+	body := helperConfig(raw, oldImg, image, img, []string{HelperCommand, u.containerID, image, u.cfg.Version, rel.Version,
+		base64.StdEncoding.EncodeToString(oldJSON)})
 
 	name := fmt.Sprintf("hlm-selfupdate-%d", time.Now().Unix())
 	emit(Event{Stage: "install", Message: "Starting update helper " + name})
@@ -255,6 +236,40 @@ func RunHelper(ctx context.Context, d *docker.Client, dataDir, oldID, newImage, 
 	}
 	log("updated %s to %s", name, to)
 	return nil
+}
+
+// helperConfig is the create request for the update helper: a copy of
+// hlm's container (same mounts, Docker access and environment) running cmd
+// on the new image, with no ports, no restart policy, and nothing that has
+// to be unique to a container: hlm is still running while the helper
+// starts, so a fixed MAC or IP address would be taken.
+func helperConfig(raw map[string]any, oldImg docker.Image, image string, img docker.Image, cmd []string) map[string]any {
+	body, _ := cloneConfig(raw, oldImg, image, img)
+	body["Entrypoint"] = img.Config.Entrypoint
+	body["Cmd"] = cmd
+	labels, _ := body["Labels"].(map[string]any)
+	if labels == nil {
+		labels = map[string]any{}
+	}
+	for k := range labels {
+		if strings.HasPrefix(k, "com.docker.compose.") {
+			delete(labels, k) // don't let compose think the helper is its service
+		}
+	}
+	labels[labelHelper] = "true"
+	body["Labels"] = labels
+	delete(body, "ExposedPorts")
+	delete(body, "Healthcheck")
+	// Older API versions report a fixed MAC address (compose's mac_address,
+	// docker run --mac-address) here as well as on the network.
+	delete(body, "MacAddress")
+	hc, _ := body["HostConfig"].(map[string]any)
+	delete(hc, "PortBindings")
+	hc["RestartPolicy"] = map[string]any{"Name": "no"}
+	// The default endpoint is enough to reach Docker; without the network
+	// settings, it has no fixed IP or MAC address.
+	delete(body, "NetworkingConfig")
+	return body
 }
 
 // cloneConfig turns a container's inspect output into a create request for

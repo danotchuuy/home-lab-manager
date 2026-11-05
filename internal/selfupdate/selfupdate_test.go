@@ -307,3 +307,49 @@ func TestImageForDockerHub(t *testing.T) {
 		t.Error("sameRepo is wrong")
 	}
 }
+
+// hlm with a fixed MAC address on its LAN (macvlan) network: the helper,
+// started while hlm still runs, mustn't take it, and the new hlm keeps it.
+func TestHelperConfigFixedMAC(t *testing.T) {
+	var raw map[string]any
+	json.Unmarshal([]byte(`{
+		"Id": "`+strings.Repeat("d", 64)+`",
+		"Name": "/home-lab-manager",
+		"Config": {"Image": "ghcr.io/me/hlm:latest", "MacAddress": "16:02:2e:18:52:7f",
+			"Labels": {"com.docker.compose.project": "hlm"}, "ExposedPorts": {"8080/tcp": {}}},
+		"HostConfig": {"NetworkMode": "lan", "PortBindings": {"8080/tcp": [{"HostPort": "8080"}]},
+			"RestartPolicy": {"Name": "unless-stopped"}},
+		"NetworkSettings": {"Networks": {
+			"lan": {"MacAddress": "16:02:2e:18:52:7f", "IPAMConfig": {"IPv4Address": "192.168.11.5"}},
+			"hlm_default": {"MacAddress": "02:42:ac:14:00:02"}
+		}}
+	}`), &raw)
+	var newImg docker.Image
+	newImg.Config.Entrypoint = []string{"/hlm"}
+	body := helperConfig(raw, docker.Image{}, "ghcr.io/me/hlm:latest", newImg, []string{HelperCommand, "x"})
+	if _, ok := body["MacAddress"]; ok {
+		t.Error("the helper copied hlm's MAC address")
+	}
+	if _, ok := body["NetworkingConfig"]; ok {
+		t.Error("the helper copied hlm's network settings (fixed IP and MAC)")
+	}
+	hc := body["HostConfig"].(map[string]any)
+	if hc["PortBindings"] != nil || fmt.Sprint(hc["RestartPolicy"]) != "map[Name:no]" {
+		t.Errorf("host config = %v", hc)
+	}
+	labels := body["Labels"].(map[string]any)
+	if labels[labelHelper] != "true" || labels["com.docker.compose.project"] != nil {
+		t.Errorf("labels = %v", labels)
+	}
+	if fmt.Sprint(body["Cmd"]) != "["+HelperCommand+" x]" {
+		t.Errorf("cmd = %v", body["Cmd"])
+	}
+
+	// The replacement is created once hlm has stopped: it keeps the MAC
+	// and the address.
+	clone, _ := cloneConfig(raw, docker.Image{}, "ghcr.io/me/hlm:latest", docker.Image{})
+	lan := clone["NetworkingConfig"].(map[string]any)["EndpointsConfig"].(map[string]any)["lan"].(map[string]any)
+	if lan["MacAddress"] != "16:02:2e:18:52:7f" || lan["IPAMConfig"] == nil || clone["MacAddress"] != "16:02:2e:18:52:7f" {
+		t.Errorf("new container's network = %v, mac %v", lan, clone["MacAddress"])
+	}
+}
