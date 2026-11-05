@@ -92,6 +92,10 @@ import type {
   DockerHostInput,
   DockerVersion,
   HostInspection,
+  AddressSuggestion,
+  StatusPageSettings,
+  StatusSite,
+  ProxyStatusSites,
   CleanupPlan,
   CleanupRequest,
   CleanupResult,
@@ -264,6 +268,13 @@ export async function download(path: string) {
   }
   const { url } = await json<{ url: string }>("/api/auth/download-ticket", { method: "POST", body: JSON.stringify({ url: path }) });
   window.location.href = url;
+}
+
+export interface StatusPageSettingsView {
+  settings: StatusPageSettings;
+  sites: StatusSite[];
+  hasViewPassword: boolean;
+  hasDetailsPassword: boolean;
 }
 
 export type BulkAction = "start" | "stop" | "restart" | "update" | "backup";
@@ -476,6 +487,12 @@ export const api = {
   cleanupSettings: () => json<CleanupSettings>("/api/system/cleanup"),
   saveCleanupSettings: (s: Pick<CleanupSettings, "keepOldImages" | "weekly">) =>
     json<CleanupSettings>("/api/system/cleanup", { method: "PUT", body: JSON.stringify(s) }),
+  statusPageSettings: () => json<StatusPageSettingsView>("/api/system/status-page"),
+  /** viewPassword / detailsPassword: a new password, "" to remove it, or left out to keep it. */
+  saveStatusPage: (settings: StatusPageSettings & { viewPassword?: string; detailsPassword?: string; sites: StatusSite[] }) =>
+    json<StatusPageSettingsView>("/api/system/status-page", { method: "PUT", body: JSON.stringify(settings) }),
+  statusPageSuggest: (server: string) =>
+    json<AddressSuggestion[]>(`/api/system/status-page/suggest?server=${encodeURIComponent(server)}`),
   /** Makes hlm's SSH key, if there isn't one. */
   hostsSSHKey: () => json<SSHKeyInfo>("/api/hosts/ssh-key", { method: "POST" }),
   reconfigure: (id: string, req: DeployRequest, onEvent: (e: DeployEvent) => void) =>
@@ -581,7 +598,13 @@ export const api = {
     json<{ removed: number }>(`/api/servers/${encodeURIComponent(id)}/portforward`, { method: "DELETE" }),
 
   proxy: () =>
-    json<{ configured: boolean; settings: ProxySettings; key: SSHKeyInfo | null; upstream: UpstreamState }>("/api/proxy"),
+    json<{
+      configured: boolean;
+      settings: ProxySettings;
+      key: SSHKeyInfo | null;
+      upstream: UpstreamState;
+      statusSites?: ProxyStatusSites | null;
+    }>("/api/proxy"),
   checkProxyWAN: () => json<UpstreamState>("/api/proxy/wan-check", { method: "POST" }),
   unifiWAN: (wan: string) => json<{ wan: string; address: string }>(`/api/integrations/unifi/wan?wan=${wan}`),
   saveProxy: (st: ProxySettings) => json<ProxySettings>("/api/proxy", { method: "PUT", body: JSON.stringify(st) }),
@@ -594,7 +617,7 @@ export const api = {
   installNginx: () => json<{ output: string }>("/api/proxy/install", { method: "POST" }),
   previewProxy: () => json<{ config: string; servers: ProxiedServer[]; path: string }>("/api/proxy/preview"),
   applyProxy: () =>
-    json<{ config: string; output: string; servers: ProxiedServer[]; firewall?: FirewallSync }>("/api/proxy/apply", {
+    json<{ config: string; output: string; servers: ProxiedServer[]; firewall?: FirewallSync; status?: ProxyStatusSites }>("/api/proxy/apply", {
       method: "POST",
     }),
   planAdoption: () => json<Adoption>("/api/proxy/adopt"),

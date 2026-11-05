@@ -550,3 +550,11 @@ func clientIP(r *http.Request) string {
 	}
 	return r.RemoteAddr
 }
+
+// HashPassword hashes a password the way local accounts' are (argon2id),
+// for other features' passwords, such as the status page's.
+func HashPassword(password string) string { return hashPassword(password) }
+
+// PasswordMatches checks a password against a hash from HashPassword, in
+// constant time.
+func PasswordMatches(hash, password string) bool { return passwordMatches(hash, password) }

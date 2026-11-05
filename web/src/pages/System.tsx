@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { StatusPageSettings } from "../components/StatusPageSettings";
 import { useAdmin } from "../access";
 import { api } from "../api";
 import { Ago, Overview, Spinner } from "../components/common";
@@ -332,6 +333,11 @@ export function SystemPage() {
       <section className="card" id="api-keys">
         <h2>API keys</h2>
         <APIKeys />
+      </section>
+
+      <section className="card" id="status-page">
+        <h2>Status page</h2>
+        <StatusPageSettings />
       </section>
 
       <section className="card">

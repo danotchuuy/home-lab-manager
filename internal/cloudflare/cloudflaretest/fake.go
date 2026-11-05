@@ -31,6 +31,10 @@ type Fake struct {
 	// NoTunnels refuses the tunnel API, as for a token without Cloudflare
 	// Tunnel permissions.
 	NoTunnels bool
+	// SSL is each zone's SSL/TLS mode ("full" if unset).
+	SSL map[string]string
+	// Certificates are the Origin CA certificates made.
+	Certificates []cloudflare.OriginCertificate
 }
 
 type tunnel struct {
@@ -157,6 +161,31 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		f.serveTunnels(w, r, parts[1], parts[3:])
 	case len(parts) >= 3 && parts[0] == "zones" && parts[2] == "dns_records":
 		f.serveRecords(w, r, parts[1], parts[3:])
+	case r.Method == "GET" && len(parts) == 4 && parts[0] == "zones" && parts[2] == "settings" && parts[3] == "ssl":
+		mode := f.SSL[parts[1]]
+		if mode == "" {
+			mode = "full"
+		}
+		reply(w, 200, map[string]any{"id": "ssl", "value": mode})
+	case r.Method == "GET" && r.URL.Path == "/ips":
+		reply(w, 200, cloudflare.IPRanges{IPv4: []string{"173.245.48.0/20", "104.16.0.0/13"}, IPv6: []string{"2400:cb00::/32"}})
+	case r.Method == "POST" && r.URL.Path == "/certificates":
+		var in struct {
+			CSR       string   `json:"csr"`
+			Hostnames []string `json:"hostnames"`
+			Days      int      `json:"requested_validity"`
+		}
+		json.NewDecoder(r.Body).Decode(&in)
+		if !strings.Contains(in.CSR, "CERTIFICATE REQUEST") || len(in.Hostnames) == 0 {
+			reply(w, 400, nil, "bad request")
+			return
+		}
+		f.nextID++
+		c := cloudflare.OriginCertificate{ID: fmt.Sprintf("cert%d", f.nextID), Hostnames: in.Hostnames,
+			Certificate: "-----BEGIN CERTIFICATE-----\nFAKE " + strings.Join(in.Hostnames, ",") + "\n-----END CERTIFICATE-----\n",
+			ExpiresOn:   time.Now().AddDate(0, 0, in.Days).UTC().Format("2006-01-02 15:04:05 -0700 MST")}
+		f.Certificates = append(f.Certificates, c)
+		reply(w, 200, c)
 	default:
 		reply(w, 404, nil, "Not found")
 	}

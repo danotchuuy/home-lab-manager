@@ -635,6 +635,10 @@ select:disabled {
   font-size: 0.85rem;
 }
 
+.warn-text {
+  color: var(--warn);
+}
+
 /* Deploy progress */
 
 .deploy-progress {
@@ -4060,4 +4064,112 @@ kbd {
 /* Logs are on a dark background in both themes. */
 pre .muted {
   color: #9aa3af;
+}
+
+/* Public status page */
+.status-page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 2rem 1rem 3rem;
+}
+.status-page h1 {
+  margin-top: 0;
+}
+.status-list {
+  display: grid;
+  gap: 0.8rem;
+}
+.status-card h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+.status-head {
+  display: flex;
+  gap: 0.8rem;
+  align-items: center;
+}
+.status-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  object-fit: cover;
+  display: grid;
+  place-items: center;
+  background: var(--surface-2);
+  font-size: 1.6rem;
+  flex: none;
+}
+.status-pill {
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.2rem 0.65rem;
+  border-radius: 999px;
+  white-space: nowrap;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.status-pill.online,
+.status-pill.running {
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+  color: var(--success);
+}
+.status-pill.starting {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+}
+.status-pill.offline {
+  color: var(--danger);
+}
+.status-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  margin-top: 0.6rem;
+}
+.status-connect {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+.status-card > .small {
+  margin-top: 0.35rem;
+}
+.status-updated {
+  margin-top: 1rem;
+}
+.status-entry-options,
+.status-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.4rem;
+}
+.status-entry-options .spacer {
+  flex: 1;
+}
+.status-password {
+  max-width: 26rem;
+}
+.status-password.compact {
+  max-width: none;
+  margin-top: 0.8rem;
+}
+
+.status-site-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1rem;
+}
+
+.status-site-cloudflare {
+  margin: 0.5rem 0;
+}
+
+/* The status page sites' HTTPS choice on the Proxy page. */
+.status-tls {
+  max-width: 46rem;
+  margin-top: 0.75rem;
 }

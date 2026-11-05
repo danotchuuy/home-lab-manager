@@ -130,6 +130,55 @@ type Route struct {
 	// NoTLSVerify accepts an https server's certificate without checking
 	// it, for the usual self-signed ones.
 	NoTLSVerify bool `json:"noTLSVerify,omitempty"`
+	// Hlm sends the hostname to Home Lab Manager itself, such as a status
+	// page site's domain; hlm works out its port (and Server, Address,
+	// Port and Scheme are left empty).
+	Hlm bool `json:"hlm,omitempty"`
+}
+
+// SelfOrigin is how hlm itself is reached: the port it listens on, and its
+// container, if it runs in one.
+type SelfOrigin struct {
+	Port      int
+	Container *docker.ContainerJSON
+}
+
+// UseSelf says how to find hlm itself, for routes to it (see Route.Hlm).
+func (s *Service) UseSelf(f func(ctx context.Context) (SelfOrigin, error)) { s.self = f }
+
+// selfOrigin is where cloudflared reaches hlm itself. hlm serves HTTPS and
+// HTTP on one port and doesn't redirect requests cloudflared marks as
+// HTTPS (X-Forwarded-Proto), so plain HTTP always works.
+func (s *Service) selfOrigin(ctx context.Context, t Tunnel) (string, error) {
+	if s.self == nil {
+		return "", errors.New("hlm can't tell how it's reached here")
+	}
+	so, err := s.self(ctx)
+	if err != nil {
+		return "", err
+	}
+	if so.Port == 0 {
+		return "", errors.New("hlm doesn't listen on a TCP port it can tell")
+	}
+	if info := so.Container; info != nil && info.HostConfig.NetworkMode != "host" {
+		// In a container: through the port it publishes on the host (or its
+		// own LAN address).
+		r := Route{Server: "Home Lab Manager", Scheme: "http"}
+		for _, p := range webPorts(*info) {
+			if p.Container == so.Port || (p.Container == 0 && p.Port == so.Port) {
+				r.Port = p.Port
+			}
+		}
+		if r.Port == 0 {
+			return "", fmt.Errorf("hlm's container doesn't publish its port %d on the host, so cloudflared can't reach it: publish it (-p %d:%d)", so.Port, so.Port, so.Port)
+		}
+		return origin(*info, r, t, "")
+	}
+	host := "localhost"
+	if t.LANNetwork != "" {
+		host = t.BridgeGateway
+	}
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(so.Port)), nil
 }
 
 type appliedRecord struct {
@@ -179,6 +228,8 @@ type Service struct {
 	// hostAddress is where a server on another Docker host publishes its
 	// ports; "" for the local host. See UseHostAddress.
 	hostAddress func(id string) string
+	// self finds hlm itself; see UseSelf.
+	self func(ctx context.Context) (SelfOrigin, error)
 }
 
 // UseHostAddress says where servers on other Docker hosts publish their
@@ -1009,6 +1060,9 @@ func origin(info docker.ContainerJSON, r Route, t Tunnel, remoteHost string) (st
 
 // resolve finds where cloudflared sends a route's requests.
 func (s *Service) resolve(ctx context.Context, r Route, t Tunnel) (string, error) {
+	if r.Hlm {
+		return s.selfOrigin(ctx, t)
+	}
 	if r.Address != "" {
 		return r.Scheme + "://" + net.JoinHostPort(r.Address, strconv.Itoa(r.Port)), nil
 	}
@@ -1118,6 +1172,11 @@ func (s *Service) validateRoutes(ctx context.Context, routes []Route, zones []cl
 			return nil, fmt.Errorf("%s isn't in any of your Cloudflare domains (zones)", r.Hostname)
 		}
 		r.ZoneID, r.Zone = z.ID, z.Name
+		if r.Hlm {
+			r.Server, r.Address, r.Port, r.Scheme, r.NoTLSVerify = "", "", 0, "http", false
+			out = append(out, r)
+			continue
+		}
 		switch r.Scheme {
 		case "":
 			r.Scheme = "http"

@@ -1108,8 +1108,9 @@ traffic, which is usually UDP, still needs the [proxy](#relaying-through-a-proxy
 
 1. **Cloudflare account.** Create an API token in the Cloudflare dashboard (My Profile → API Tokens → Create Token →
    Custom token) with **Account → Cloudflare Tunnel: Edit**, **Zone → DNS: Edit** and **Zone → Zone: Read**, for the
-   domains you want to use. **Test connection** lists the accounts and domains it can use; **Save** stores it encrypted,
-   like the other credentials. If the token can use several accounts, choose the one the tunnel goes in. The token
+   domains you want to use (add **Zone → SSL and Certificates: Edit** to put the
+   [status page's sites on the proxy server](#public-status-page) behind Cloudflare). **Test connection** lists the
+   accounts and domains it can use; **Save** stores it encrypted, like the other credentials. If the token can use several accounts, choose the one the tunnel goes in. The token
    doesn't need Account Settings: Read: hlm finds the account through the token's domains, and it only offers accounts
    where the token can actually manage tunnels. If a permission is missing, the error names that one permission.
 2. **Tunnel.** **Set up tunnel** creates a remotely managed tunnel (named `hlm` unless you choose another name) and runs
@@ -1395,6 +1396,70 @@ can. Web UI links for macvlan servers use the server's own IP.
 - **Phones.** The layout fits narrow screens, with larger touch targets, and hlm can be added to the home screen (it has
   a web app manifest and icons).
 - **Times** like "5 min ago" show the exact time when you hover over them.
+
+## Public status page
+
+A page for friends who ask "is it up?" and "what's the address?", without an hlm account. Turn it on under **System →
+Status page** and add the servers to show; it's at `/status`.
+
+- **Per server:** a display name (the app's name to start with; hlm's own server names aren't shown), the address
+  players use, an optional note (such as where to find the password: never the password itself), and whether to show
+  players online, their names, and the game's version and map. **Suggest** fills the address from the
+  [proxy](#relaying-through-a-proxy-server-nginx-over-ssh) for ports it relays, or the home network's public address
+  from [UniFi](#port-forwarding-with-unifi) for ports it forwards.
+- **What it shows:** each server's state (online, starting, up when hlm can't ask the game, or offline), what's
+  chosen above, and how much of the last 7 and 30 days it was up (once there's an hour of history; recorded with the
+  [resource history](#resource-history)). An optional message goes at the top ("Maintenance on Saturday").
+- **What it doesn't:** settings, logs, files, resource use, addresses inside your network, or anything else of hlm.
+  The response is built from its own fields only.
+- **Badges** for a README or Discord: `/api/status-page/<name>.svg` ("Viking world | 3/10 online"), and the same as
+  JSON at `.json`. The settings show each server's URL and a Markdown snippet.
+- **Sites (optional):** the page under its own domains, such as `friends.example.com` for a group of friends and
+  `status.example.com` for everyone. Each site shows the servers on the page that are in the
+  [server groups](#roles-and-server-groups) you tick (all of them if you tick none), can have its own title and
+  message, and has **its own two passwords** (or none): on a site's domain only that site's passwords work, and a
+  password given on one site doesn't open another. A site's domain reaches only the status page: every other path (the
+  rest of the web UI and API, even with a token) answers 404 there, and `/` goes to `/status`. On any other address,
+  such as hlm's own, the page shows every server with the page-wide passwords.
+- **Sites on Cloudflare:** with [Cloudflare Tunnel](#web-addresses-with-cloudflare-tunnel) set up, each site has
+  **Publish on Cloudflare**, which adds a tunnel route for its domain (and the DNS record) to hlm itself, and then
+  shows whether it's published. On the Tunnel page the same route reads **Home Lab Manager (status page)**, a choice
+  for any hostname. hlm works out where cloudflared reaches it: its own port, or the port its container publishes on
+  the host (it says so if it doesn't publish one). It's sent as HTTP, which hlm accepts from the tunnel even with
+  HTTPS on.
+- **Sites on the proxy server:** with the [proxy server](#relaying-through-a-proxy-server-nginx-over-ssh) and its
+  [WireGuard tunnel](#wireguard-tunnel-to-this-host) set up (and the tunnel chosen as the home address), tick **Serve the
+  status page's sites here too** on the Proxy page and apply. nginx there answers each site's domain and passes only
+  the status page's paths to hlm through the tunnel, so hlm's own port is never opened to the internet; everything
+  else on those domains is 404 at the proxy as well as at hlm. **HTTPS** is one of:
+  - **None:** plain HTTP; point each domain's DNS at the proxy server yourself.
+  - **Let's Encrypt:** point each domain's DNS at the proxy server; certbot there gets a free certificate for each
+    domain (and its timer renews them, reloading nginx), and plain HTTP redirects to HTTPS once a domain has one.
+  - **Cloudflare:** for domains on the [Cloudflare account](#web-addresses-with-cloudflare-tunnel) (the tunnel itself
+    isn't needed). hlm makes a proxied ("orange cloud") DNS record pointing each domain at the proxy server, and installs a
+    Cloudflare Origin CA certificate for it there (valid 15 years; its key is made by hlm and readable only by root
+    on the proxy, in `/etc/nginx/hlm-origin`). Visitors get Cloudflare's own certificate, and the proxy's firewall
+    lets only Cloudflare's addresses reach ports 80 and 443. The token needs **Zone → SSL and Certificates: Edit**
+    as well as DNS: Edit. Set the domain's **SSL/TLS mode to Full (strict)** in the Cloudflare dashboard (hlm warns if
+    it's Off or Flexible, where Cloudflare would talk to the proxy unencrypted); port 80 serves the page as well, so
+    the site works in any mode. A record that already exists for the name (yours, or a tunnel route's) is left alone
+    and reported. When a domain leaves the list or you choose another option, hlm removes its record and certificate.
+
+  hlm writes only `/etc/nginx/conf.d/hlm-status.conf` (nginx has to read `conf.d` in its `http` block, as Debian's,
+  Ubuntu's and Fedora's do), checks it with `nginx -t` and puts the previous one back if it's refused. The proxy's Linode firewall,
+  if hlm manages it, gets ports 80 and 443 opened (to Cloudflare alone, with that option). Each site's settings show
+  whether the proxy serves it, and over HTTP or HTTPS.
+- **Only from (optional):** addresses or ranges, such as a VPN's, that may see it. Behind a tunnel or proxy that's the
+  tunnel's or proxy's address.
+- **Passwords (optional), two of them** (page-wide, and per site): one to see the page at all, and one for the details: players' names, the
+  addresses to connect to and your notes. Either can be used alone (with only the second, the page is public but the
+  details aren't), and the details password opens the page too. A visitor types one once; a signed cookie (HttpOnly,
+  30 days) remembers it in that browser until it's changed, and **Forget the password on this device** drops it.
+  Passwords are stored as argon2id hashes and never shown again; wrong guesses are slowed down (five tries, then one
+  every 12 seconds per address). With a view password, badges and the JSON only work in a browser that has given it.
+
+It's off by default, and while it's off its endpoints answer 404. The page is rebuilt at most every 15 seconds, and each
+address is limited to about two requests a second.
 
 ## Notifications
 
@@ -1881,6 +1946,11 @@ when the `HLM_*` one isn't set.
 | `PUT /api/servers/{id}/tags`                   | `{tags}`: a server's tags (up to 10; letters, digits, spaces, `.`, `_`, `-`). Managers. Server lists include `tags`. |
 | `PUT /api/servers/{id}/favourite`              | `{favourite}`: pin the server for the caller (their own favourites). Viewers. Server lists include `favourite`. |
 | `POST /api/servers/bulk`                       | `{servers, action: "start"\|"stop"\|"restart"\|"update"\|"backup"}`: one action on several servers in turn, checking the caller's role on each. Streams NDJSON (each event's `target` is the server; `summary` at the end). |
+| `GET /api/status-page`                         | The [public status page](#public-status-page) (no sign-in; 404 while it's off). |
+| `GET /api/status-page/{name}.json`, `.svg`     | One server of the page, as JSON or a badge.                                       |
+| `POST /api/status-page/unlock`, `.../lock`     | `{password}`: give the page's view or details password (sets the `hlm_status` cookie; send `X-HLM-Request: 1`), or forget it. |
+| `GET/PUT /api/system/status-page`              | The status page's settings `{enabled, title, message, servers: [{server, displayName, showPlayers, showNames, showVersion, address, hint}], allowFrom, sites: [{id, hostname, groups, title, message}]}`, plus `viewPassword`/`detailsPassword` on `PUT`, page-wide and on each site (a new one; `""` removes it; left out keeps it; a site keeps its passwords by its `id`). Answers `hasViewPassword`/`hasDetailsPassword` (and the same on each of `sites`), never the passwords. Admins. |
+| `GET /api/system/status-page/suggest?server=`  | Public addresses hlm can suggest for a server (from the proxy and UniFi). Admins. |
 | `GET /api/hosts`                               | [Docker hosts](#more-docker-hosts) and whether they could be reached. Admins also get how each is reached (never a client key) and hlm's SSH public key. |
 | `POST /api/hosts/test`                         | Connect to a host as given, without saving it: its Docker version, or (for SSH) the host key to confirm (`hostKey`, `hostKeyFingerprint`). Admins. |
 | `POST /api/hosts`, `PUT /api/hosts/{id}`       | `{id, name, kind: "ssh"\|"tcp", ssh?: {host, port, user, hostKey}, socket?, url?, ca?, cert?, key?, appdataRoot, address?}`: add or change a host, after connecting to it. An empty `key` keeps the saved one. [Confirmed](#confirming-its-you) session. |

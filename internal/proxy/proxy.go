@@ -71,6 +71,14 @@ type Settings struct {
 	LogMode string `json:"logMode"`
 	// Servers are the names of the game servers to proxy.
 	Servers []string `json:"servers"`
+	// StatusPage serves the status page's sites on the proxy, through the
+	// WireGuard tunnel. StatusTLS is how they get HTTPS: "" (none),
+	// "letsencrypt" (certbot on the proxy; StatusEmail gets the expiry
+	// notices) or "cloudflare" (Cloudflare in front, with an Origin CA
+	// certificate on the proxy).
+	StatusPage  bool   `json:"statusPage"`
+	StatusTLS   string `json:"statusTls,omitempty"`
+	StatusEmail string `json:"statusEmail,omitempty"`
 }
 
 // KeyInfo is the public half of hlm's SSH key.
@@ -95,6 +103,11 @@ type Service struct {
 	// run runs a script as root on the relay, passing each line of output
 	// to onLine (if non-nil) as it's printed; tests replace it.
 	run func(ctx context.Context, script string, stdin []byte, onLine func(string)) (remote.Result, error)
+	// statusSites finds the status page's sites; see UseStatusSites.
+	statusSites func(ctx context.Context) ([]string, int, error)
+	// cloudflare puts the status page's sites behind Cloudflare; see
+	// UseCloudflare.
+	cloudflare Cloudflare
 	// ports lists a server's ports; see UsePorts.
 	ports func(info docker.ContainerJSON) ([]forwarding.Mapping, error)
 	// wanLookup finds the gateway's public address; see UseWANLookup.
@@ -204,6 +217,15 @@ func validHost(h string) bool {
 // Validate checks and normalizes settings.
 func Validate(st *Settings) error {
 	st.Host, st.User, st.Upstream = strings.TrimSpace(st.Host), strings.TrimSpace(st.User), strings.TrimSpace(st.Upstream)
+	st.StatusEmail = strings.TrimSpace(st.StatusEmail)
+	if st.StatusEmail != "" && !statusEmail.MatchString(st.StatusEmail) {
+		return fmt.Errorf("%q isn't an email address", st.StatusEmail)
+	}
+	switch st.StatusTLS {
+	case "", TLSLetsEncrypt, TLSCloudflare:
+	default:
+		return fmt.Errorf("unknown HTTPS option %q for the status page's sites", st.StatusTLS)
+	}
 	if !validHost(st.Host) {
 		return fmt.Errorf("invalid host %q", st.Host)
 	}
@@ -703,6 +725,8 @@ type ApplyResult struct {
 	// Firewall is the outcome of updating the proxy server's cloud
 	// firewall, if one is set up.
 	Firewall *FirewallSync `json:"firewall,omitempty"`
+	// Status is how serving the status page's sites went, if that's on.
+	Status *StatusSiteResult `json:"status,omitempty"`
 }
 
 // Apply writes the configuration to the relay and reloads nginx.
@@ -729,6 +753,7 @@ func (s *Service) Apply(ctx context.Context) (ApplyResult, error) {
 		if err := s.recordApplied(st.Upstream, servers); err != nil {
 			s.log.Error("save proxy state", "err", err)
 		}
+		r.Status = s.applyStatusRecorded(ctx, st)
 		r.Firewall = s.syncFirewallAfter(ctx, servers)
 		return r, nil
 	case strings.Contains(res.Stdout, "hlm:nonginx"):
@@ -755,7 +780,7 @@ type RemoveResult struct {
 // closes the relayed ports in the cloud firewall.
 func (s *Service) Remove(ctx context.Context) (RemoveResult, error) {
 	script := `PATH="$PATH:/usr/sbin:/sbin"
-for f in ` + ConfigPath + ` ` + legacyConfigPath + `; do [ -f "$f" ] && : > "$f"; done
+for f in ` + ConfigPath + ` ` + legacyConfigPath + ` ` + StatusConfigPath + `; do [ -f "$f" ] && : > "$f"; done
 nginx -t 2>&1 || exit 4
 if [ -d /run/systemd/system ] && systemctl cat nginx >/dev/null 2>&1; then systemctl reload nginx; else nginx -s reload; fi`
 	s.applyMu.Lock()
@@ -771,6 +796,9 @@ if [ -d /run/systemd/system ] && systemctl cat nginx >/dev/null 2>&1; then syste
 	if err := s.recordApplied("", nil); err != nil {
 		s.log.Error("save proxy state", "err", err)
 	}
+	_ = s.secrets.Delete(secretStatusServed)
+	_ = s.secrets.Delete(secretStatusResult)
+	s.forgetCloudflare(ctx, nil)
 	return RemoveResult{Output: res.Output(), Firewall: s.syncFirewallAfter(ctx, nil)}, nil
 }
 

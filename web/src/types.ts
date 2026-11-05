@@ -672,6 +672,23 @@ export interface ProxySettings {
   upstreamPorts?: "internet" | "local";
   logMode: "noip" | "off";
   servers: string[];
+  /** Serve the status page's sites on the proxy (through the WireGuard tunnel), with HTTPS as statusTls says. */
+  statusPage?: boolean;
+  statusTls?: "" | "letsencrypt" | "cloudflare";
+  statusEmail?: string;
+}
+
+/** How serving the status page's sites on the proxy last went. */
+export interface ProxyStatusSites {
+  domains: string[];
+  /** The HTTPS option used. */
+  tls?: "" | "letsencrypt" | "cloudflare";
+  https: string[];
+  failed?: Record<string, string>;
+  /** Things to fix that don't stop the sites working. */
+  notes?: string[];
+  output?: string;
+  error?: string;
 }
 
 export interface FirewallRule {
@@ -965,6 +982,8 @@ export interface TunnelRoute {
   port: number;
   scheme: "http" | "https";
   noTLSVerify?: boolean;
+  /** Goes to Home Lab Manager itself (such as a status page site); hlm works out its port. */
+  hlm?: boolean;
 }
 
 export interface TunnelRouteState extends TunnelRoute {
@@ -1879,4 +1898,71 @@ export interface CleanupSettings {
   lastRun?: string;
   lastFreed: number;
   lastError?: string;
+}
+
+/** A server on the public status page, as an admin set it up. */
+export interface StatusPageEntry {
+  server: string;
+  displayName?: string;
+  showPlayers: boolean;
+  showNames: boolean;
+  showVersion: boolean;
+  address?: string;
+  hint?: string;
+  slug?: string;
+}
+
+export interface StatusPageSettings {
+  enabled: boolean;
+  title?: string;
+  message?: string;
+  servers: StatusPageEntry[];
+  allowFrom?: string[];
+}
+
+/** The status page under its own domain: some server groups' servers, behind its own passwords. */
+export interface StatusSite {
+  id?: string;
+  hostname: string;
+  /** Server group IDs; none shows every server on the page. */
+  groups: string[];
+  title?: string;
+  message?: string;
+  hasViewPassword?: boolean;
+  hasDetailsPassword?: boolean;
+  /** On save: a new password, "" to remove it, or left out to keep it. */
+  viewPassword?: string;
+  detailsPassword?: string;
+}
+
+export interface AddressSuggestion {
+  address: string;
+  source: "proxy" | "unifi";
+}
+
+/** The public status page: only these fields are ever sent. */
+export interface PublicStatusServer {
+  slug: string;
+  name: string;
+  game?: string;
+  icon?: string;
+  state: "online" | "starting" | "running" | "offline";
+  players?: number;
+  maxPlayers?: number;
+  playerNames?: string[];
+  version?: string;
+  map?: string;
+  address?: string;
+  hint?: string;
+  uptime7d?: number;
+  uptime30d?: number;
+}
+
+export interface PublicStatusPage {
+  title: string;
+  message?: string;
+  servers: PublicStatusServer[];
+  updated: string;
+  /** What the visitor's password (if any) lets them see. */
+  access?: { level: number; viewLocked: boolean; detailsLocked: boolean; unlocked: boolean };
 }

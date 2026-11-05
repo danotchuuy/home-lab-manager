@@ -175,8 +175,9 @@ function CloudflareAccount({ status, onChange }: { status: TunnelStatus; onChang
           <span className="field-help">
             Create one in the Cloudflare dashboard (My Profile → API Tokens → Create Token → Custom token) with{" "}
             <strong>Account → Cloudflare Tunnel: Edit</strong>, <strong>Zone → DNS: Edit</strong> and{" "}
-            <strong>Zone → Zone: Read</strong>, for the domains you want to use. It&apos;s stored encrypted on this machine
-            and never shown again.
+            <strong>Zone → Zone: Read</strong>, for the domains you want to use (plus{" "}
+            <strong>Zone → SSL and Certificates: Edit</strong> to put the status page&apos;s sites on the proxy server
+            behind Cloudflare). It&apos;s stored encrypted on this machine and never shown again.
           </span>
         </label>
         {test && test.accounts.length > 1 && (
