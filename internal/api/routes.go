@@ -120,6 +120,8 @@ func (s *server) routes() []route {
 		{"PUT /api/proxy/wireguard", admin, s.setupProxyWireGuard},
 		{"DELETE /api/proxy/wireguard", admin, s.removeProxyWireGuard},
 		{"POST /api/proxy/wireguard/check", admin, s.checkProxyWireGuard},
+		{"PUT /api/proxy/wireguard/hosts/{host}", admin, s.setupHostWireGuard},
+		{"DELETE /api/proxy/wireguard/hosts/{host}", admin, s.removeHostWireGuard},
 		{"GET /api/integrations/linode", admin, s.proxyFirewall},
 		{"PUT /api/integrations/linode", admin, s.saveProxyFirewall},
 		{"DELETE /api/integrations/linode", admin, s.deleteProxyFirewall},

@@ -1309,6 +1309,39 @@ func (s *server) removeProxyWireGuard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
+// setupHostWireGuard sets up the tunnel's end on another Docker host,
+// streaming its progress as setupProxyWireGuard does.
+func (s *server) setupHostWireGuard(w http.ResponseWriter, r *http.Request) {
+	var in proxy.HostWireGuardInput
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8<<10)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	host := r.PathValue("host")
+	audit.Add(r.Context(), "host", host)
+	send := ndjson(w)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 15*time.Minute)
+	defer cancel()
+	res, err := s.Proxy.SetupHostWireGuard(ctx, host, in, func(e proxy.WireGuardEvent) { send(e) })
+	if err != nil {
+		s.Log.Warn("set up WireGuard on another host", "host", host, "err", err)
+		send(proxy.WireGuardEvent{Stage: "error", Message: err.Error(), Output: res.Output})
+		return
+	}
+	send(proxy.WireGuardEvent{Stage: "done", Result: &res})
+}
+
+func (s *server) removeHostWireGuard(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	res, err := s.Proxy.RemoveHostWireGuard(ctx, r.PathValue("host"))
+	if err != nil {
+		writeProxyError(w, err, res.Output)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
 func (s *server) checkProxyWireGuard(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
 	defer cancel()
@@ -2049,7 +2082,7 @@ func (s *server) setupTunnel(w http.ResponseWriter, r *http.Request) {
 func (s *server) removeTunnel(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	defer cancel()
-	st, err := s.Tunnel.Remove(ctx)
+	st, err := s.Tunnel.RemoveOn(ctx, r.URL.Query().Get("host"))
 	if err != nil {
 		writeTunnelError(w, err)
 		return
@@ -2066,7 +2099,7 @@ func (s *server) controlTunnel(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
 	defer cancel()
-	st, err := s.Tunnel.Control(ctx, action)
+	st, err := s.Tunnel.ControlOn(ctx, r.URL.Query().Get("host"), action)
 	if err != nil {
 		writeTunnelError(w, err)
 		return
@@ -2080,7 +2113,7 @@ func (s *server) tunnelLogs(w http.ResponseWriter, r *http.Request) {
 	if tail == "" {
 		tail = "500"
 	}
-	logs, err := s.Tunnel.Logs(r.Context(), docker.LogsOptions{Follow: r.URL.Query().Get("follow") != "0", Tail: tail})
+	logs, err := s.Tunnel.LogsOn(r.Context(), r.URL.Query().Get("host"), docker.LogsOptions{Follow: r.URL.Query().Get("follow") != "0", Tail: tail})
 	if err != nil {
 		if docker.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, errors.New("the "+cftunnel.Container+" container is gone"))

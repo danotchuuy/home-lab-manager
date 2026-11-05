@@ -273,7 +273,9 @@ func TestSetupAndRemoveWireGuard(t *testing.T) {
 			return remote.Result{Stdout: "hlm:wgup\n"}, nil
 		}
 		if strings.Contains(script, "latest-handshakes") {
-			return remote.Result{Stdout: "abc=\t1700000000\nhlm:ping=yes\n"}, nil
+			wg, _, _ := s.tunnel()
+			pub, _ := wireGuardPublic(wg.HomeKey)
+			return remote.Result{Stdout: "other=\t1600000000\n" + pub + "\t1700000000\nhlm:ping=yes\n"}, nil
 		}
 		return remote.Result{}, nil
 	}

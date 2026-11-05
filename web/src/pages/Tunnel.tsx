@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useHosts } from "../components/HostPicker";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import { Ago, Spinner } from "../components/common";
@@ -63,6 +64,8 @@ export function TunnelPage() {
           <p className="muted small no-margin">Connect your Cloudflare account first.</p>
         )}
       </section>
+
+      {status.configured && status.tunnel && <HostTunnels status={status} onChange={setStatus} />}
 
       <section className="card">
         <h2>3. Hostnames</h2>
@@ -481,5 +484,111 @@ function TunnelCard({ status, onChange }: { status: TunnelStatus; onChange: (st:
         </button>
       </div>
     </>
+  );
+}
+
+/**
+ * Tunnels on other Docker hosts: a host gets a tunnel of its own, with
+ * cloudflared there, and its servers' hostnames go through it (reached on
+ * that host's localhost) instead of over the LAN from this host's.
+ */
+function HostTunnels({ status, onChange }: { status: TunnelStatus; onChange: (st: TunnelStatus) => void }) {
+  const hosts = (useHosts() ?? []).filter((h) => !h.local);
+  const [busy, setBusy] = useState<string>();
+  const [error, setError] = useState<string>();
+  const [note, setNote] = useState<string>();
+  if (hosts.length === 0) return null;
+
+  async function run(label: string, fn: () => Promise<void>) {
+    setBusy(label);
+    setError(undefined);
+    setNote(undefined);
+    try {
+      await fn();
+    } catch (e) {
+      setError((e as Error).message);
+      api.tunnel().then(onChange, () => {});
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
+  const setup = (host: string) =>
+    run(`setup:${host}`, async () => {
+      let done: TunnelStatus | undefined;
+      let failure: string | undefined;
+      await api.setupTunnel({ host, name: "", lanNetwork: "", lanAddress: "" }, (e) => {
+        if (e.stage === "done") done = e.status;
+        else if (e.stage === "error") failure = e.message;
+      });
+      if (failure) throw new Error(failure);
+      if (!done) throw new Error("The setup stopped without finishing; set it up again.");
+      onChange(done);
+      setNote(`${host} has its own tunnel now; its servers' hostnames go through it.`);
+    });
+
+  const remove = (host: string) => {
+    if (
+      !confirm(
+        `Remove ${host}'s tunnel? Its cloudflared is stopped and the tunnel deleted in Cloudflare; its servers' hostnames go through this host's tunnel again, over the LAN.`,
+      )
+    )
+      return;
+    run(`remove:${host}`, async () => {
+      onChange(await api.removeTunnel(host));
+      setNote(`Removed ${host}'s tunnel.`);
+    });
+  };
+
+  return (
+    <section className="card">
+      <h2>Tunnels on other Docker hosts</h2>
+      <p className="muted small">
+        Servers on other hosts are reached from this host&apos;s cloudflared over the LAN. A host that isn&apos;t on the same
+        network (or that you&apos;d rather not reach that way) can have a tunnel of its own: hlm creates{" "}
+        <code>hlm-&lt;host&gt;</code> in Cloudflare and runs cloudflared there (host networking), and that host&apos;s
+        servers&apos; hostnames go through it. Hostnames for other web addresses and for hlm itself stay on this host&apos;s
+        tunnel.
+      </p>
+      {error && <div className="alert error">{error}</div>}
+      {note && <div className="alert success">{note}</div>}
+      <ul className="server-info">
+        {hosts.map((h) => {
+          const t = status.hosts?.find((x) => x.host === h.id);
+          return (
+            <li key={h.id} className={t ? (t.connector.running && t.health === "healthy" ? "ok" : "bad") : undefined}>
+              <strong>{h.name}</strong> <span className="muted">({h.id})</span>:{" "}
+              {t ? (
+                <>
+                  tunnel <code>{t.name}</code>
+                  {t.health ? `, ${t.health}` : ""};{" "}
+                  {t.connector.running
+                    ? "its hlm-cloudflared container is running"
+                    : t.connector.error || `its hlm-cloudflared container is ${t.connector.state}`}{" "}
+                  <button className="link-button" onClick={() => run(`restart:${h.id}`, async () => onChange(await api.controlTunnel("restart", h.id)))} disabled={!!busy}>
+                    {busy === `restart:${h.id}` ? "restarting…" : "restart"}
+                  </button>{" "}
+                  ·{" "}
+                  <button className="link-button" onClick={() => setup(h.id)} disabled={!!busy}>
+                    {busy === `setup:${h.id}` ? "setting up…" : "set up again"}
+                  </button>{" "}
+                  ·{" "}
+                  <button className="link-button danger" onClick={() => remove(h.id)} disabled={!!busy}>
+                    {busy === `remove:${h.id}` ? "removing…" : "remove"}
+                  </button>
+                </>
+              ) : (
+                <>
+                  uses this host&apos;s tunnel.{" "}
+                  <button className="btn small" onClick={() => setup(h.id)} disabled={!!busy}>
+                    {busy === `setup:${h.id}` ? "Setting up…" : `Give ${h.id} its own tunnel`}
+                  </button>
+                </>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }

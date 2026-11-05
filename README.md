@@ -348,7 +348,9 @@ host.
 
 Limits for now:
 
-- hlm's own WireGuard and Cloudflare Tunnel containers, and self-update, run on this host.
+- Self-update runs on this host. [WireGuard](#wireguard-tunnel-to-this-host) and
+  [Cloudflare Tunnel](#web-addresses-with-cloudflare-tunnel) can each have their own end, or tunnel, on another host,
+  set up from the Proxy and Tunnel pages.
 - Container IP addresses on another host's bridge networks can't be reached from here; hlm uses the host's published
   ports (or a server's own LAN address on a macvlan network) instead.
 
@@ -364,10 +366,11 @@ with `docker pull`, but the server still runs the old one.
 settings. They keep going if you close the page, and a failure doesn't stop the remaining updates. Running servers are
 restarted; stopped servers stay stopped.
 
-**Connections.** Below the servers, the **Connections** section lists the containers hlm runs for its tunnels:
-`hlm-wireguard` (the [WireGuard tunnel](#wireguard-tunnel-to-this-host)'s end on this host) and `hlm-cloudflared` (the
-[Cloudflare Tunnel](#web-addresses-with-cloudflare-tunnel)'s connector), and, when hlm runs in Docker on the host it
-manages, hlm's own container. They show CPU, memory and network use like servers, and **Check for updates** checks their
+<a id="connections"></a>**Connections.** Below the servers, the **Connections** section lists the containers hlm runs for
+its tunnels: `hlm-wireguard` (the [WireGuard tunnel](#wireguard-tunnel-to-this-host)'s end) and `hlm-cloudflared` (the
+[Cloudflare Tunnel](#web-addresses-with-cloudflare-tunnel)'s connector), on this host and on
+[other Docker hosts](#more-docker-hosts) that have their own (named `name@host`), and, when hlm runs in Docker on the
+host it manages, hlm's own container. They show CPU, memory and network use like servers, and **Check for updates** checks their
 images too. **Update** pulls the new image and has the tunnel's own setup recreate the container with the same settings,
 so the connection drops for a few seconds; it isn't part of **Update all**. **Restart**, **Stop** and **Start** control
 the container. Clicking a card opens its own page, like a server's: live resource usage, the container's console output,
@@ -1150,6 +1153,16 @@ the tunnel can't reach those addresses (a host can't talk to its own macvlan con
 In this mode the proxy server can reach that whole subnet through the tunnel, not just the game servers. Keep it on a
 network meant for them if that matters to you.
 
+**Other Docker hosts.** With [more Docker hosts](#more-docker-hosts), each host can have its own end of the tunnel:
+under **Other Docker hosts** in the tunnel's card, **Set up _host_'s end**. hlm runs an `hlm-wireguard` container
+there (host networking, as here), with its own key and its own address in the tunnel (the next free one: `.3`, `.4`, …),
+and adds it to the proxy server's `gsh0` as another peer (which restarts the proxy's end briefly). It connects out to
+the proxy too, so the host can be anywhere. nginx then relays each server to the tunnel address of the host it runs
+on; a server on a host without an end is listed with an error and skipped. **Check tunnel** shows each end's last
+handshake. An end can be set up again (same key and address) or removed; removing the whole tunnel removes them all.
+The tunnel network can't change while other hosts have ends in it. Through the API, an end can also use LAN mode, on a
+macvlan/ipvlan network of its host's (one end per LAN subnet).
+
 Limits: the host's kernel and the proxy's need WireGuard (built into Linux 5.6 and later), and LAN mode needs `iptables`
 in the image (the default image has it). A server with its own LAN address on a network other than the one chosen is
 listed with an error and skipped. Ports published on one specific host address are only reachable there. A host firewall (e.g. ufw)
@@ -1228,6 +1241,17 @@ and **Set up again** recreate the container (pulling the latest image) and keep 
 follows the container's output live. **Remove tunnel** removes the container, the DNS records hlm made and the tunnel in
 Cloudflare; the hostnames are kept for the next tunnel. The token can only be forgotten (**Disconnect**) once the tunnel
 is removed. With a remote `DOCKER_HOST`, cloudflared runs on that host, where the servers are.
+
+**Other Docker hosts.** With [more Docker hosts](#more-docker-hosts), servers on other hosts are reached from this host's
+cloudflared over the LAN, at their host's LAN address. A host that isn't on the same network (behind NAT with
+[hlm's agent](#more-docker-hosts), say), or that you'd rather reach directly, can have a **tunnel of its own**: under
+**Tunnels on other Docker hosts**, **Give _host_ its own tunnel**. hlm creates `hlm-<host>` in your Cloudflare account and
+runs `hlm-cloudflared` on that host (host networking). A tunnel's connectors share its traffic, so each host needs its
+own tunnel rather than another connector of the same one. That host's servers' hostnames then go through its tunnel,
+reached on its `localhost` (each hostname shows "through _host_'s tunnel"), and their DNS records point at it;
+hostnames for other web addresses and for hlm itself stay on this host's tunnel. **Remove** takes the host's tunnel
+down and moves its hostnames back to this host's tunnel. Its container is listed with the
+[connections](#connections) and can be updated there.
 
 ## Downloads in progress
 
@@ -2122,7 +2146,9 @@ when the `HLM_*` one isn't set.
 | `POST /api/proxy/remove`                       | Remove all relays and close their ports in the firewall.                          |
 | `GET /api/proxy/wireguard`                     | The WireGuard tunnel: addresses, public keys and the host end's container.        |
 | `PUT /api/proxy/wireguard`                     | Set up or update the tunnel (streams NDJSON: `step` and `output` events, then `done` with the result or `error`) `{network, listenPort, endpoint, useForRelays, lanNetwork, lanAddress}` on both ends; `lanNetwork` (a macvlan/ipvlan network) lets it reach servers' own LAN addresses; `useForRelays` makes it the home address and re-applies nginx if applied. |
-| `POST /api/proxy/wireguard/check`              | The last handshake the proxy saw and whether it can ping this host (`reachable`). |
+| `POST /api/proxy/wireguard/check`              | The last handshake the proxy saw and whether it can ping this host (`reachable`), and each other host's end's last handshake (`hosts`). |
+| `PUT /api/proxy/wireguard/hosts/{host}`        | Set up (or again) the tunnel's end on another Docker host `{lanNetwork?, lanAddress?}`: a peer on the proxy and a container there; re-applies nginx if it relays through the tunnel. Streams NDJSON like `PUT /api/proxy/wireguard`. |
+| `DELETE /api/proxy/wireguard/hosts/{host}`     | Remove that host's end.                                                           |
 | `DELETE /api/proxy/wireguard`                  | Take the tunnel down on both ends and forget it (refused while applied relays use it). |
 | `GET /api/integrations/linode`                 | The Linode connection, the firewall hlm manages, its rules for the relays and whether they're up to date. |
 | `POST /api/integrations/linode/test`           | List the firewalls a token `{token}` can manage (empty: the saved token), suggesting the proxy server's. |
@@ -2134,10 +2160,10 @@ when the `HLM_*` one isn't set.
 | `POST /api/integrations/cloudflare/test`       | List the accounts and domains a token `{token}` can use (empty: the saved token). |
 | `PUT /api/integrations/cloudflare`             | Save `{token, accountId}`: empty `token` keeps the saved one, empty `accountId` picks the token's only account. |
 | `DELETE /api/integrations/cloudflare`          | Forget the token (refused while the tunnel is set up).                            |
-| `PUT /api/tunnel`                              | Create the tunnel (the first time) and run cloudflared `{name, lanNetwork, lanAddress}`, then publish the hostnames. Streams NDJSON: `step` and `output` events, then `done` with `status` (and `apply`) or `error`. |
-| `POST /api/tunnel/{start,stop,restart}`        | Control the `hlm-cloudflared` container.                                          |
-| `GET /api/tunnel/logs?tail=`                   | cloudflared's log as server-sent events.                                           |
-| `DELETE /api/tunnel`                           | Remove the container, hlm's DNS records and the tunnel; the hostnames are kept.   |
+| `PUT /api/tunnel`                              | Create the tunnel (the first time) and run cloudflared `{host?, name, lanNetwork, lanAddress}`, then publish the hostnames. With `host`, another Docker host gets a tunnel of its own (named `hlm-<host>` by default) with cloudflared there. Streams NDJSON: `step` and `output` events, then `done` with `status` (and `apply`) or `error`. |
+| `POST /api/tunnel/{start,stop,restart}?host=`  | Control the `hlm-cloudflared` container (this host's, or `host`'s).               |
+| `GET /api/tunnel/logs?tail=&host=`             | cloudflared's log as server-sent events.                                           |
+| `DELETE /api/tunnel?host=`                     | Remove the container, hlm's DNS records and the tunnel (this host's, or `host`'s, whose hostnames move back to this host's tunnel); the hostnames are kept. |
 | `GET /api/tunnel/routes`                       | The hostnames with where they go and their states, and the servers' TCP ports.    |
 | `PUT /api/tunnel/routes`                       | Replace the hostnames `{routes: [{hostname, server, port, scheme, noTLSVerify}]}` and publish them if the tunnel is set up. Use `address` (an IP address or host name) instead of `server` for a web server hlm doesn't run. |
 | `POST /api/tunnel/apply`                       | Publish the hostnames now.                                                        |

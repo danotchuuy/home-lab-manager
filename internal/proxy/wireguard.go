@@ -10,8 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -124,6 +126,57 @@ type WireGuard struct {
 	// BridgeGateway is the host's address on Docker's default bridge, where
 	// the home end reaches published ports in LAN mode.
 	BridgeGateway string `json:"bridgeGateway,omitempty"`
+	// Hosts are the tunnel's ends on other Docker hosts, by host ID: each a
+	// peer of the proxy's end, with its own address in the tunnel.
+	Hosts map[string]WireGuardEnd `json:"hosts,omitempty"`
+
+	// homeAddr is the home end's address when it isn't this host's (see
+	// end).
+	homeAddr netip.Addr
+}
+
+// WireGuardEnd is the tunnel's end on another Docker host.
+type WireGuardEnd struct {
+	// Address is its address in the tunnel.
+	Address       string    `json:"address"`
+	HomeKey       string    `json:"homeKey"`
+	LANNetwork    string    `json:"lanNetwork,omitempty"`
+	LANAddress    string    `json:"lanAddress,omitempty"`
+	LANSubnet     string    `json:"lanSubnet,omitempty"`
+	BridgeGateway string    `json:"bridgeGateway,omitempty"`
+	Configured    time.Time `json:"configured"`
+}
+
+// end is the tunnel as seen from another host's end: its key, address and
+// LAN mode instead of this host's.
+func (wg WireGuard) end(host string) (WireGuard, bool) {
+	e, ok := wg.Hosts[host]
+	if !ok {
+		return WireGuard{}, false
+	}
+	out := wg
+	out.Hosts = nil
+	out.HomeKey, out.LANNetwork, out.LANAddress, out.LANSubnet, out.BridgeGateway = e.HomeKey, e.LANNetwork, e.LANAddress, e.LANSubnet, e.BridgeGateway
+	out.Configured = e.Configured
+	out.homeAddr, _ = netip.ParseAddr(e.Address)
+	return out, true
+}
+
+// freeAddress is the next tunnel address for another host's end.
+func (wg WireGuard) freeAddress() (netip.Addr, error) {
+	used := map[netip.Addr]bool{wg.ProxyAddress(): true, wg.ProxyAddress().Next(): true}
+	for _, e := range wg.Hosts {
+		if a, err := netip.ParseAddr(e.Address); err == nil {
+			used[a] = true
+		}
+	}
+	p := wg.prefix()
+	for a := wg.ProxyAddress().Next(); p.Contains(a); a = a.Next() {
+		if !used[a] && p.Contains(a.Next()) { // not the broadcast address
+			return a, nil
+		}
+	}
+	return netip.Addr{}, fmt.Errorf("the tunnel network %s has no addresses left for another host", wg.Network)
 }
 
 func (wg WireGuard) prefix() netip.Prefix { return netip.MustParsePrefix(wg.Network) }
@@ -131,8 +184,14 @@ func (wg WireGuard) prefix() netip.Prefix { return netip.MustParsePrefix(wg.Netw
 // ProxyAddress is the proxy's address in the tunnel.
 func (wg WireGuard) ProxyAddress() netip.Addr { return wg.prefix().Addr().Next() }
 
-// HomeAddress is this host's address in the tunnel, which nginx relays to.
-func (wg WireGuard) HomeAddress() netip.Addr { return wg.ProxyAddress().Next() }
+// HomeAddress is this host's address in the tunnel, which nginx relays to
+// (or, for another host's end, that host's).
+func (wg WireGuard) HomeAddress() netip.Addr {
+	if wg.homeAddr.IsValid() {
+		return wg.homeAddr
+	}
+	return wg.ProxyAddress().Next()
+}
 
 // lanAddressOf finds a server's own address on the LAN the home end
 // routes to.
@@ -190,6 +249,8 @@ type WireGuardStatus struct {
 	LANAddress string `json:"lanAddress,omitempty"`
 	// LANNetworks are the networks LAN mode can use.
 	LANNetworks []LANNetwork `json:"lanNetworks"`
+	// Hosts are the tunnel's ends on other Docker hosts.
+	Hosts []WireGuardHostStatus `json:"hosts"`
 }
 
 // WireGuardHome is the state of the home end's container.
@@ -229,6 +290,8 @@ type WireGuardCheck struct {
 	// Handshake is the last time the two ends completed a handshake; zero
 	// if they never have since the proxy end started.
 	Handshake time.Time `json:"handshake,omitzero"`
+	// Hosts are the last handshakes with the ends on other hosts, by host.
+	Hosts map[string]time.Time `json:"hosts,omitempty"`
 	// Reachable means the proxy could ping this host through the tunnel;
 	// nil if ping isn't installed there.
 	Reachable *bool  `json:"reachable,omitempty"`
@@ -311,7 +374,7 @@ func (s *Service) resolveLAN(ctx context.Context, wg *WireGuard) error {
 	if wg.LANNetwork == "" {
 		return nil
 	}
-	nets, err := s.docker.ListNetworks(ctx)
+	nets, err := s.dk(ctx).ListNetworks(ctx)
 	if err != nil {
 		return err
 	}
@@ -394,6 +457,19 @@ func RenderWireGuard(wg WireGuard, st Settings) (proxyConf, homeConf string, err
 		"# The game server host\n" +
 		"PublicKey = " + homePub + "\n" +
 		"AllowedIPs = " + allowed + "\n"
+	// The ends on other Docker hosts.
+	for _, id := range slices.Sorted(maps.Keys(wg.Hosts)) {
+		e := wg.Hosts[id]
+		pub, err := wireGuardPublic(e.HomeKey)
+		if err != nil {
+			return "", "", fmt.Errorf("the tunnel's end on %s: %w", id, err)
+		}
+		hostAllowed := e.Address + "/32"
+		if e.LANSubnet != "" {
+			hostAllowed += ", " + e.LANSubnet
+		}
+		proxyConf += "\n[Peer]\n# Docker host " + id + "\nPublicKey = " + pub + "\nAllowedIPs = " + hostAllowed + "\n"
+	}
 	homeConf = "# Managed by Home Lab Manager; changes made here are overwritten.\n" +
 		"# Tunnel to the proxy server, which relays game traffic here.\n" +
 		"[Interface]\n" +
@@ -425,9 +501,10 @@ func wireGuardRule(port int) linode.Rule {
 
 // WireGuardStatus describes the tunnel and the home end's container.
 func (s *Service) WireGuardStatus(ctx context.Context) (WireGuardStatus, error) {
-	out := WireGuardStatus{Network: defaultTunnelNetwork, ListenPort: defaultWireGuardPort, Image: s.wgImage, LANNetworks: []LANNetwork{}}
+	out := WireGuardStatus{Network: defaultTunnelNetwork, ListenPort: defaultWireGuardPort, Image: s.wgImage, LANNetworks: []LANNetwork{},
+		Hosts: []WireGuardHostStatus{}}
 	if s.docker != nil {
-		if nets, err := s.docker.ListNetworks(ctx); err == nil {
+		if nets, err := s.dk(ctx).ListNetworks(ctx); err == nil {
 			out.LANNetworks = docker.LANNetworks(nets)
 		}
 	}
@@ -447,17 +524,18 @@ func (s *Service) WireGuardStatus(ctx context.Context) (WireGuardStatus, error) 
 	out.InUse = st.UpstreamSource == "wireguard"
 	out.LANNetwork, out.LANSubnet, out.LANAddress = wg.LANNetwork, wg.LANSubnet, wg.LANAddress
 	out.Home = s.homeState(ctx, wg)
+	out.Hosts = s.hostStatuses(ctx, wg)
 	return out, nil
 }
 
 func (s *Service) homeState(ctx context.Context, wg WireGuard) WireGuardHome {
-	if s.docker == nil {
+	if s.dk(ctx) == nil {
 		return WireGuardHome{Error: "Docker isn't available"}
 	}
-	info, err := s.docker.InspectContainer(ctx, WireGuardContainer)
+	info, err := s.dk(ctx).InspectContainer(ctx, WireGuardContainer)
 	if docker.IsNotFound(err) {
 		// Not renamed from gsh-wireguard yet.
-		info, err = s.docker.InspectContainer(ctx, legacyWireGuardContainer)
+		info, err = s.dk(ctx).InspectContainer(ctx, legacyWireGuardContainer)
 	}
 	if docker.IsNotFound(err) {
 		return WireGuardHome{State: "missing", Error: "The " + WireGuardContainer + " container is gone; set the tunnel up again."}
@@ -540,10 +618,20 @@ func (s *Service) SetupWireGuard(ctx context.Context, in WireGuardInput, emit fu
 	if err != nil {
 		return res, err
 	}
+	if len(wg.Hosts) > 0 && wg.Network != "" && wg.Network != in.Network {
+		return res, errors.New("other Docker hosts have ends of this tunnel, with addresses in its network: remove them before changing the tunnel network")
+	}
 	wg.Network, wg.ListenPort, wg.Endpoint = in.Network, in.ListenPort, in.Endpoint
 	wg.LANNetwork, wg.LANAddress = in.LANNetwork, in.LANAddress
 	if err := s.resolveLAN(ctx, &wg); err != nil {
 		return res, err
+	}
+	if wg.LANSubnet != "" {
+		for id, e := range wg.Hosts {
+			if e.LANSubnet != "" && netip.MustParsePrefix(e.LANSubnet).Overlaps(netip.MustParsePrefix(wg.LANSubnet)) {
+				return res, fmt.Errorf("the tunnel's end on %s already reaches %s; one end per LAN can reach servers' own addresses", id, e.LANSubnet)
+			}
+		}
 	}
 	for _, k := range []*string{&wg.ProxyKey, &wg.HomeKey} {
 		if *k == "" {
@@ -648,7 +736,7 @@ func (s *Service) startHome(ctx context.Context, wg WireGuard, conf string, step
 		return err
 	}
 	step("Pulling " + s.wgImage)
-	pullErr := s.docker.PullImage(ctx, s.wgImage, func(p docker.PullProgress) {
+	pullErr := s.dk(ctx).PullImage(ctx, s.wgImage, func(p docker.PullProgress) {
 		// Leave out the flood of byte counts; layer status changes are enough.
 		if p.Status == "" || p.Status == "Downloading" || p.Status == "Extracting" || p.Status == "Waiting" {
 			return
@@ -688,7 +776,7 @@ func (s *Service) startHome(ctx context.Context, wg WireGuard, conf string, step
 		}
 	}
 	step("Creating the " + WireGuardContainer + " container")
-	id, _, err := s.docker.CreateContainer(ctx, WireGuardContainer, req)
+	id, _, err := s.dk(ctx).CreateContainer(ctx, WireGuardContainer, req)
 	if err != nil {
 		if pullErr != nil {
 			return fmt.Errorf("pull %s: %w", s.wgImage, pullErr)
@@ -697,7 +785,7 @@ func (s *Service) startHome(ctx context.Context, wg WireGuard, conf string, step
 	}
 	if wg.LANNetwork != "" {
 		// And on the default bridge, to reach the host's published ports.
-		if err := s.docker.ConnectNetwork(ctx, "bridge", id, nil); err != nil {
+		if err := s.dk(ctx).ConnectNetwork(ctx, "bridge", id, nil); err != nil {
 			return fmt.Errorf("connect to the bridge network: %w", err)
 		}
 	}
@@ -710,18 +798,18 @@ func (s *Service) startHome(ctx context.Context, wg WireGuard, conf string, step
 	if err := tw.Close(); err != nil {
 		return err
 	}
-	if err := s.docker.CopyTo(ctx, id, "/config", &buf); err != nil {
+	if err := s.dk(ctx).CopyTo(ctx, id, "/config", &buf); err != nil {
 		return fmt.Errorf("write the configuration: %w", err)
 	}
 	if wg.LANNetwork == "" {
 		step("Checking this host's networks")
 		if err := s.prepareHostNetwork(ctx, wg, output); err != nil {
-			_ = s.docker.RemoveContainer(context.WithoutCancel(ctx), id, true)
+			_ = s.dk(ctx).RemoveContainer(context.WithoutCancel(ctx), id, true)
 			return err
 		}
 	}
 	step("Starting it")
-	if err := s.docker.StartContainer(ctx, id); err != nil {
+	if err := s.dk(ctx).StartContainer(ctx, id); err != nil {
 		return err
 	}
 	return s.followStartup(ctx, id, output)
@@ -773,8 +861,8 @@ func (s *Service) prepareHostNetwork(ctx context.Context, wg WireGuard, output f
 		output("Couldn't check this host's networks: " + err.Error())
 		return nil
 	}
-	_ = s.docker.RemoveContainer(ctx, name, true)
-	id, _, err := s.docker.CreateContainer(ctx, name, docker.CreateRequest{
+	_ = s.dk(ctx).RemoveContainer(ctx, name, true)
+	id, _, err := s.dk(ctx).CreateContainer(ctx, name, docker.CreateRequest{
 		Image:      s.wgImage,
 		Entrypoint: []string{"/bin/sh", "-c", "ip link del " + WireGuardInterface + " 2>/dev/null && echo hlm:removed\n" + routesScript},
 		HostConfig: docker.HostConfig{NetworkMode: "host", CapAdd: []string{"NET_ADMIN"}},
@@ -782,16 +870,16 @@ func (s *Service) prepareHostNetwork(ctx context.Context, wg WireGuard, output f
 	if err != nil {
 		return warn(err)
 	}
-	defer s.docker.RemoveContainer(context.WithoutCancel(ctx), id, true)
-	if err := s.docker.StartContainer(ctx, id); err != nil {
+	defer s.dk(ctx).RemoveContainer(context.WithoutCancel(ctx), id, true)
+	if err := s.dk(ctx).StartContainer(ctx, id); err != nil {
 		return warn(err)
 	}
 	wctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if _, err := s.docker.WaitContainer(wctx, id); err != nil {
+	if _, err := s.dk(ctx).WaitContainer(wctx, id); err != nil {
 		return warn(err)
 	}
-	logs, err := s.docker.Logs(wctx, id, docker.LogsOptions{Tail: "all"})
+	logs, err := s.dk(ctx).Logs(wctx, id, docker.LogsOptions{Tail: "all"})
 	if err != nil {
 		return warn(err)
 	}
@@ -905,7 +993,7 @@ func (s *Service) UpgradeWireGuardHome(ctx context.Context) {
 		return
 	}
 	s.renameLegacyHome(ctx)
-	info, err := s.docker.InspectContainer(ctx, WireGuardContainer)
+	info, err := s.dk(ctx).InspectContainer(ctx, WireGuardContainer)
 	if err != nil || info.Config.Labels[LabelWireGuard] == "" || info.Config.Labels[labelHomeVersion] == homeVersion {
 		return
 	}
@@ -920,13 +1008,13 @@ func (s *Service) UpgradeWireGuardHome(ctx context.Context) {
 // Renaming leaves it running, so the tunnel stays up; its volume keeps the
 // old name until the home end is next recreated.
 func (s *Service) renameLegacyHome(ctx context.Context) {
-	if _, err := s.docker.InspectContainer(ctx, WireGuardContainer); !docker.IsNotFound(err) {
+	if _, err := s.dk(ctx).InspectContainer(ctx, WireGuardContainer); !docker.IsNotFound(err) {
 		return
 	}
-	if _, err := s.docker.InspectContainer(ctx, legacyWireGuardContainer); err != nil {
+	if _, err := s.dk(ctx).InspectContainer(ctx, legacyWireGuardContainer); err != nil {
 		return
 	}
-	if err := s.docker.RenameContainer(ctx, legacyWireGuardContainer, WireGuardContainer); err != nil {
+	if err := s.dk(ctx).RenameContainer(ctx, legacyWireGuardContainer, WireGuardContainer); err != nil {
 		s.log.Warn("rename the WireGuard tunnel's home end", "from", legacyWireGuardContainer, "to", WireGuardContainer, "err", err)
 		return
 	}
@@ -945,7 +1033,7 @@ const tunnelFailed = "failed, will stop all others"
 func (s *Service) followStartup(ctx context.Context, id string, output func(string)) error {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	logs, err := s.docker.Logs(ctx, id, docker.LogsOptions{Follow: true, Tail: "all"})
+	logs, err := s.dk(ctx).Logs(ctx, id, docker.LogsOptions{Follow: true, Tail: "all"})
 	if err != nil {
 		output("Couldn't read the container's log: " + err.Error())
 		return nil
@@ -982,15 +1070,15 @@ func (s *Service) followStartup(ctx context.Context, id string, output func(stri
 func (s *Service) removeHome(ctx context.Context) error {
 	names := []string{WireGuardContainer, legacyWireGuardContainer}
 	for _, name := range names {
-		if err := s.docker.StopContainer(ctx, name, 15); err != nil && !docker.IsNotFound(err) {
+		if err := s.dk(ctx).StopContainer(ctx, name, 15); err != nil && !docker.IsNotFound(err) {
 			s.log.Warn("stop the WireGuard home end gracefully", "err", err)
 		}
-		if err := s.docker.RemoveContainer(ctx, name, true); err != nil && !docker.IsNotFound(err) {
+		if err := s.dk(ctx).RemoveContainer(ctx, name, true); err != nil && !docker.IsNotFound(err) {
 			return fmt.Errorf("remove the old %s container: %w", name, err)
 		}
 	}
 	for _, name := range names {
-		if err := s.docker.RemoveVolume(ctx, name); err != nil && !docker.IsNotFound(err) {
+		if err := s.dk(ctx).RemoveVolume(ctx, name); err != nil && !docker.IsNotFound(err) {
 			return fmt.Errorf("remove the old %s volume: %w", name, err)
 		}
 	}
@@ -1029,9 +1117,21 @@ fi`
 			out.Reachable = &reachable
 		default:
 			// "<public key>\t<unix time>"; 0 means never.
-			if _, ts, found := strings.Cut(line, "\t"); found {
-				if n, err := strconv.ParseInt(ts, 10, 64); err == nil && n > 0 {
-					out.Handshake = time.Unix(n, 0).UTC()
+			key, ts, found := strings.Cut(line, "\t")
+			n, err := strconv.ParseInt(ts, 10, 64)
+			if !found || err != nil || n <= 0 {
+				continue
+			}
+			at := time.Unix(n, 0).UTC()
+			if pub, _ := wireGuardPublic(wg.HomeKey); key == pub {
+				out.Handshake = at
+			}
+			for id, e := range wg.Hosts {
+				if pub, _ := wireGuardPublic(e.HomeKey); key == pub {
+					if out.Hosts == nil {
+						out.Hosts = map[string]time.Time{}
+					}
+					out.Hosts[id] = at
 				}
 			}
 		}
@@ -1071,6 +1171,16 @@ exit 0`
 			return res, err
 		}
 	}
+	// The ends on other hosts go too.
+	if wg, ok, _ := s.tunnel(); ok {
+		for id := range wg.Hosts {
+			if hctx, err := s.onHost(ctx, id); err == nil {
+				if err := s.removeHome(hctx); err != nil {
+					s.log.Warn("remove the tunnel's end on another host", "host", id, "err", err)
+				}
+			}
+		}
+	}
 	if err := s.secrets.Delete(secretWireGuard); err != nil {
 		return res, err
 	}
@@ -1086,4 +1196,21 @@ exit 0`
 	s.applyMu.Unlock()
 	res.Status, err = s.WireGuardStatus(ctx)
 	return res, err
+}
+
+// The home end of a host other than this one runs on that host's Docker:
+// its client travels in the context.
+type dockerKey struct{}
+
+func withDocker(ctx context.Context, d Containers) context.Context {
+	return context.WithValue(ctx, dockerKey{}, d)
+}
+
+// dk is the Docker the context's home end runs on: this host's, unless
+// another host's was put in the context.
+func (s *Service) dk(ctx context.Context) Containers {
+	if d, ok := ctx.Value(dockerKey{}).(Containers); ok {
+		return d
+	}
+	return s.docker
 }

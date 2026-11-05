@@ -765,8 +765,21 @@ export interface WireGuardStatus {
   /** The fixed address asked for there, if any. */
   lanAddress?: string;
   /** Networks LAN mode can use. */
-  /** Networks LAN mode can use. */
   lanNetworks: { name: string; driver: string; subnet: string; parent?: string }[];
+  /** The tunnel's ends on other Docker hosts. */
+  hosts?: WireGuardHostEnd[];
+}
+
+/** The WireGuard tunnel's end on another Docker host. */
+export interface WireGuardHostEnd {
+  host: string;
+  homeAddress: string;
+  homePublicKey: string;
+  configuredAt?: string;
+  lanNetwork?: string;
+  lanSubnet?: string;
+  lanAddress?: string;
+  home: { state?: string; running: boolean; exitCode?: number; error?: string; lanAddress?: string };
 }
 
 export interface WireGuardInput {
@@ -803,6 +816,8 @@ export interface WireGuardCheck {
   handshake?: string;
   /** The proxy could ping this host through the tunnel; absent if ping isn't installed. */
   reachable?: boolean;
+  /** The last handshakes with the ends on other hosts, by host. */
+  hosts?: Record<string, string>;
   output?: string;
 }
 
@@ -967,9 +982,13 @@ export interface TunnelStatus {
   lanNetworks: { name: string; driver: string; subnet: string; parent?: string }[];
   /** Cloudflare couldn't be asked. */
   error?: string;
+  /** Tunnels on other Docker hosts, each with cloudflared there. */
+  hosts?: (NonNullable<TunnelStatus["tunnel"]> & { host: string })[];
 }
 
 export interface TunnelSetupInput {
+  /** The Docker host cloudflared runs on: empty for this one. */
+  host?: string;
   name: string;
   lanNetwork: string;
   lanAddress: string;
@@ -994,6 +1013,8 @@ export interface TunnelRoute {
 
 export interface TunnelRouteState extends TunnelRoute {
   url: string;
+  /** The Docker host whose tunnel carries it. */
+  via?: string;
   /** Where cloudflared sends requests, e.g. http://localhost:8080. */
   origin?: string;
   error?: string;

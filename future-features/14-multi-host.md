@@ -45,7 +45,12 @@
 >   container per calculation); Compose stacks on any host (a stack's host is fixed when it's created); and whole hosts
 >   in server groups (`Group.Hosts`), which also fixed servers on other hosts being refused in groups (`@` wasn't
 >   allowed in a group's server names).
-> - **Not built:** hlm's WireGuard and Cloudflare Tunnel containers per host.
+> - **Built later (branch `feature/14-per-host-connections`):** WireGuard and Cloudflare Tunnel per host. Each host can
+>   have its own end of the WireGuard tunnel (another peer of the proxy's `gsh0`, with its own key and address; nginx
+>   relays each server to its host's end), and its own Cloudflare tunnel (`hlm-<host>`: a tunnel's connectors share
+>   its traffic, so a connector can't be pinned to one host within one tunnel); a server's routes go through its host's
+>   tunnel when it has one. Their containers run on that host's Docker and are listed and updated with the
+>   connections. Only self-update stays on this host.
 
 ## Why
 

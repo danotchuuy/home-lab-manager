@@ -333,6 +333,7 @@ export function HostnamesEditor({
                       {row.saved?.origin && (
                         <div className="muted small">
                           → <code>{row.saved.origin}</code>
+                          {row.saved.via && row.saved.via !== "local" && <> through {row.saved.via}&apos;s tunnel</>}
                         </div>
                       )}
                       {row.saved?.error && <div className="small form-error">{row.saved.error}</div>}
