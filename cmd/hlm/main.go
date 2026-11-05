@@ -56,6 +56,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
 	"github.com/danotchuuy/home-lab-manager/internal/selfupdate"
 	"github.com/danotchuuy/home-lab-manager/internal/stack"
+	"github.com/danotchuuy/home-lab-manager/internal/statuspage"
 	"github.com/danotchuuy/home-lab-manager/internal/tlscert"
 	"github.com/danotchuuy/home-lab-manager/internal/transfer"
 )
@@ -500,6 +501,13 @@ func run(log *slog.Logger) error {
 	cleaner := cleanup.New(store, mgr, auditLog, log)
 	mgr.UseOldImageRemoval(cleaner.RemoveOldImages)
 	go cleaner.Run(ctx)
+	// The public status page, with addresses suggested from the proxy and
+	// UniFi's port forwards.
+	statusPage := statuspage.New(statuspage.Options{
+		Secrets: store, Servers: mgr, Query: queries,
+		Uptime:  func(name string, rng time.Duration) (float64, bool) { return metrics.Uptime(history, name, rng) },
+		Suggest: suggestAddresses(mgr, fwd, relay),
+	})
 	// Docker Compose stacks.
 	stacks := stack.New(store, dc, mgr, log)
 	handler := api.Handler(api.Options{
@@ -535,6 +543,7 @@ func run(log *slog.Logger) error {
 		Hosts:         dockerHosts,
 		Cleanup:       cleaner,
 		Prefs:         prefs.New(store),
+		StatusPage:    statusPage,
 		// Set when HLM_UPDATE_CHECK overrides the setting.
 		UpdateCheckEnv: updateCheckEnv,
 		Token:          env("HLM_TOKEN", ""),

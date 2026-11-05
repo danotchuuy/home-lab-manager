@@ -5,6 +5,7 @@ package metrics
 import (
 	"context"
 	"log/slog"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -33,7 +34,10 @@ const (
 	DiskRead  = "diskRead"  // bytes per second
 	DiskWrite = "diskWrite" //
 	Players   = "players"   // players online
-	fsPrefix  = "fs:"       // + mount: percent used
+	// Up is 1 while a server is up (running, and answering if its game can
+	// be asked), else 0: its average over a range is the uptime.
+	Up       = "up"
+	fsPrefix = "fs:" // + mount: percent used
 )
 
 // FSSeries is the series of a filesystem's used percent.
@@ -166,6 +170,7 @@ func (s *Sampler) Sample(ctx context.Context) {
 			sample.Restarts = info.RestartCount
 		}
 		g := ServerGroup(srv.Name)
+		s.store.Add(g, Up, now, s.up(srv))
 		if s.players != nil {
 			if n, ok := s.players.Players(srv.Name); ok {
 				s.store.Add(g, Players, now, float64(n))
@@ -213,4 +218,39 @@ func (s *Sampler) Sample(ctx context.Context) {
 // ServerOf is the server name in a history group, if it's a server's.
 func ServerOf(group string) (string, bool) {
 	return strings.CutPrefix(group, "servers/")
+}
+
+// up is a server's Up sample: running, and not known to be failing to answer.
+func (s *Sampler) up(srv manager.Server) float64 {
+	if srv.State != "running" {
+		return 0
+	}
+	if r, ok := s.players.(interface{ Responding(string) (bool, bool) }); ok {
+		if responding, known := r.Responding(srv.Name); known && !responding {
+			return 0
+		}
+	}
+	return 1
+}
+
+// Uptime is the share of rng a server was up (0–1), from its Up series;
+// false without enough history (an hour).
+func Uptime(store *metricstore.Store, server string, rng time.Duration) (float64, bool) {
+	h := store.Query(ServerGroup(server), rng)
+	v, ok := h.Series[Up]
+	if !ok {
+		return 0, false
+	}
+	var sum float64
+	n := 0
+	for _, a := range v.Avg {
+		if f := float64(a); !math.IsNaN(f) {
+			sum += f
+			n++
+		}
+	}
+	if n == 0 || time.Duration(int64(n)*h.Step)*time.Second < time.Hour {
+		return 0, false
+	}
+	return sum / float64(n), true
 }

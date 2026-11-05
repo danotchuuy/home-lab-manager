@@ -1396,6 +1396,32 @@ can. Web UI links for macvlan servers use the server's own IP.
   a web app manifest and icons).
 - **Times** like "5 min ago" show the exact time when you hover over them.
 
+## Public status page
+
+A page for friends who ask "is it up?" and "what's the address?", without an hlm account. Turn it on under **System →
+Status page** and add the servers to show; it's at `/status`.
+
+- **Per server:** a display name (the app's name to start with; hlm's own server names aren't shown), the address
+  players use, an optional note (such as where to find the password: never the password itself), and whether to show
+  players online, their names, and the game's version and map. **Suggest** fills the address from the
+  [proxy](#relaying-through-a-proxy-server-nginx-over-ssh) for ports it relays, or the home network's public address
+  from [UniFi](#port-forwarding-with-unifi) for ports it forwards.
+- **What it shows:** each server's state (online, starting, up when hlm can't ask the game, or offline), what's
+  chosen above, and how much of the last 7 and 30 days it was up (once there's an hour of history; recorded with the
+  [resource history](#resource-history)). An optional message goes at the top ("Maintenance on Saturday").
+- **What it doesn't:** settings, logs, files, resource use, addresses inside your network, or anything else of hlm.
+  The response is built from its own fields only.
+- **Badges** for a README or Discord: `/api/status-page/<name>.svg` ("Viking world | 3/10 online"), and the same as
+  JSON at `.json`. The settings show each server's URL and a Markdown snippet.
+- **Own hostname (optional):** a name such as `status.example.com` that reaches only the status page: there, every
+  other path (the rest of the web UI and API, even with a token) answers 404 and `/` goes to `/status`. Point a
+  [Cloudflare Tunnel](#web-addresses-with-cloudflare-tunnel) route (to hlm's address and port) or a proxy at it.
+- **Only from (optional):** addresses or ranges, such as a VPN's, that may see it. Behind a tunnel or proxy that's the
+  tunnel's or proxy's address.
+
+It's off by default, and while it's off its endpoints answer 404. The page is rebuilt at most every 15 seconds, and each
+address is limited to about two requests a second.
+
 ## Notifications
 
 **System → Notifications** sends alerts to places you choose when something needs attention. Add one or more
@@ -1881,6 +1907,10 @@ when the `HLM_*` one isn't set.
 | `PUT /api/servers/{id}/tags`                   | `{tags}`: a server's tags (up to 10; letters, digits, spaces, `.`, `_`, `-`). Managers. Server lists include `tags`. |
 | `PUT /api/servers/{id}/favourite`              | `{favourite}`: pin the server for the caller (their own favourites). Viewers. Server lists include `favourite`. |
 | `POST /api/servers/bulk`                       | `{servers, action: "start"\|"stop"\|"restart"\|"update"\|"backup"}`: one action on several servers in turn, checking the caller's role on each. Streams NDJSON (each event's `target` is the server; `summary` at the end). |
+| `GET /api/status-page`                         | The [public status page](#public-status-page) (no sign-in; 404 while it's off). |
+| `GET /api/status-page/{name}.json`, `.svg`     | One server of the page, as JSON or a badge.                                       |
+| `GET/PUT /api/system/status-page`              | The status page's settings `{enabled, title, message, servers: [{server, displayName, showPlayers, showNames, showVersion, address, hint}], hostname, allowFrom}`. Admins. |
+| `GET /api/system/status-page/suggest?server=`  | Public addresses hlm can suggest for a server (from the proxy and UniFi). Admins. |
 | `GET /api/hosts`                               | [Docker hosts](#more-docker-hosts) and whether they could be reached. Admins also get how each is reached (never a client key) and hlm's SSH public key. |
 | `POST /api/hosts/test`                         | Connect to a host as given, without saving it: its Docker version, or (for SSH) the host key to confirm (`hostKey`, `hostKeyFingerprint`). Admins. |
 | `POST /api/hosts`, `PUT /api/hosts/{id}`       | `{id, name, kind: "ssh"\|"tcp", ssh?: {host, port, user, hostKey}, socket?, url?, ca?, cert?, key?, appdataRoot, address?}`: add or change a host, after connecting to it. An empty `key` keeps the saved one. [Confirmed](#confirming-its-you) session. |

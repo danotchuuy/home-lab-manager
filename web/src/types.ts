@@ -1880,3 +1880,54 @@ export interface CleanupSettings {
   lastFreed: number;
   lastError?: string;
 }
+
+/** A server on the public status page, as an admin set it up. */
+export interface StatusPageEntry {
+  server: string;
+  displayName?: string;
+  showPlayers: boolean;
+  showNames: boolean;
+  showVersion: boolean;
+  address?: string;
+  hint?: string;
+  slug?: string;
+}
+
+export interface StatusPageSettings {
+  enabled: boolean;
+  title?: string;
+  message?: string;
+  servers: StatusPageEntry[];
+  hostname?: string;
+  allowFrom?: string[];
+}
+
+export interface AddressSuggestion {
+  address: string;
+  source: "proxy" | "unifi";
+}
+
+/** The public status page: only these fields are ever sent. */
+export interface PublicStatusServer {
+  slug: string;
+  name: string;
+  game?: string;
+  icon?: string;
+  state: "online" | "starting" | "running" | "offline";
+  players?: number;
+  maxPlayers?: number;
+  playerNames?: string[];
+  version?: string;
+  map?: string;
+  address?: string;
+  hint?: string;
+  uptime7d?: number;
+  uptime30d?: number;
+}
+
+export interface PublicStatusPage {
+  title: string;
+  message?: string;
+  servers: PublicStatusServer[];
+  updated: string;
+}

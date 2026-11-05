@@ -4061,3 +4061,88 @@ kbd {
 pre .muted {
   color: #9aa3af;
 }
+
+/* Public status page */
+.status-page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 2rem 1rem 3rem;
+}
+.status-page h1 {
+  margin-top: 0;
+}
+.status-list {
+  display: grid;
+  gap: 0.8rem;
+}
+.status-card h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+.status-head {
+  display: flex;
+  gap: 0.8rem;
+  align-items: center;
+}
+.status-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  object-fit: cover;
+  display: grid;
+  place-items: center;
+  background: var(--surface-2);
+  font-size: 1.6rem;
+  flex: none;
+}
+.status-pill {
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.2rem 0.65rem;
+  border-radius: 999px;
+  white-space: nowrap;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.status-pill.online,
+.status-pill.running {
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+  color: var(--success);
+}
+.status-pill.starting {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+}
+.status-pill.offline {
+  color: var(--danger);
+}
+.status-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  margin-top: 0.6rem;
+}
+.status-connect {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+.status-card > .small {
+  margin-top: 0.35rem;
+}
+.status-updated {
+  margin-top: 1rem;
+}
+.status-entry-options,
+.status-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.4rem;
+}
+.status-entry-options .spacer {
+  flex: 1;
+}

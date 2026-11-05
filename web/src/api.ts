@@ -92,6 +92,8 @@ import type {
   DockerHostInput,
   DockerVersion,
   HostInspection,
+  AddressSuggestion,
+  StatusPageSettings,
   CleanupPlan,
   CleanupRequest,
   CleanupResult,
@@ -476,6 +478,11 @@ export const api = {
   cleanupSettings: () => json<CleanupSettings>("/api/system/cleanup"),
   saveCleanupSettings: (s: Pick<CleanupSettings, "keepOldImages" | "weekly">) =>
     json<CleanupSettings>("/api/system/cleanup", { method: "PUT", body: JSON.stringify(s) }),
+  statusPageSettings: () => json<{ settings: StatusPageSettings }>("/api/system/status-page"),
+  saveStatusPage: (settings: StatusPageSettings) =>
+    json<{ settings: StatusPageSettings }>("/api/system/status-page", { method: "PUT", body: JSON.stringify(settings) }),
+  statusPageSuggest: (server: string) =>
+    json<AddressSuggestion[]>(`/api/system/status-page/suggest?server=${encodeURIComponent(server)}`),
   /** Makes hlm's SSH key, if there isn't one. */
   hostsSSHKey: () => json<SSHKeyInfo>("/api/hosts/ssh-key", { method: "POST" }),
   reconfigure: (id: string, req: DeployRequest, onEvent: (e: DeployEvent) => void) =>

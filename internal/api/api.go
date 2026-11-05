@@ -53,6 +53,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/schedule"
 	"github.com/danotchuuy/home-lab-manager/internal/selfupdate"
 	"github.com/danotchuuy/home-lab-manager/internal/stack"
+	"github.com/danotchuuy/home-lab-manager/internal/statuspage"
 	"github.com/danotchuuy/home-lab-manager/internal/tlscert"
 	"github.com/danotchuuy/home-lab-manager/internal/transfer"
 	"github.com/danotchuuy/home-lab-manager/internal/unifi"
@@ -110,6 +111,8 @@ type Options struct {
 	Cleanup *cleanup.Service
 	// Prefs keeps servers' tags and users' favourites.
 	Prefs *prefs.Store
+	// StatusPage is the public status page.
+	StatusPage *statuspage.Service
 	// UpdateCheckEnv is HLM_UPDATE_CHECK, which overrides the setting for
 	// how often updates are checked for, if set.
 	UpdateCheckEnv string
@@ -144,7 +147,7 @@ func Handler(opts Options) http.Handler {
 	} else if dist := web.Dist(); dist != nil {
 		mux.Handle("/", spaHandler(dist))
 	}
-	return s.logRequests(s.auth(mux))
+	return s.logRequests(s.statusHost(s.auth(mux)))
 }
 
 // csrfHeader must be sent with requests that change something when the
@@ -166,7 +169,8 @@ func (s *server) auth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !strings.HasPrefix(r.URL.Path, "/api/") {
+		// The public status page (which answers 404 unless it's on).
+		if !strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api/status-page" || strings.HasPrefix(r.URL.Path, "/api/status-page/") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -514,6 +518,11 @@ func (s *server) removeServer(w http.ResponseWriter, r *http.Request) {
 	if s.Notify != nil {
 		if err := s.Notify.ForgetServer(srv.Name); err != nil {
 			s.Log.Warn("take deleted server out of notification targets", "server", srv.Name, "err", err)
+		}
+	}
+	if s.StatusPage != nil {
+		if err := s.StatusPage.ForgetServer(srv.Name); err != nil {
+			s.Log.Warn("take deleted server off the status page", "server", srv.Name, "err", err)
 		}
 	}
 	if s.Prefs != nil {
