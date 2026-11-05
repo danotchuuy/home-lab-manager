@@ -3244,6 +3244,41 @@ progress {
   max-width: 22rem;
 }
 
+.settings-form-bar .btn {
+  margin-left: auto;
+}
+
+/* Adding a setting: where, (section), name and value in a row, wrapping on narrow screens. */
+.settings-add {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.5rem 0.75rem;
+  align-items: end;
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.settings-add .field {
+  margin: 0;
+}
+
+.settings-add-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.settings-add .form-error,
+.settings-add-help {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.settings-add-here {
+  margin-top: 0.4rem;
+}
+
 .settings-group h3 {
   font-size: 0.9rem;
   margin: 0 0 0.5rem;

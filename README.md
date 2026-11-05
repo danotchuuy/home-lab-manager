@@ -401,6 +401,12 @@ one-line settings, such as Palworld's `OptionSettings=(Difficulty=None,ExpRate=1
   **undo**.
 - Only the values you change are rewritten. Comments, order, spacing, line endings, quoting and the case of True/False
   stay as they were, and a value with a comma or quotes in it is quoted so it doesn't break the line.
+- **Add a setting** adds one the file doesn't have yet: choose where (one of the file's sections, a struct such as
+  Palworld's `OptionSettings`, or a new section), its name and its value. It's written like the settings around it:
+  in a struct as another `Name=Value` member (quoted if it needs to be); in a section as a line after its last setting,
+  with the same indentation, `=` or ` = `, quoting and `export` as its neighbour; in a new section under a new header at
+  the end. A name the place already has is refused, except Unreal's repeatable `+Name` lines. Each group also has
+  **Add a setting to …** at its end. The new setting shows as "new" and is saved with **Save** like any other edit.
 - **Form** and **Text** switch between the form and the text editor; your choice is remembered. Saving, reverting and
   the "this file changed since you opened it" check work the same in both.
 - A file that doesn't read as settings (fewer lines of settings than other lines) opens as text only.
