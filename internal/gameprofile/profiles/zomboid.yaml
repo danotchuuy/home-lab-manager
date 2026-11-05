@@ -1,0 +1,7 @@
+id: zomboid
+name: Project Zomboid
+match: [[zomboid]]
+query:
+  a2s_ports: [16261]
+settings_files:
+  - names: [servertest.ini]

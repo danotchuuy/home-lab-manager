@@ -544,6 +544,27 @@ download. `server.not_responding` says a running server stopped answering or nev
 **Player counts drive automation:** a [scheduled task](#scheduled-tasks) step can carry on only if nobody (or someone)
 is playing, and [automatic updates](#automatic-updates) can wait while players are online.
 
+### Game profiles
+
+What hlm knows about particular games is kept as **game profiles**: one YAML file per game, built into hlm
+(`internal/gameprofile/profiles/`). A profile says:
+
+- **how to recognise the game**: words in the image's name and tag (`itzg/minecraft-server`, `ich777/steamcmd:valheim`).
+  The most specific profile wins, so `minecraft-bedrock` (needing both words) beats `minecraft`;
+- **status queries**: its own protocol (Minecraft, Bedrock) and the variable that moves its port, its usual Steam query
+  ports, and whether to ask through the console first;
+- **the console**: its usual RCON port, whether it reads commands from its console (stdin), quick commands, images that
+  bring their own command sender (such as `rcon-cli` in `itzg/minecraft-server`), and a built-in REST driver (Palworld);
+- **the player list** through the console: the command, and how to read its answer (`csv`, a `summary` pattern with the
+  count, limit and names, or a pattern per player `lines`);
+- **scheduled tasks' commands** to warn players and save, and whether to save before hlm stops it (Palworld);
+- **settings files** to suggest (see [Editing server files](#editing-server-files)).
+
+Built in: Minecraft (Java and Bedrock), Palworld, ARK, Rust, Terraria (and tShock), Factorio, Counter-Strike 2,
+7 Days to Die, Valheim, Enshrouded, V Rising, Conan Exiles, Project Zomboid, Satisfactory, Nightingale and Soulmask.
+Profiles only point hlm's own features at things (a port, a command, a file name, a pattern); they never run code.
+Adding your own profiles is planned ([future-features/19](future-features/19-game-profiles.md)).
+
 ## Health checks and crash loops
 
 **Crash loops.** With **Start on boot**, Docker restarts a server every time it exits, so a server that can't start (a

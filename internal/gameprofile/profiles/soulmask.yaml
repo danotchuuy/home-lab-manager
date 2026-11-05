@@ -1,0 +1,5 @@
+id: soulmask
+name: Soulmask
+match: [[soulmask]]
+settings_files:
+  - names: [GameXishu.json]

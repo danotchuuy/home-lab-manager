@@ -1530,6 +1530,8 @@ export interface ConsoleStatus {
   running: boolean;
   game?: string;
   quickCommands: string[];
+  /** The game's commands for scheduled tasks (from its profile): warning players, and saving ("" if it has none). */
+  schedule?: { say: string; save: string };
   envVars: string[];
 }
 

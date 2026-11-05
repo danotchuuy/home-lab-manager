@@ -1,0 +1,8 @@
+id: factorio
+name: Factorio
+match: [[factorio]]
+console:
+  rcon_port: 27015
+  commands: [/players online, /server-save, "/kick ", "/ban ", /time]
+settings_files:
+  - names: [server-settings.json]

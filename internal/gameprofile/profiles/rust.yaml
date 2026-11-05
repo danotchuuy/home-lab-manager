@@ -1,0 +1,12 @@
+id: rust
+name: Rust
+match: [[rust]]
+query:
+  a2s_ports: [28015]
+console:
+  rcon_port: 28016
+  say: say
+  save: server.save
+  commands: [status, players, server.save, "say ", "kick ", "ban "]
+settings_files:
+  - names: [server.cfg]

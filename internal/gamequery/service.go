@@ -487,10 +487,10 @@ func (s *Service) queryConsole(ctx context.Context, info docker.ContainerJSON) (
 		return Result{}, errors.New("the console isn't available")
 	}
 	game := consoleGame(info.Config.Image)
-	cmd := rconCommands[game]
-	if cmd == "" {
+	if game == nil {
 		return Result{}, errors.New("hlm doesn't know this game's player list command")
 	}
+	cmd := game.Console.Players.Command
 	start := time.Now()
 	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
@@ -498,13 +498,13 @@ func (s *Service) queryConsole(ctx context.Context, info docker.ContainerJSON) (
 	if err != nil {
 		return Result{}, err
 	}
-	res, err := parsePlayerList(game, out)
+	res, err := playersResult(game.Console.Players, out)
 	if err != nil {
 		return Result{}, err
 	}
 	res.Protocol, res.Latency = ProtoRCON, time.Since(start)
 	// Palworld's REST API also has the player limit, name and version.
-	if game == "palworld" && s.consoleMode(cctx, info) == consoleREST {
+	if game.Console.REST != nil && game.Console.REST.Driver == "palworld" && s.consoleMode(cctx, info) == consoleREST {
 		if out, err := s.opts.Console.Query(cctx, strings.TrimPrefix(info.Name, "/"), "Metrics"); err == nil {
 			addPalworldMetrics(&res, out)
 		}

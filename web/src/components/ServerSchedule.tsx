@@ -49,19 +49,9 @@ function formatSeconds(s: number): string {
 }
 
 /** Games' commands for warning players and saving, for the presets. */
-const GAME_COMMANDS: Record<string, { say: string; save: string }> = {
-  minecraft: { say: "say", save: "save-all" },
-  "minecraft-bedrock": { say: "say", save: "save hold" },
-  palworld: { say: "Broadcast", save: "Save" },
-  ark: { say: "Broadcast", save: "SaveWorld" },
-  rust: { say: "say", save: "server.save" },
-  terraria: { say: "say", save: "save" },
-  "7dtd": { say: "say", save: "saveworld" },
-  cs2: { say: "say", save: "" },
-};
-
-function presets(game?: string): { label: string; task: ScheduledTask }[] {
-  const g = (game && GAME_COMMANDS[game]) || { say: "say", save: "save" };
+/** Presets, with the game's own commands to warn players and save (from its profile), or the usual ones. */
+function presets(game?: { say: string; save: string }): { label: string; task: ScheduledTask }[] {
+  const g = game ?? { say: "say", save: "save" };
   const base = { id: "", enabled: true, onlyIfRunning: true };
   const warn = (text: string): TaskStep => ({ kind: "command", command: `${g.say} ${text}`, continueOnError: true });
   return [
@@ -225,12 +215,12 @@ export function ServerSchedule({ server, canRun, canManage }: { server: string; 
             className="preset-select"
             value=""
             onChange={(e) => {
-              const p = presets(consoleStatus?.game)[Number(e.target.value)];
+              const p = presets(consoleStatus?.schedule)[Number(e.target.value)];
               if (p) setEditing(structuredClone(p.task));
             }}
           >
             <option value="">Add a task…</option>
-            {presets(consoleStatus?.game).map((p, i) => (
+            {presets(consoleStatus?.schedule).map((p, i) => (
               <option key={p.label} value={i}>
                 {p.label}
               </option>

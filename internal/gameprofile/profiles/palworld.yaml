@@ -1,0 +1,31 @@
+id: palworld
+name: Palworld
+match: [[palworld]]
+query:
+  # Its console's answers have names and counts; its Steam query port often has nothing.
+  console_first: true
+  a2s_ports: [27015]
+console:
+  rcon_port: 25575
+  say: Broadcast
+  save: Save
+  # It doesn't save when it's told to stop.
+  save_before_stop: true
+  commands: [ShowPlayers, Info, Save, "Broadcast ", "KickPlayer ", "BanPlayer "]
+  exec:
+    - image: palworld-server-docker
+      command: "rcon-cli {command}"
+      why: This image has rcon-cli, which already knows the server's RCON password.
+      off_when: { RCON_ENABLED: "false" }
+  # Its REST API replaces RCON.
+  rest:
+    driver: palworld
+    commands: [ShowPlayers, Metrics, Info, Save, "Broadcast ", "KickPlayer ", "BanPlayer "]
+  players:
+    command: ShowPlayers
+    # name,playeruid,steamid, then one line per player
+    format: csv
+    header: "name,"
+settings_files:
+  - names: [PalWorldSettings.ini]
+    prefer: /Saved/Config/

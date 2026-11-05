@@ -1,0 +1,12 @@
+id: cs2
+name: Counter-Strike 2
+match: [[cs2]]
+query:
+  a2s_ports: [27015]
+console:
+  rcon_port: 27015
+  say: say
+  # No save command: scheduled restarts don't save first.
+  commands: [status, "say ", "changelevel ", mp_restartgame 1, "kick "]
+settings_files:
+  - names: [server.cfg]

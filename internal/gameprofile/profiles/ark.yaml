@@ -1,0 +1,19 @@
+id: ark
+name: ARK
+match: [[ark], [arkse]]
+query:
+  a2s_ports: [27015]
+console:
+  rcon_port: 27020
+  say: Broadcast
+  save: SaveWorld
+  commands: [ListPlayers, SaveWorld, "Broadcast ", "ServerChat ", "KickPlayer ", DestroyWildDinos]
+  players:
+    command: ListPlayers
+    # "0. Name, 0002…" per line, or "No Players Connected"
+    format: lines
+    pattern: '^.*?\. (?P<name>[^,]*)'
+    ignore: [No Players Connected]
+settings_files:
+  - names: [GameUserSettings.ini, Game.ini]
+    prefer: /Saved/Config/

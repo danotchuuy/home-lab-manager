@@ -1,0 +1,8 @@
+id: vrising
+name: V Rising
+match: [[vrising]]
+query:
+  a2s_ports: [9877]
+settings_files:
+  - names: [ServerHostSettings.json, ServerGameSettings.json]
+    prefer: /Settings/
