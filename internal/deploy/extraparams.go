@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 )
@@ -62,7 +63,12 @@ func applyExtraParams(c *docker.CreateRequest, params string, warnings *[]string
 		case "--privileged":
 			hc.Privileged = boolFlag()
 			continue
-		case "--no-healthcheck", "--rm", "-d", "--detach":
+		case "--no-healthcheck":
+			if boolFlag() {
+				health(c).Test = []string{"NONE"}
+			}
+			continue
+		case "--rm", "-d", "--detach":
 			continue
 		}
 
@@ -70,6 +76,28 @@ func applyExtraParams(c *docker.CreateRequest, params string, warnings *[]string
 			return err
 		}
 		switch flag {
+		case "--health-cmd":
+			health(c).Test = []string{"CMD-SHELL", v}
+		case "--health-interval", "--health-timeout", "--health-start-period":
+			d, err := time.ParseDuration(v)
+			if err != nil || d < 0 {
+				return fmt.Errorf("%s: invalid duration %q", flag, v)
+			}
+			h := health(c)
+			switch flag {
+			case "--health-interval":
+				h.Interval = int64(d)
+			case "--health-timeout":
+				h.Timeout = int64(d)
+			default:
+				h.StartPeriod = int64(d)
+			}
+		case "--health-retries":
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 {
+				return fmt.Errorf("--health-retries: invalid number %q", v)
+			}
+			health(c).Retries = n
 		case "--restart":
 			hc.RestartPolicy.Name = strings.SplitN(v, ":", 2)[0]
 		case "--stop-timeout":
@@ -188,6 +216,14 @@ func applyExtraParams(c *docker.CreateRequest, params string, warnings *[]string
 		}
 	}
 	return nil
+}
+
+// health returns c's health check, adding one.
+func health(c *docker.CreateRequest) *docker.Healthcheck {
+	if c.Healthcheck == nil {
+		c.Healthcheck = &docker.Healthcheck{}
+	}
+	return c.Healthcheck
 }
 
 // addPublish handles -p [hostIP:]hostPort:containerPort[/proto], where the

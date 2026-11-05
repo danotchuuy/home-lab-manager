@@ -29,7 +29,8 @@ then start, stop, update and watch the servers.
   - `Path` entries become bind mounts.
   - `Variable` entries become environment variables.
   - `Device` and `Label` entries become devices and labels.
-  - Common `docker run` flags in `ExtraParams` are applied (`--restart`, `--memory`, `--ulimit`, `--gpus`, …).
+  - Common `docker run` flags in `ExtraParams` are applied (`--restart`, `--memory`, `--ulimit`, `--gpus`, the
+    `--health-*` flags and `--no-healthcheck`, …).
   - Flags it doesn't support are skipped and reported as warnings.
   - Unraid's `/mnt/user/appdata/...` default paths are moved under `HLM_APPDATA_ROOT`.
 - **Manager** (`internal/manager`): pulls images, then creates, starts, stops, updates and removes containers. All state
@@ -405,6 +406,58 @@ download. `server.not_responding` says a running server stopped answering or nev
 
 **Player counts drive automation:** a [scheduled task](#scheduled-tasks) step can carry on only if nobody (or someone)
 is playing, and [automatic updates](#automatic-updates) can wait while players are online.
+
+## Health checks and crash loops
+
+**Crash loops.** With **Start on boot**, Docker restarts a server every time it exits, so a server that can't start (a
+bad setting, a corrupt save) restarts forever: burning CPU, filling its log, maybe damaging more of its data, and
+showing as running most of the time. hlm counts each server's exits that nobody asked for. If one exits **5 times
+within 10 minutes**, hlm stops it, shows a red **Crash loop: stopped by hlm** badge with **View logs** and **Start
+anyway**, and sends a `server.restart_loop` [notification](#notifications) with its last 50 lines of output. It stays
+stopped until someone starts it (in hlm or with Docker); starting it forgets the exits counted so far. hlm remembers
+which servers it stopped across its own restarts.
+
+- What counts: any exit hlm didn't cause or see asked for, clean ones too (Docker restarts those as well).
+- What doesn't: stops and restarts by people, hlm, backups and scheduled tasks (anything that goes through
+  `docker stop`/`restart`/`kill`), and exits while the server is being installed, updated or reconfigured.
+- The limit, or turning it off, is per server: **Settings → Health and crash loops**.
+- Docker starts servers with Start on boot when the host reboots, even one hlm stopped; if it's still broken, it's
+  stopped again after another 5 exits.
+
+**Health.** Servers whose image has a Docker health check show **healthy**, **unhealthy** or **starting** next to
+their state, and a `server.unhealthy` notification is sent when one starts failing. On **Settings → Health and crash
+loops** a manager can give a server a check of its own, for images without one (or with one that doesn't suit):
+
+| Check | Healthy when |
+| --- | --- |
+| The image's own | The image's check passes (or there's no check). |
+| TCP port | A port in the container accepts connections (with `nc`, or `bash` if the image has no `nc`). |
+| Web page | An HTTP GET of a path on a port in the container answers 2xx or 3xx (with `curl` or `wget`). |
+| Command | A shell command run in the container (`/bin/sh -c`) exits with 0. |
+| None | Never checked: turns off the image's check. |
+
+Custom checks run every 60 seconds by default, may take 10 seconds, count as unhealthy after 3 failures in a row, and
+don't count failures for 10 minutes after a start, while a game loads its world; each of these can be changed.
+**Test now** runs the check once in the running server and shows its result and output, so you can tell whether the
+image has the tools it needs. The check is part of the container, so it's set when the server is next recreated:
+**Update image** or **Save & recreate** (the card says when the container doesn't have it yet). Templates can set one
+with `--health-cmd`, `--health-interval`, `--health-timeout`, `--health-retries` and `--health-start-period` in their
+`ExtraParams`, or turn the image's off with `--no-healthcheck`; a check set in hlm wins.
+
+Game ports are often UDP, which these checks can't test. For servers whose [status query](#is-the-game-up-players-and-status)
+works, the query can be the health signal instead.
+
+**Restarting unhealthy servers** (off by default): hlm can restart a server once its health has been failing for a
+number of minutes, going by Docker's health check or by the game's status query not answering. Each restart counts
+towards the crash-loop limit, so a server that never recovers is stopped rather than restarted forever. Restarts wait
+while the server is being updated or backed up; each one is in the [activity log](#activity-audit-log) and sends a
+`server.unhealthy` notification.
+
+**Who can do what.** Anyone who can see a server sees its health and crash-loop state. Operators can start a server
+stopped for a crash loop, and see the commands of health checks (they can carry passwords). Changing the health
+settings and running **Test now** takes a manager of the server: a check is a command run inside the server's own
+container, which managers can already do through its files and console, and it can't reach anything the container
+can't.
 
 ## Sending commands to a server
 
@@ -1077,7 +1130,8 @@ Each target chooses its **events** (warnings and errors by default):
 | Event | Severity | When |
 | --- | --- | --- |
 | `server.crashed` | error | A server exits with an error, or runs out of memory, without anyone stopping it. The message includes its last lines of output. |
-| `server.unhealthy` | warning | A server's Docker health check starts failing. |
+| `server.restart_loop` | error | A server kept exiting (a [crash loop](#health-checks-and-crash-loops)), so hlm stopped it. The message includes its last 50 lines of output. |
+| `server.unhealthy` | warning | A server's Docker health check starts failing, or hlm restarted a server whose health kept failing. |
 | `server.online` | info | A server hlm saw start answers its game's [status query](#is-the-game-up-players-and-status): it's ready for players. |
 | `server.not_responding` | warning | A running server stopped answering its status query, or never started answering. |
 | `server.update_available` | info | A newer image is found for a server (once per image the server runs). |
@@ -1361,7 +1415,8 @@ row for its details.
   as **Failed**, with the error.
 - **Sign-ins:** successful and refused ones (wrong password, locked out, not allowed by single sign-on), sign-outs,
   confirming it's you, and SSH key sign-ins. `hlm reset-password` on the host is recorded too.
-- **What hlm does by itself,** as `hlm`: scheduled task runs, automatic updates and scheduled backups.
+- **What hlm does by itself,** as `hlm`: scheduled task runs, automatic updates, scheduled backups, and servers it
+  stopped for a [crash loop](#health-checks-and-crash-loops) or restarted because their health was failing.
 - **Downloads** of backups and of hlm's configuration backups, and exports of the log itself.
 
 Reads (opening a page, listing files) aren't recorded.
@@ -1569,6 +1624,8 @@ when the `HLM_*` one isn't set.
 | `GET /api/jobs`                                | Installs and updates in progress, plus those that finished in the last minute.    |
 | `GET /api/updates`                             | When updates were last checked and how many are available.                        |
 | `GET/PUT /api/servers/{id}/update-policy`      | A server's [automatic updates](#automatic-updates): `{mode, windowStart?, windowEnd?, warn?, warnMinutes?, backup}` (`mode` is `auto`, `manual`, or empty to follow the default), plus what it follows, the update's state and the last result. `PUT` takes a manager; the warning is only shown to operators. |
+| `GET/PUT /api/servers/{id}/health`             | A server's [health settings](#health-checks-and-crash-loops): `{crashLoop: {off?, exits?, minutes?}, check: {kind, port?, path?, command?, interval?, timeout?, retries?, startPeriod?}, restartAfter?, signal?}` (`kind` is empty for the image's check, `none`, `tcp`, `http` or `command`; `signal` is empty for Docker's health or `query`), plus Docker's health, the crash loop it was stopped for, recent exits and whether the container has the check yet. `PUT` takes a manager; commands are only shown to operators. |
+| `POST /api/servers/{id}/health/test`           | Run a health check `{check}` (or the container's own, without one) in the running server once: `{healthy, exitCode, output}`. Managers only. |
 | `GET /api/query`                               | Each running server you can see: its [game status](#is-the-game-up-players-and-status) and player count. |
 | `GET /api/servers/{id}/query`                  | A server's game status: the last answer (players' names only for operators), how it's queried, errors, and a day of player counts. |
 | `PUT /api/servers/{id}/query/settings`         | `{protocol, port?}` (`protocol` is empty to find a way, or `a2s`, `minecraft`, `bedrock`, `rcon`, `tcp`, `off`); a manager. |

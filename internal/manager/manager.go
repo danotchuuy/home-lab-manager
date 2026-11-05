@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"github.com/danotchuuy/home-lab-manager/internal/catalog"
 	"github.com/danotchuuy/home-lab-manager/internal/deploy"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
@@ -57,6 +58,10 @@ type Manager struct {
 	self   ConnectionKind
 	// notifier gets crashes, updates and the like; see UseNotifier.
 	notifier notify.Notifier
+	// crashes counts unexpected exits; see health.go.
+	crashes      *crashTracker
+	healthPolicy HealthPolicy
+	audit        audit.Recorder
 }
 
 // IPChecker asks the LAN's router whether ip is free. It returns a
@@ -95,7 +100,8 @@ func (m *Manager) checkLANAddress(ctx context.Context, spec *deploy.Spec, req de
 // New creates a manager. Template paths under Unraid's appdata share are
 // placed under appdataRoot instead.
 func New(d *docker.Client, c *catalog.Catalog, appdataRoot string, log *slog.Logger) *Manager {
-	m := &Manager{docker: d, catalog: c, appdataRoot: appdataRoot, log: log, updates: newUpdateTracker(), jobs: newJobTracker(), storage: &storageTracker{}}
+	m := &Manager{docker: d, catalog: c, appdataRoot: appdataRoot, log: log, updates: newUpdateTracker(), jobs: newJobTracker(), storage: &storageTracker{},
+		crashes: newCrashTracker()}
 	if u, err := url.Parse(d.Host()); err == nil && u.Scheme != "unix" {
 		m.remoteHost = u.Hostname()
 	}
@@ -141,8 +147,10 @@ type Server struct {
 	Groups []string `json:"groups,omitempty"`
 	// Hidden lists the settings left out of Request for this caller, as
 	// deploy.HideSecrets does.
-	Hidden  []string `json:"hidden,omitempty"`
-	imageID string
+	Hidden []string `json:"hidden,omitempty"`
+	// CrashLoop is set when hlm stopped the server because it kept exiting.
+	CrashLoop *CrashLoop `json:"crashLoop,omitempty"`
+	imageID   string
 }
 
 // startsOnBoot reports whether a restart policy starts the container when the
@@ -171,6 +179,7 @@ func (m *Manager) enrich(srv *Server, info docker.ContainerJSON) {
 		srv.Update = &st
 	}
 	m.fillWebUI(srv, info.Config.Labels)
+	m.fillCrashLoop(srv, info)
 }
 
 // fillWebUI finishes a server's Web UI link. Servers created without one
@@ -585,7 +594,12 @@ func (m *Manager) build(ctx context.Context, req deploy.Request) (*deploy.Spec, 
 	if err != nil {
 		return nil, fmt.Errorf("list networks: %w", err)
 	}
-	return deploy.Build(app, req, deploy.Env{Networks: networks})
+	spec, err := deploy.Build(app, req, deploy.Env{Networks: networks})
+	if err != nil {
+		return nil, err
+	}
+	m.applyHealthcheck(spec)
+	return spec, nil
 }
 
 // inspectNetworks returns the host's networks by name, with the containers
@@ -731,12 +745,13 @@ func (m *Manager) SetAutostart(ctx context.Context, id string, on bool) (Server,
 	return m.Get(ctx, info.ID)
 }
 
-// Start starts a server.
+// Start starts a server. A crash loop it was stopped for is forgotten.
 func (m *Manager) Start(ctx context.Context, id string) error {
 	info, err := m.inspect(ctx, id)
 	if err != nil {
 		return err
 	}
+	m.ClearCrashLoop(strings.TrimPrefix(info.Name, "/"))
 	return m.docker.StartContainer(ctx, info.ID)
 }
 
@@ -756,6 +771,7 @@ func (m *Manager) Restart(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	m.ClearCrashLoop(strings.TrimPrefix(info.Name, "/"))
 	return m.docker.RestartContainer(ctx, info.ID, -1)
 }
 
@@ -774,6 +790,7 @@ func (m *Manager) Remove(ctx context.Context, id string) error {
 		_ = m.ForgetDeleted(info.ID, "", false) // it wasn't deleted after all
 		return err
 	}
+	m.ClearCrashLoop(strings.TrimPrefix(info.Name, "/"))
 	return nil
 }
 

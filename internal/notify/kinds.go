@@ -17,6 +17,7 @@ type Kind struct {
 const (
 	KindServerCrashed     = "server.crashed"
 	KindServerUnhealthy   = "server.unhealthy"
+	KindServerCrashLoop   = "server.restart_loop"
 	KindServerOnline      = "server.online"
 	KindNotResponding     = "server.not_responding"
 	KindUpdateAvailable   = "server.update_available"
@@ -48,6 +49,7 @@ const sentOnce = -1
 // them.
 var Kinds = []Kind{
 	{KindServerCrashed, "Servers", Error, "A server stopped on its own with an error, or ran out of memory", 15 * time.Minute},
+	{KindServerCrashLoop, "Servers", Error, "A server kept exiting (a crash loop), so hlm stopped it", 0},
 	{KindServerUnhealthy, "Servers", Warning, "A server's health check started failing", time.Hour},
 	{KindServerOnline, "Servers", Info, "A server that was starting is ready for players (it answered its game's status query)", 0},
 	{KindNotResponding, "Servers", Warning, "A running server stopped answering its game's status query, or never started answering", time.Hour},

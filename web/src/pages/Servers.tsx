@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { can, useAdmin } from "../access";
 import { api } from "../api";
-import { AppIcon, CONNECTION_GLYPH, Spinner, StateBadge } from "../components/common";
+import { AppIcon, CONNECTION_GLYPH, CrashLoopBadge, HealthBadge, Spinner, StateBadge } from "../components/common";
 import { GameStatusBadge } from "../components/GameStatus";
 import { InstallCard, JobStatus } from "../components/JobProgress";
 import { ResourceSummary } from "../components/Resources";
@@ -343,6 +343,8 @@ export function ServersPage() {
               </Link>
               <div className="server-side">
                 <StateBadge state={s.state} />
+                <CrashLoopBadge crashLoop={s.crashLoop} />
+                <HealthBadge state={s.state} health={s.health} />
                 <GameStatusBadge s={games[s.name]} />
                 <span className="muted small">{s.status}</span>
                 <label className="switch" title={`Restart policy: ${s.restartPolicy}`}>
@@ -384,13 +386,20 @@ export function ServersPage() {
                       </button>
                     </>
                   ) : (
-                    <button
-                      className="btn small primary"
-                      disabled={busy === s.id || !!progress}
-                      onClick={() => act(s, "start")}
-                    >
-                      Start
-                    </button>
+                    <>
+                      {s.crashLoop && can(s, "operator") && (
+                        <Link className="btn ghost small" to={`/servers/${encodeURIComponent(s.name)}`}>
+                          View logs
+                        </Link>
+                      )}
+                      <button
+                        className="btn small primary"
+                        disabled={busy === s.id || !!progress}
+                        onClick={() => act(s, "start")}
+                      >
+                        {s.crashLoop ? "Start anyway" : "Start"}
+                      </button>
+                    </>
                   )}
                 </div>
               </div>

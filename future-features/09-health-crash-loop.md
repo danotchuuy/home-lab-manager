@@ -3,6 +3,28 @@
 **Priority:** Medium · **Depends on:** Docker events from [01](01-notifications.md); alerts via 01; game query from
 [05](05-game-query.md) (optional)
 
+> **Status: done** (branch `feature/09-health-crash-loop`). See the README's
+> [Health checks and crash loops](../README.md#health-checks-and-crash-loops). Where the result differs from this plan:
+>
+> - **Code layout:** counting exits and stopping crash loops is in `internal/manager/health.go` (it needs the event
+>   stream); the per-server settings and the unhealthy-restart loop are a new package, `internal/health`, which the
+>   manager uses through a small `HealthPolicy` interface.
+> - **What counts as an exit:** any `die` nobody asked for, including exit code 0, since Docker restarts those too.
+>   Exits during jobs are ignored as planned; backup pauses already go through `docker stop`, so they never counted.
+> - **Persisted state:** servers stopped for a crash loop are kept in `crash-loops.json` in the data directory (runtime
+>   state, so not in configuration backups); settings are in the secrets store under `"health"` as planned. A crash
+>   loop is also forgotten when the server is started outside hlm (e.g. `docker start`, or Docker after a reboot).
+> - **Log excerpt:** one excerpt for every target: the last 50 lines, cut to their last 3,000 characters, which fits
+>   Discord's 4,000-character embed, rather than a shorter one just for Discord.
+> - **Health signal:** `signal` chooses Docker's health check or the game query (`query`); the query option is offered
+>   only when the server's query is chosen or was found.
+> - **Added:** `POST /api/servers/{id}/health/test` (manager) runs a check once in the running server and returns its
+>   exit code and output, so you can tell whether the image has `nc`/`bash` or `curl`/`wget`. TCP and HTTP checks pick
+>   their tool up front, so a closed port reports exit 1 rather than "command not found".
+> - **Start period:** can be set to 0 (none); it defaults to 10 minutes.
+> - **Unhealthy restarts:** the monitor checks every 30 seconds, so a restart comes up to 30 seconds after the limit.
+>   Restarts wait while a job or backup runs. Each is audited and sends `server.unhealthy`.
+
 ## Why
 
 With **Start on boot** the restart policy is `always`, so a server with a bad config or a corrupt save restarts forever:
@@ -66,11 +88,11 @@ so Manager is acceptable. Document it.
 
 ## Tasks
 
-- [ ] Health state in `manager.Server`
-- [ ] Health flags in extra params
-- [ ] Crash-loop window + stop + persisted state
-- [ ] Custom health config in settings → applied on recreate
-- [ ] Unhealthy auto-restart option
-- [ ] Notifications with log excerpt
-- [ ] UI badges, settings section
-- [ ] README section
+- [x] Health state in `manager.Server`
+- [x] Health flags in extra params
+- [x] Crash-loop window + stop + persisted state
+- [x] Custom health config in settings → applied on recreate
+- [x] Unhealthy auto-restart option
+- [x] Notifications with log excerpt
+- [x] UI badges, settings section
+- [x] README section

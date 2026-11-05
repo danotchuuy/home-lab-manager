@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { can, useAdmin } from "../access";
 import { api, ApiError } from "../api";
-import { AppIcon, Spinner, StateBadge } from "../components/common";
+import { AppIcon, CrashLoopBadge, HealthBadge, Spinner, StateBadge } from "../components/common";
 import { ServerActivity } from "../components/ActivityLog";
 import { ConfigFilesCard } from "../components/ConfigFilesCard";
 import { ConfigForm } from "../components/ConfigForm";
@@ -18,11 +18,12 @@ import { ServerGroupPicker } from "../components/ServerGroups";
 import { ServerHostnames } from "../components/ServerHostnames";
 import { ServerSchedule } from "../components/ServerSchedule";
 import { ServerUpdatePolicyCard } from "../components/UpdatePolicy";
+import { ServerHealthCard } from "../components/HealthSettings";
 import { StatTiles } from "../components/Resources";
 import { ServerHistory } from "../components/ResourceHistory";
 import type { App, DeployEvent, DeployRequest, Server, Stats } from "../types";
 import { usePoll } from "../usePoll";
-import { formatNetwork, formatPorts, webUILink } from "../util";
+import { formatNetwork, formatPorts, timeAgo, webUILink } from "../util";
 
 type Tab = "logs" | "files" | "backups" | "schedule" | "ports" | "settings";
 
@@ -139,7 +140,8 @@ export function ServerDetailPage() {
         <AppIcon src={server.icon} size={72} />
         <div className="grow">
           <h1>
-            {server.name} <StateBadge state={server.state} health={server.health} />
+            {server.name} <StateBadge state={server.state} /> <HealthBadge state={server.state} health={server.health} />{" "}
+            <CrashLoopBadge crashLoop={server.crashLoop} />
           </h1>
           <div className="muted">
             {server.app} · <code>{server.image}</code> · {server.status}
@@ -169,13 +171,34 @@ export function ServerDetailPage() {
             </>
           ) : (
             <button className="btn primary" disabled={busy} onClick={() => act("start")}>
-              Start
+              {server.crashLoop ? "Start anyway" : "Start"}
             </button>
           )}
         </div>
       </div>
 
       {error && <div className="alert error">{error}</div>}
+
+      {server.crashLoop && (
+        <div className="alert error crash-loop-alert">
+          <div>
+            <strong>Crash loop: stopped by hlm.</strong> {server.name} exited (or had to be restarted) {server.crashLoop.exits} times in{" "}
+            {server.crashLoop.windowMinutes} minutes (last: {server.crashLoop.reason ?? "unknown"}), so hlm stopped it{" "}
+            <span title={new Date(server.crashLoop.since).toLocaleString()}>{timeAgo(server.crashLoop.since)}</span>.
+            It stays stopped until someone starts it. Its console output usually says why it keeps exiting.
+          </div>
+          {operator && (
+            <div className="btn-row">
+              <button className="btn small" onClick={() => setTab("logs")}>
+                View logs
+              </button>
+              <button className="btn small primary" disabled={busy} onClick={() => act("start")}>
+                Start anyway
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {stats && <StatTiles stats={stats} />}
 
@@ -261,6 +284,8 @@ export function ServerDetailPage() {
             </button>
           </div>
           <ServerUpdatePolicyCard server={server.name} canManage={manager} />
+          <hr />
+          <ServerHealthCard server={server.name} running={running} canManage={manager} />
           <hr />
           <ConfigFilesCard server={server.name} canManage={manager} />
           <hr />

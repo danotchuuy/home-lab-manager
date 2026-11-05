@@ -191,3 +191,150 @@ func TestUpdateNotifications(t *testing.T) {
 		t.Errorf("update key = %q", n.events[2].Key)
 	}
 }
+
+type limitPolicy struct {
+	exits  int
+	window time.Duration
+}
+
+func (p limitPolicy) CrashLoopLimit(string) (int, time.Duration) { return p.exits, p.window }
+func (p limitPolicy) Healthcheck(string) *docker.Healthcheck    { return nil }
+
+// waitFor waits for the notifier to have an event of kind.
+func (f *fakeNotifier) waitFor(t *testing.T, kind string) notify.Event {
+	t.Helper()
+	return f.waitForWithin(t, kind, 5*time.Second)
+}
+
+func (f *fakeNotifier) waitForWithin(t *testing.T, kind string, d time.Duration) notify.Event {
+	t.Helper()
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		f.mu.Lock()
+		for _, e := range f.events {
+			if e.Kind == kind {
+				f.mu.Unlock()
+				return e
+			}
+		}
+		f.mu.Unlock()
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("no %s event", kind)
+	return notify.Event{}
+}
+
+func (f *fakeNotifier) count(kind string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, e := range f.events {
+		if e.Kind == kind {
+			n++
+		}
+	}
+	return n
+}
+
+func TestCrashLoop(t *testing.T) {
+	m, n := eventsManager(t)
+	path := t.TempDir() + "/crash-loops.json"
+	if err := m.UseCrashLoopStore(path); err != nil {
+		t.Fatal(err)
+	}
+	f := &eventFeed{m: m, st: newWatchState(), t: time.Now()}
+
+	// Exits spread out don't add up: 4 in the window, then one after the
+	// first has left it.
+	for range 4 {
+		f.send("die", "a", server("valheim", "exitCode", "1"))
+		f.t = f.t.Add(2 * time.Minute)
+	}
+	f.t = f.t.Add(3 * time.Minute)
+	f.send("die", "a", server("valheim", "exitCode", "1"))
+	if _, ok := m.CrashLoopOf("valheim"); ok || n.count(notify.KindServerCrashLoop) != 0 {
+		t.Fatal("stopped for exits outside the window")
+	}
+	// Stops asked for, and exits during jobs, don't count.
+	for range 3 {
+		f.send("kill", "a", server("valheim"))
+		f.send("die", "a", server("valheim", "exitCode", "143"))
+	}
+	_, finish, _ := m.jobs.start(Job{Kind: "update", Server: "valheim"}, func(Event) {})
+	for range 3 {
+		f.send("die", "a", server("valheim", "exitCode", "1"))
+	}
+	finish(nil)
+	if _, ok := m.CrashLoopOf("valheim"); ok {
+		t.Fatal("stopped for deliberate stops")
+	}
+
+	// The fifth within 10 minutes (even a clean exit: Docker restarts
+	// those too) stops it, once.
+	f.send("die", "a", server("valheim", "exitCode", "0"))
+	e := n.waitFor(t, notify.KindServerCrashLoop)
+	if !strings.Contains(e.Message, "exited (or had to be restarted) 5 times in 10 minutes") || !strings.Contains(e.Message, "ERROR: save is corrupt") {
+		t.Errorf("message = %q", e.Message)
+	}
+	waitCrashLoop(t, m, "valheim")
+	f.send("die", "a", server("valheim", "exitCode", "1"))
+	time.Sleep(50 * time.Millisecond)
+	if c := n.count(notify.KindServerCrashLoop); c != 1 {
+		t.Errorf("%d crash-loop alerts", c)
+	}
+	srv := Server{Name: "valheim"}
+	m.fillCrashLoop(&srv, docker.ContainerJSON{})
+	if srv.CrashLoop == nil || srv.CrashLoop.Exits != 5 || srv.CrashLoop.ExitCode != "0" {
+		t.Errorf("server crash loop = %+v", srv.CrashLoop)
+	}
+
+	// It's remembered across a restart of hlm.
+	m2, _ := eventsManager(t)
+	if err := m2.UseCrashLoopStore(path); err != nil {
+		t.Fatal(err)
+	}
+	if cl, ok := m2.CrashLoopOf("valheim"); !ok || cl.Exits != 5 {
+		t.Errorf("reloaded = %+v %v", cl, ok)
+	}
+	// Started outside hlm since: forgotten.
+	var info docker.ContainerJSON
+	info.State.Running = true
+	info.State.StartedAt = time.Now().Add(time.Hour).Format(time.RFC3339Nano)
+	srv = Server{Name: "valheim"}
+	m2.fillCrashLoop(&srv, info)
+	if _, ok := m2.CrashLoopOf("valheim"); ok || srv.CrashLoop != nil {
+		t.Error("crash loop kept after a start")
+	}
+
+	// Starting it in hlm forgets it too, with the exits counted so far.
+	m.ClearCrashLoop("valheim")
+	if _, ok := m.CrashLoopOf("valheim"); ok || m.RecentExits("valheim") != 0 {
+		t.Error("not cleared")
+	}
+
+	// Turned off for a server.
+	m.UseHealthPolicy(limitPolicy{exits: 0})
+	for range 10 {
+		f.send("die", "b", server("minecraft", "exitCode", "1"))
+	}
+	time.Sleep(50 * time.Millisecond)
+	if _, ok := m.CrashLoopOf("minecraft"); ok {
+		t.Error("stopped with protection off")
+	}
+	// A lower limit.
+	m.UseHealthPolicy(limitPolicy{exits: 2, window: time.Minute})
+	f.send("die", "c", server("palworld", "exitCode", "1"))
+	f.send("die", "c", server("palworld", "exitCode", "1"))
+	waitCrashLoop(t, m, "palworld")
+}
+
+func waitCrashLoop(t *testing.T, m *Manager, name string) {
+	t.Helper()
+	for range 500 {
+		if _, ok := m.CrashLoopOf(name); ok {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("%s not stopped for a crash loop", name)
+}

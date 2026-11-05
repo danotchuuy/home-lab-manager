@@ -353,6 +353,21 @@ select:disabled {
   color: var(--danger);
 }
 
+.badge.health-healthy {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  color: var(--success);
+}
+
+.badge.health-unhealthy,
+.badge.crash-loop {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  color: var(--danger);
+}
+
+.badge.crash-loop {
+  text-transform: none;
+}
+
 .spinner {
   display: inline-block;
   width: 22px;

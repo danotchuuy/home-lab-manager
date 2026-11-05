@@ -35,6 +35,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/files"
 	"github.com/danotchuuy/home-lab-manager/internal/forwarding"
 	"github.com/danotchuuy/home-lab-manager/internal/gamequery"
+	"github.com/danotchuuy/home-lab-manager/internal/health"
 	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
 	"github.com/danotchuuy/home-lab-manager/internal/linode"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
@@ -90,6 +91,10 @@ type Options struct {
 	Sampler *metrics.Sampler
 	// MetricsConfig is /metrics' settings.
 	MetricsConfig *metrics.Config
+	// Health keeps servers' health settings, and HealthMonitor restarts
+	// those whose health keeps failing.
+	Health        *health.Store
+	HealthMonitor *health.Monitor
 	// UpdateCheckEnv is HLM_UPDATE_CHECK, which overrides the setting for
 	// how often updates are checked for, if set.
 	UpdateCheckEnv string
@@ -448,6 +453,11 @@ func (s *server) removeServer(w http.ResponseWriter, r *http.Request) {
 	if s.Query != nil {
 		if err := s.Query.ForgetServer(srv.Name); err != nil {
 			s.Log.Warn("forget deleted server's query settings", "server", srv.Name, "err", err)
+		}
+	}
+	if s.Health != nil {
+		if err := s.Health.ForgetServer(srv.Name); err != nil {
+			s.Log.Warn("forget deleted server's health settings", "server", srv.Name, "err", err)
 		}
 	}
 	if s.AutoUpdate != nil {
