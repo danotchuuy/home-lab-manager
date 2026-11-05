@@ -182,7 +182,7 @@ func (m *Monitor) restart(ctx context.Context, name, reason string) {
 		Kind: notify.KindServerUnhealthy, Title: name + " was restarted: its health was failing",
 		Message: fmt.Sprintf("%s was %s, so hlm restarted it.", name, reason), Server: name,
 		Link: "/servers/" + name, Time: m.opts.Now(),
-		Key:  notify.DedupeKey(notify.KindServerUnhealthy, name) + "/restart",
+		Key: notify.DedupeKey(notify.KindServerUnhealthy, name) + "/restart",
 	}
 	if err != nil {
 		e.Title = name + " is unhealthy, and restarting it failed"

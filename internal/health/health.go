@@ -56,9 +56,9 @@ type Check struct {
 	Path    string `json:"path,omitempty"`    // http
 	Command string `json:"command,omitempty"` // command, run with /bin/sh -c
 	// Timings; 0 uses the defaults.
-	Interval    int `json:"interval,omitempty"`    // seconds between checks
-	Timeout     int `json:"timeout,omitempty"`     // seconds a check may take
-	Retries     int `json:"retries,omitempty"`     // failures in a row that make it unhealthy
+	Interval int `json:"interval,omitempty"` // seconds between checks
+	Timeout  int `json:"timeout,omitempty"`  // seconds a check may take
+	Retries  int `json:"retries,omitempty"`  // failures in a row that make it unhealthy
 	// StartPeriod is the minutes after a start when failures don't count;
 	// nil uses the default (0 is none).
 	StartPeriod *int `json:"startPeriod,omitempty"`

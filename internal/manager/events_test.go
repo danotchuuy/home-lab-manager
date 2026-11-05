@@ -198,7 +198,7 @@ type limitPolicy struct {
 }
 
 func (p limitPolicy) CrashLoopLimit(string) (int, time.Duration) { return p.exits, p.window }
-func (p limitPolicy) Healthcheck(string) *docker.Healthcheck    { return nil }
+func (p limitPolicy) Healthcheck(string) *docker.Healthcheck     { return nil }
 
 // waitFor waits for the notifier to have an event of kind.
 func (f *fakeNotifier) waitFor(t *testing.T, kind string) notify.Event {
