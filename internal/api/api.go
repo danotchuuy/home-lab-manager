@@ -27,6 +27,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/backup"
 	"github.com/danotchuuy/home-lab-manager/internal/catalog"
 	"github.com/danotchuuy/home-lab-manager/internal/cftunnel"
+	"github.com/danotchuuy/home-lab-manager/internal/cleanup"
 	"github.com/danotchuuy/home-lab-manager/internal/cloudflare"
 	"github.com/danotchuuy/home-lab-manager/internal/configfiles"
 	"github.com/danotchuuy/home-lab-manager/internal/console"
@@ -104,6 +105,8 @@ type Options struct {
 	Stacks *stack.Service
 	// Hosts are the other Docker hosts servers can be on.
 	Hosts *hosts.Registry
+	// Cleanup keeps the disk cleanup settings.
+	Cleanup *cleanup.Service
 	// UpdateCheckEnv is HLM_UPDATE_CHECK, which overrides the setting for
 	// how often updates are checked for, if set.
 	UpdateCheckEnv string
