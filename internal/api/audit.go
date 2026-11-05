@@ -32,6 +32,8 @@ var auditNames = map[string]string{
 	"GET /api/audit/export":                             "audit.export",
 	"GET /api/servers/{id}/export":                      "servers.export",
 	"POST /api/servers/import/preview":                  "-",
+	"POST /api/hosts/inspect":                           "-",
+	"POST /api/hosts/setup-docker":                      "hosts.setup-docker",
 	"POST /api/servers/{id}/clone/preview":              "-",
 	"GET /api/integrations/backup/targets/{target}/key": "integrations.backup.targets.key",
 }

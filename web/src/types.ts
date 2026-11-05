@@ -424,6 +424,7 @@ export interface DeployEvent {
     // hlm's own updates:
     | "download"
     | "verify"
+    | "log"
     | "install"
     | "restart"
     // imports and clones:
@@ -1813,4 +1814,27 @@ export interface DockerVersion {
   apiVersion: string;
   os: string;
   arch: string;
+}
+
+/** What hlm found on an SSH host, and how it would set Docker up there. */
+export interface HostInspection {
+  os: string;
+  id: string;
+  version: string;
+  codename: string;
+  arch: string;
+  user: string;
+  root: boolean;
+  sudo: boolean;
+  docker: boolean;
+  running: boolean;
+  dockerVersion?: string;
+  inGroup: boolean;
+  systemd: boolean;
+  ready: boolean;
+  distro?: string;
+  script?: string;
+  canSetUp: boolean;
+  reason?: string;
+  notes?: string[];
 }

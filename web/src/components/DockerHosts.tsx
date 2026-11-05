@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, ApiError } from "../api";
-import type { DockerHost, DockerHostInput, DockerVersion, SSHKeyInfo } from "../types";
+import type { DeployEvent, DockerHost, DockerHostInput, DockerVersion, HostInspection, SSHKeyInfo } from "../types";
 import { Spinner } from "./common";
 
 const EMPTY: DockerHostInput = {
@@ -18,6 +18,7 @@ const EMPTY: DockerHostInput = {
 };
 
 type HostKeyPrompt = { key: string; fingerprint: string; type: string };
+type Action = "test" | "save" | "check";
 
 /** Host page → Docker hosts: other machines whose servers hlm manages too. */
 export function DockerHosts() {
@@ -205,14 +206,20 @@ function HostForm({
   const [error, setError] = useState<string>();
   const [version, setVersion] = useState<DockerVersion>();
   const [hostKey, setHostKey] = useState<HostKeyPrompt>();
+  // What was being tried when the host key had to be confirmed.
+  const [pending, setPending] = useState<Action>("test");
+  const [inspection, setInspection] = useState<HostInspection>();
+  const [setupEvents, setSetupEvents] = useState<DeployEvent[]>([]);
 
   const set = <K extends keyof DockerHostInput>(k: K, v: DockerHostInput[K]) => {
     setForm((f) => ({ ...f, [k]: v }));
     setVersion(undefined);
+    setInspection(undefined);
   };
   const setSSH = (k: "host" | "port" | "user" | "hostKey", v: string | number) => {
     setForm((f) => ({ ...f, ssh: { ...f.ssh!, [k]: v } }));
     setVersion(undefined);
+    setInspection(undefined);
   };
 
   // Only what the chosen connection needs.
@@ -221,11 +228,14 @@ function HostForm({
       ? { ...f, url: undefined, ca: undefined, cert: undefined, key: undefined }
       : { ...f, ssh: undefined, socket: undefined };
 
-  async function run(what: "test" | "save", f = form) {
+  async function run(what: Action, f = form) {
     setBusy(what);
     setError(undefined);
     try {
-      if (what === "test") setVersion(await api.testHost(payload(f)));
+      if (what === "test") {
+        setVersion(await api.testHost(payload(f)));
+        setInspection(undefined);
+      } else if (what === "check") setInspection(await api.inspectHost(payload(f)));
       else {
         await (initial ? api.updateHost(payload(f)) : api.createHost(payload(f)));
         onDone();
@@ -234,12 +244,17 @@ function HostForm({
       const body = e instanceof ApiError ? e.body : undefined;
       const hk = body?.hostKey as string | undefined;
       if (hk) {
+        setPending(what);
         setHostKey({
           key: hk,
           fingerprint: body?.hostKeyFingerprint as string,
           type: (body?.hostKeyType as string) || "ed25519",
         });
-      } else setError((e as Error).message);
+      } else {
+        setError((e as Error).message);
+        // Docker may just not be there: look at the host to say what's missing.
+        if (what === "test" && f.kind === "ssh") api.inspectHost(payload(f)).then(setInspection, () => {});
+      }
     } finally {
       setBusy(undefined);
     }
@@ -249,7 +264,26 @@ function HostForm({
     const f = { ...form, ssh: { ...form.ssh!, hostKey: hostKey!.key } };
     setForm(f);
     setHostKey(undefined);
-    run("test", f);
+    run(pending === "save" ? "test" : pending, f);
+  }
+
+  async function setUpDocker() {
+    if (!confirm(`Run these commands as root on ${form.ssh?.host}? They can take a few minutes.`)) return;
+    setBusy("setup");
+    setError(undefined);
+    setSetupEvents([]);
+    let ok = false;
+    try {
+      await api.setupDocker(payload(form), (e) => {
+        setSetupEvents((prev) => [...prev, e]);
+        if (e.stage === "done") ok = true;
+      });
+    } catch (e) {
+      setSetupEvents((prev) => [...prev, { stage: "error", message: (e as Error).message }]);
+    } finally {
+      setBusy(undefined);
+    }
+    if (ok) await run("test");
   }
 
   async function makeKey() {
@@ -473,6 +507,10 @@ function HostForm({
       </div>
 
       {error && <div className="alert error small">{error}</div>}
+      {ssh && inspection && (
+        <HostCheck inspection={inspection} busy={busy === "setup"} disabled={!!busy} onSetUp={setUpDocker} />
+      )}
+      {setupEvents.length > 0 && <SetupLog events={setupEvents} />}
       {version && (
         <div className="alert success small">
           Connected: Docker {version.version} (API {version.apiVersion}, {version.os}/{version.arch}).
@@ -482,6 +520,11 @@ function HostForm({
         <button type="button" className="btn" onClick={() => run("test")} disabled={!!busy}>
           {busy === "test" ? "Testing…" : "Test connection"}
         </button>
+        {ssh && (
+          <button type="button" className="btn" onClick={() => run("check")} disabled={!!busy}>
+            {busy === "check" ? "Checking…" : "Check for Docker"}
+          </button>
+        )}
         <button type="submit" className="btn primary" disabled={!!busy || (ssh && !form.ssh?.hostKey)}>
           {busy === "save" ? "Saving…" : initial ? "Save" : "Add host"}
         </button>
@@ -490,5 +533,94 @@ function HostForm({
         </button>
       </div>
     </form>
+  );
+}
+
+const DISTRO_PAGE: Record<string, string> = {
+  ubuntu: "ubuntu",
+  debian: "debian",
+  raspbian: "raspberry-pi-os",
+  fedora: "fedora",
+  centos: "centos",
+  rhel: "rhel",
+};
+
+/** What hlm found on the host, and the button to set Docker up there. */
+function HostCheck({
+  inspection: i,
+  busy,
+  disabled,
+  onSetUp,
+}: {
+  inspection: HostInspection;
+  busy: boolean;
+  disabled: boolean;
+  onSetUp: () => void;
+}) {
+  const docker = i.dockerVersion
+    ? `Docker ${i.dockerVersion}, usable by ${i.user}`
+    : !i.docker
+      ? "Docker isn't installed"
+      : !i.running
+        ? "Docker is installed but not running"
+        : `Docker is running, but ${i.user} can't use it (not in the docker group)`;
+  const action = !i.docker ? "Install Docker" : !i.running ? "Start Docker" : `Let ${i.user} use Docker`;
+  return (
+    <div className={`alert ${i.ready ? "success" : "info"} small host-check`}>
+      <div>
+        <strong>{i.os || "Unknown Linux"}</strong> ({i.arch}), signed in as <code>{i.user}</code>
+        {i.root ? " (root)" : i.sudo ? " (passwordless sudo)" : ""}. {docker}.
+      </div>
+      {!i.ready && i.reason && <div>{i.reason}</div>}
+      {i.notes?.map((n) => (
+        <div key={n}>{n}</div>
+      ))}
+      {!i.ready && i.script && (
+        <>
+          {!i.docker && i.distro && (
+            <div>
+              hlm installs Docker CE from Docker&apos;s own repository, following{" "}
+              <a
+                href={`https://docs.docker.com/engine/install/${DISTRO_PAGE[i.distro]}/`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Docker&apos;s install steps for {i.distro === "raspbian" ? "Raspberry Pi OS" : i.os}
+              </a>
+              , starts it on boot, and adds <code>{i.user}</code> to the <code>docker</code> group.
+            </div>
+          )}
+          <details>
+            <summary>The commands{i.canSetUp ? " hlm runs as root" : " to run as root"}</summary>
+            <pre className="setup-script">{i.script}</pre>
+          </details>
+          {i.canSetUp && (
+            <div className="btn-row">
+              <button type="button" className="btn small primary" onClick={onSetUp} disabled={disabled}>
+                {busy ? "Working… (this can take a few minutes)" : action}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** The output of setting Docker up, as it runs. */
+function SetupLog({ events }: { events: DeployEvent[] }) {
+  const lines = events.filter((e) => e.stage === "log").map((e) => e.message);
+  const end = events.find((e) => e.stage === "done" || e.stage === "error");
+  return (
+    <div className="setup-log">
+      <pre
+        ref={(el) => {
+          if (el) el.scrollTop = el.scrollHeight;
+        }}
+      >
+        {lines.join("\n")}
+      </pre>
+      {end && <div className={`alert ${end.stage === "done" ? "success" : "error"} small`}>{end.message}</div>}
+    </div>
   );
 }

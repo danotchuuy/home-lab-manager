@@ -91,6 +91,7 @@ import type {
   DockerHost,
   DockerHostInput,
   DockerVersion,
+  HostInspection,
   NetworkRequest,
   UpdateCheckInfo,
   Role,
@@ -443,6 +444,12 @@ export const api = {
     json<DockerHost>(`/api/hosts/${encodeURIComponent(h.id)}`, { method: "PUT", body: JSON.stringify(h) }),
   deleteHost: (id: string) => json<void>(`/api/hosts/${encodeURIComponent(id)}`, { method: "DELETE" }),
   checkHost: (id: string) => json<DockerVersion>(`/api/hosts/${encodeURIComponent(id)}/check`, { method: "POST" }),
+  /** Signs in to an SSH host: is Docker there, and how would hlm set it up? */
+  inspectHost: (h: DockerHostInput) =>
+    json<HostInspection>("/api/hosts/inspect", { method: "POST", body: JSON.stringify(h) }),
+  /** Installs Docker CE on an SSH host (or starts it, or lets the user use it); streams the output. */
+  setupDocker: (h: DockerHostInput, onEvent: (e: DeployEvent) => void) =>
+    stream("/api/hosts/setup-docker", { method: "POST", body: JSON.stringify(h) }, onEvent),
   /** Makes hlm's SSH key, if there isn't one. */
   hostsSSHKey: () => json<SSHKeyInfo>("/api/hosts/ssh-key", { method: "POST" }),
   reconfigure: (id: string, req: DeployRequest, onEvent: (e: DeployEvent) => void) =>

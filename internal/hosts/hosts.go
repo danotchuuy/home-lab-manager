@@ -41,6 +41,10 @@ const (
 // DefaultSocket is where Docker's socket usually is.
 const DefaultSocket = "/var/run/docker.sock"
 
+// ErrNoDocker is returned for an SSH host without Docker; Inspect and
+// SetUpDocker can install it.
+var ErrNoDocker = errors.New("Docker doesn't seem to be installed on the host")
+
 // ErrNotFound is returned for a host that doesn't exist.
 var ErrNotFound = errors.New("no such host")
 
@@ -595,6 +599,9 @@ func (d *sshDialer) open(ctx context.Context, c *remote.Conn) (net.Conn, error) 
 		if err == nil {
 			nc, err = d.cli(ctx, c)
 		}
+		if err != nil && strings.Contains(err.Error(), "not found") {
+			return nil, fmt.Errorf("%w: there's no docker command there, and %s can't be opened", ErrNoDocker, d.socket)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("the SSH server doesn't forward %s (%v), and the docker command there didn't work either (%w): allow forwarding (AllowTcpForwarding yes in sshd_config), or let the user run docker",
 				d.socket, forwardErr, err)
@@ -680,6 +687,18 @@ func (d *sshDialer) drop(c *remote.Conn) {
 	}
 	d.mu.Unlock()
 	c.Close()
+}
+
+// reset drops the SSH connection, so the next request signs in again (to
+// pick up a new group membership, say).
+func (d *sshDialer) reset() {
+	d.mu.Lock()
+	c := d.conn
+	d.conn, d.viaCLI = nil, false
+	d.mu.Unlock()
+	if c != nil {
+		c.Close()
+	}
 }
 
 func (d *sshDialer) close() {

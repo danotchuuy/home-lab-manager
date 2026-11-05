@@ -3691,3 +3691,22 @@ textarea.code-input {
 .host-form h3 {
   margin-top: 0;
 }
+.host-check > div + div,
+.host-check details,
+.host-check .btn-row {
+  margin-top: 0.4rem;
+}
+.host-check pre.setup-script,
+.setup-log pre {
+  max-height: 18rem;
+  overflow: auto;
+  font-size: 0.75rem;
+  background: var(--code-bg, #111);
+  color: #e6e6e6;
+  padding: 0.6rem;
+  border-radius: 6px;
+  white-space: pre-wrap;
+}
+.setup-log {
+  margin: 0.6rem 0;
+}

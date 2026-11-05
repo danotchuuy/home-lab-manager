@@ -22,6 +22,9 @@
 >   wasn't built.
 > - **Clone between hosts:** the clone page has a host picker; data is copied through hlm (archive from one host,
 >   restore on the other), ports stay when they're free on the target.
+> - **Added: setting Docker up on an SSH host.** "Check for Docker" reports the host's OS and Docker state; hlm can
+>   install Docker CE following Docker's install pages (Ubuntu, Debian, Raspberry Pi OS, Fedora, CentOS Stream, RHEL),
+>   start it on boot and add the user to the `docker` group, as root (root or passwordless sudo).
 > - **Not built (yet):** the `hlm agent` mode (B) and enrolment tokens; host metrics, disk usage and deleted-server data
 >   for other hosts (the Host page is the local host's); Compose stacks on other hosts; "host" as an RBAC grant target.
 

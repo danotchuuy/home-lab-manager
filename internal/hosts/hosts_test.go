@@ -20,6 +20,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -62,6 +64,11 @@ type sshOptions struct {
 	// dockerCLI is the socket "docker system dial-stdio" connects to; ""
 	// means there's no docker command.
 	dockerCLI string
+	// dockerDenied makes the docker command fail as for a user outside
+	// the docker group.
+	dockerDenied bool
+	// shell runs other commands with sh on this machine.
+	shell bool
 }
 
 // sshServer accepts hlm's key and forwards direct-streamlocal channels
@@ -159,6 +166,21 @@ func serveSession(nch ssh.NewChannel, o sshOptions) {
 		var cmd struct{ Command string }
 		ssh.Unmarshal(req.Payload, &cmd)
 		req.Reply(true, nil)
+		if o.shell && !strings.HasPrefix(cmd.Command, "docker") {
+			c := exec.Command("sh", "-c", cmd.Command)
+			c.Stdout, c.Stderr = ch, ch.Stderr()
+			code := uint32(0)
+			if err := c.Run(); err != nil {
+				code = 1
+			}
+			ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Code uint32 }{code}))
+			return
+		}
+		if o.dockerDenied {
+			io.WriteString(ch.Stderr(), "permission denied while trying to connect to the Docker daemon socket\n")
+			ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Code uint32 }{1}))
+			return
+		}
 		if o.dockerCLI != "" && strings.HasPrefix(cmd.Command, "docker version") {
 			io.WriteString(ch, "27.1.0\n")
 			ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Code uint32 }{0}))
@@ -308,9 +330,17 @@ func TestSSHHostWithoutForwarding(t *testing.T) {
 	target, hostKey, _ := sshServer(t, pub, sshOptions{noForwarding: true})
 	target.HostKey = strings.TrimSpace(string(ssh.MarshalAuthorizedKey(hostKey)))
 	in := Input{Host: Host{ID: "nas", Kind: KindSSH, SSH: &target, AppdataRoot: "/srv"}}
-	if _, err := r.Test(ctx, in); err == nil || !strings.Contains(err.Error(), "AllowTcpForwarding") ||
-		!strings.Contains(err.Error(), "docker: not found") {
+	if _, err := r.Test(ctx, in); !errors.Is(err, ErrNoDocker) {
 		t.Errorf("without forwarding or docker: %v", err)
+	}
+
+	// A docker command that can't reach Docker: say what to change.
+	target, hostKey, _ = sshServer(t, pub, sshOptions{noForwarding: true, dockerDenied: true})
+	target.HostKey = strings.TrimSpace(string(ssh.MarshalAuthorizedKey(hostKey)))
+	in.SSH = &target
+	if _, err := r.Test(ctx, in); err == nil || !strings.Contains(err.Error(), "AllowTcpForwarding") ||
+		!strings.Contains(err.Error(), "permission denied") {
+		t.Errorf("docker without permission: %v", err)
 	}
 
 	target, hostKey, _ = sshServer(t, pub, sshOptions{noForwarding: true, dockerCLI: sock})
@@ -323,6 +353,34 @@ func TestSSHHostWithoutForwarding(t *testing.T) {
 		if v, err := (*got)[0].Docker.Version(ctx); err != nil || v.Version != "27.1.0" {
 			t.Fatalf("version through the docker command = %+v, %v", v, err)
 		}
+	}
+}
+
+// Inspect signs in and reads what's on the host: here, this machine.
+func TestInspectOverSSH(t *testing.T) {
+	kp, _ := remote.GenerateKey("hlm@test")
+	pub, _, _, _, _ := ssh.ParseAuthorizedKey([]byte(kp.Public))
+	target, hostKey, _ := sshServer(t, pub, sshOptions{shell: true})
+	r, _, _ := registry(t, kp)
+	in := Input{Host: Host{Kind: KindSSH, SSH: &target}}
+	var hk *remote.HostKeyError
+	if _, err := r.Inspect(context.Background(), in); !errors.As(err, &hk) {
+		t.Fatalf("untrusted host key: %v", err)
+	}
+	target.HostKey = strings.TrimSpace(string(ssh.MarshalAuthorizedKey(hostKey)))
+	got, err := r.Inspect(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	me, _ := user.Current()
+	if got.User != me.Username || got.Arch == "" || got.Root != (me.Uid == "0") {
+		t.Errorf("inspection = %+v", got)
+	}
+	if !got.Ready && got.Script == "" && got.Reason == "" {
+		t.Errorf("not ready, with no way forward: %+v", got)
+	}
+	if _, err := r.Inspect(context.Background(), Input{Host: Host{Kind: KindTCP}}); err == nil {
+		t.Error("inspected a TCP host")
 	}
 }
 

@@ -99,6 +99,7 @@ var expected = map[string]string{
 	"POST /api/hosts":                                   "confirmed",
 	"PUT /api/hosts/{id}":                               "confirmed",
 	"DELETE /api/hosts/{id}":                            "confirmed",
+	"POST /api/hosts/setup-docker":                      "confirmed",
 	"GET /api/stacks/{name}":                            "signedIn",
 	"POST /api/stacks/{name}/{action}":                  "signedIn",
 	"POST /api/auth/login/2fa":                          "public",

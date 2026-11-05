@@ -1,11 +1,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 
+	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"github.com/danotchuuy/home-lab-manager/internal/hosts"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
 	"github.com/danotchuuy/home-lab-manager/internal/remote"
@@ -157,6 +159,43 @@ func (s *server) checkHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+// inspectHost signs in to an SSH host and says whether Docker is there,
+// and how hlm would set it up if not.
+func (s *server) inspectHost(w http.ResponseWriter, r *http.Request) {
+	in, ok := readHost(w, r)
+	if !ok {
+		return
+	}
+	res, err := s.Hosts.Inspect(r.Context(), in)
+	if err != nil {
+		writeHostError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// setUpDocker installs Docker CE on an SSH host (or starts it, or lets the
+// user use it), streaming the output.
+func (s *server) setUpDocker(w http.ResponseWriter, r *http.Request) {
+	in, ok := readHost(w, r)
+	if !ok {
+		return
+	}
+	if in.SSH != nil {
+		audit.Add(r.Context(), "host", in.SSH.User+"@"+in.SSH.Host)
+	}
+	s.stream(w, r, func(ctx context.Context, emit func(manager.Event)) error {
+		res, err := s.Hosts.SetUpDocker(ctx, in, func(line string) {
+			emit(manager.Event{Stage: "log", Message: line})
+		})
+		if err != nil {
+			return err
+		}
+		emit(manager.Event{Stage: "done", Message: "Docker " + res.DockerVersion + " is running, and " + res.User + " can use it."})
+		return nil
+	})
 }
 
 // sshKeyForHosts makes hlm's SSH key, if there isn't one, for hosts

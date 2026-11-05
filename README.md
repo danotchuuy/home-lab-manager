@@ -244,6 +244,15 @@ alerts as usual.
   Docker's socket over the connection. The host's SSH key is checked against the fingerprint you confirmed the first
   time. If the SSH server doesn't allow forwarding (`AllowTcpForwarding no`), hlm runs `docker system dial-stdio`
   there instead, as the `docker` CLI does for `ssh://` hosts; that needs the `docker` command on the host.
+- **No Docker on the host yet?** For an SSH host, **Check for Docker** (or a failed **Test connection**) signs in and
+  shows the host's Linux, whether Docker is installed and running, and whether the user can use it. If not, hlm can
+  set it up, following [Docker's install steps](https://docs.docker.com/engine/install/) for Ubuntu, Debian,
+  Raspberry Pi OS, Fedora, CentOS Stream or RHEL: it adds Docker's apt or dnf repository (checking Docker's signing
+  key on dnf), installs Docker CE with its Compose and Buildx plugins, starts Docker on boot and adds the SSH user to
+  the `docker` group. If Docker is already installed it only does the last two. The form shows the exact commands
+  first, and the output as they run. They run as root, so the user has to be root or have passwordless `sudo`;
+  otherwise copy the commands and run them yourself. Other systems (Unraid, Alpine, Arch, …) aren't covered: install
+  Docker there yourself.
 - **TCP with TLS.** For a daemon started with `--tlsverify`: its address (`tcp://nas.lan:2376`), the CA that signed its
   certificate and a client certificate and key. The daemon's certificate is always checked, and plain TCP isn't
   accepted. The client key is kept encrypted with hlm's settings and never shown again.
@@ -1802,6 +1811,8 @@ when the `HLM_*` one isn't set.
 | `DELETE /api/hosts/{id}`                       | Stop managing a host's servers (they keep running there). Confirmed session.      |
 | `POST /api/hosts/{id}/check`                   | Connect to a saved host now. Admins.                                              |
 | `POST /api/hosts/ssh-key`                      | Make hlm's SSH key, if there isn't one. Admins.                                   |
+| `POST /api/hosts/inspect`                      | A host (as for `test`, SSH only): its Linux, whether Docker is installed, running and usable, and the setup commands hlm would run (`script`, `canSetUp`, `reason`). Admins. |
+| `POST /api/hosts/setup-docker`                 | Install Docker CE on an SSH host (or start it, or add the user to the `docker` group), streaming the output as NDJSON. [Confirmed](#confirming-its-you) session. |
 | `GET /api/stacks`, `GET /api/stacks/{name}`   | [Compose stacks](#compose-stacks) and their services' state (the services the caller can see); admins also get the file and `.env`. |
 | `POST /api/stacks/preview`                     | `{name, yaml, env, existing}`: what creating (or, with `existing`, changing) the stack would do, per service. Admins. |
 | `POST /api/stacks`, `PUT /api/stacks/{name}`   | `{name, yaml, env}`: create a stack, or apply a changed file. Streams NDJSON. Admins. |
@@ -1937,6 +1948,8 @@ curl -N -X POST localhost:8080/api/servers -d '{
 make test
 # Also run the Docker-backed tests (a busybox container, and SeaweedFS for backups):
 HLM_DOCKER_TESTS=1 go test ./internal/files ./internal/backup
+# Also install Docker CE in throwaway Ubuntu, Debian, Fedora and CentOS containers (downloads a few hundred MB):
+HLM_DOCKER_TESTS=1 HLM_INSTALL_TESTS=1 go test ./internal/hosts -run DockerInstallSteps
 # Also build every game server template in a real feed with default values:
 curl -o /tmp/feed.json https://assets.ca.unraid.net/feed/applicationFeed.json
 HLM_FEED_FILE=/tmp/feed.json go test ./internal/deploy -run WholeFeed -v
