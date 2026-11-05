@@ -1108,8 +1108,9 @@ traffic, which is usually UDP, still needs the [proxy](#relaying-through-a-proxy
 
 1. **Cloudflare account.** Create an API token in the Cloudflare dashboard (My Profile → API Tokens → Create Token →
    Custom token) with **Account → Cloudflare Tunnel: Edit**, **Zone → DNS: Edit** and **Zone → Zone: Read**, for the
-   domains you want to use. **Test connection** lists the accounts and domains it can use; **Save** stores it encrypted,
-   like the other credentials. If the token can use several accounts, choose the one the tunnel goes in. The token
+   domains you want to use (add **Zone → SSL and Certificates: Edit** to put the
+   [status page's sites on the proxy server](#public-status-page) behind Cloudflare). **Test connection** lists the
+   accounts and domains it can use; **Save** stores it encrypted, like the other credentials. If the token can use several accounts, choose the one the tunnel goes in. The token
    doesn't need Account Settings: Read: hlm finds the account through the token's domains, and it only offers accounts
    where the token can actually manage tunnels. If a permission is missing, the error names that one permission.
 2. **Tunnel.** **Set up tunnel** creates a remotely managed tunnel (named `hlm` unless you choose another name) and runs
@@ -1428,15 +1429,26 @@ Status page** and add the servers to show; it's at `/status`.
   HTTPS on.
 - **Sites on the proxy server:** with the [proxy server](#relaying-through-a-proxy-server-nginx-over-ssh) and its
   [WireGuard tunnel](#wireguard-tunnel-to-this-host) set up (and the tunnel chosen as the home address), tick **Serve the
-  status page's sites here too** on the Proxy page and apply. nginx there answers each site's domain (point its DNS at
-  the proxy server) and passes only the status page's paths to hlm through the tunnel, so hlm's own port is never
-  opened to the internet; everything else on those domains is 404 at the proxy as well as at hlm. With **HTTPS**,
-  certbot on the proxy server gets a free Let's Encrypt certificate for each domain (and its timer renews them,
-  reloading nginx); plain HTTP redirects to HTTPS once a domain has one. hlm writes only
-  `/etc/nginx/conf.d/hlm-status.conf` (nginx has to read `conf.d` in its `http` block, as Debian's, Ubuntu's and
-  Fedora's do), checks it with `nginx -t` and puts the previous one back if it's refused. The proxy's Linode firewall,
-  if hlm manages it, gets ports 80 and 443 opened. Each site's settings show whether the proxy serves it, and over
-  HTTP or HTTPS.
+  status page's sites here too** on the Proxy page and apply. nginx there answers each site's domain and passes only
+  the status page's paths to hlm through the tunnel, so hlm's own port is never opened to the internet; everything
+  else on those domains is 404 at the proxy as well as at hlm. **HTTPS** is one of:
+  - **None:** plain HTTP; point each domain's DNS at the proxy server yourself.
+  - **Let's Encrypt:** point each domain's DNS at the proxy server; certbot there gets a free certificate for each
+    domain (and its timer renews them, reloading nginx), and plain HTTP redirects to HTTPS once a domain has one.
+  - **Cloudflare:** for domains on the [Cloudflare account](#web-addresses-with-cloudflare-tunnel) (the tunnel itself
+    isn't needed). hlm makes a proxied ("orange cloud") DNS record pointing each domain at the proxy server, and installs a
+    Cloudflare Origin CA certificate for it there (valid 15 years; its key is made by hlm and readable only by root
+    on the proxy, in `/etc/nginx/hlm-origin`). Visitors get Cloudflare's own certificate, and the proxy's firewall
+    lets only Cloudflare's addresses reach ports 80 and 443. The token needs **Zone → SSL and Certificates: Edit**
+    as well as DNS: Edit. Set the domain's **SSL/TLS mode to Full (strict)** in the Cloudflare dashboard (hlm warns if
+    it's Off or Flexible, where Cloudflare would talk to the proxy unencrypted); port 80 serves the page as well, so
+    the site works in any mode. A record that already exists for the name (yours, or a tunnel route's) is left alone
+    and reported. When a domain leaves the list or you choose another option, hlm removes its record and certificate.
+
+  hlm writes only `/etc/nginx/conf.d/hlm-status.conf` (nginx has to read `conf.d` in its `http` block, as Debian's,
+  Ubuntu's and Fedora's do), checks it with `nginx -t` and puts the previous one back if it's refused. The proxy's Linode firewall,
+  if hlm manages it, gets ports 80 and 443 opened (to Cloudflare alone, with that option). Each site's settings show
+  whether the proxy serves it, and over HTTP or HTTPS.
 - **Only from (optional):** addresses or ranges, such as a VPN's, that may see it. Behind a tunnel or proxy that's the
   tunnel's or proxy's address.
 - **Passwords (optional), two of them** (page-wide, and per site): one to see the page at all, and one for the details: players' names, the

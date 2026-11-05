@@ -672,17 +672,21 @@ export interface ProxySettings {
   upstreamPorts?: "internet" | "local";
   logMode: "noip" | "off";
   servers: string[];
-  /** Serve the status page's sites on the proxy (through the WireGuard tunnel), with HTTPS if statusHttps. */
+  /** Serve the status page's sites on the proxy (through the WireGuard tunnel), with HTTPS as statusTls says. */
   statusPage?: boolean;
-  statusHttps?: boolean;
+  statusTls?: "" | "letsencrypt" | "cloudflare";
   statusEmail?: string;
 }
 
 /** How serving the status page's sites on the proxy last went. */
 export interface ProxyStatusSites {
   domains: string[];
+  /** The HTTPS option used. */
+  tls?: "" | "letsencrypt" | "cloudflare";
   https: string[];
   failed?: Record<string, string>;
+  /** Things to fix that don't stop the sites working. */
+  notes?: string[];
   output?: string;
   error?: string;
 }

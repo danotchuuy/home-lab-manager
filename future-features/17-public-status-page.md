@@ -28,6 +28,12 @@
 >   from the internet), as an http-block `conf.d/hlm-status.conf` passing only the status page's paths, with optional
 >   Let's Encrypt certificates from certbot (webroot challenges) on the proxy, and 80/443 on its firewall. Status
 >   sites' domains skip hlm's HTTPS redirect, since proxies and tunnels may speak plain HTTP to hlm.
+> - **Added: Cloudflare as the proxy's third HTTPS option** (requested): hlm points each domain at the proxy server
+>   with a proxied DNS record (its own comment, so the tunnel never touches it and vice versa), installs a 15-year
+>   Cloudflare Origin CA certificate there (key made in hlm, root-only on the proxy), serves the page on port 80 too
+>   (no redirect: Cloudflare's edge does HTTPS), warns when the zone's SSL/TLS mode is Off or Flexible, and limits the
+>   firewall's 80/443 to Cloudflare's addresses. Domains that leave (or a change of option) lose hlm's record and
+>   certificate. The token needs Zone → SSL and Certificates: Edit for this.
 > - **The SPA route** is handled before the app (`main.tsx`), so `/status` loads without the header, sign-in or any
 >   admin API call.
 

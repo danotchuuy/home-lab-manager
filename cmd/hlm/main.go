@@ -542,6 +542,8 @@ func run(log *slog.Logger) error {
 	})
 	// The proxy server can serve the status page's sites too, through the
 	// WireGuard tunnel to hlm's port on this host.
+	// Cloudflare in front of them, when that's their HTTPS option.
+	relay.UseCloudflare(tunnel)
 	relay.UseStatusSites(func(ctx context.Context) ([]string, int, error) {
 		set, err := statusPage.Settings()
 		if err != nil {

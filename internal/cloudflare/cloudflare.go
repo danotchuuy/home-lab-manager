@@ -126,6 +126,7 @@ const (
 	permTunnel = "Account → Cloudflare Tunnel: Edit for this account"
 	permZone   = "Zone → Zone: Read"
 	permDNS    = "Zone → DNS: Edit for this domain"
+	permSSL    = "Zone → SSL and Certificates: Edit for this domain"
 )
 
 // IsNotFound reports whether err is the API saying there is no such object.
@@ -398,4 +399,45 @@ func (c *Client) UpdateDNSRecord(ctx context.Context, zoneID, id string, r DNSRe
 // DeleteDNSRecord removes a record.
 func (c *Client) DeleteDNSRecord(ctx context.Context, zoneID, id string) error {
 	return needs(c.do(ctx, http.MethodDelete, recordsPath(zoneID, id), nil, nil, nil), permDNS)
+}
+
+// OriginCertificate is a Cloudflare Origin CA certificate: trusted by
+// Cloudflare (not browsers), for its connections to an origin server.
+type OriginCertificate struct {
+	ID          string   `json:"id"`
+	Certificate string   `json:"certificate"`
+	Hostnames   []string `json:"hostnames"`
+	ExpiresOn   string   `json:"expires_on"`
+}
+
+// CreateOriginCertificate has Cloudflare's Origin CA sign a certificate
+// request (PEM) for hostnames, valid for days (up to 5475).
+func (c *Client) CreateOriginCertificate(ctx context.Context, csr string, hostnames []string, days int) (OriginCertificate, error) {
+	var out OriginCertificate
+	body := map[string]any{"csr": csr, "hostnames": hostnames, "request_type": "origin-ecc", "requested_validity": days}
+	err := c.do(ctx, http.MethodPost, "/certificates", nil, body, &out)
+	return out, needs(err, permSSL)
+}
+
+// SSLMode is a zone's SSL/TLS encryption mode: off, flexible, full or
+// strict.
+func (c *Client) SSLMode(ctx context.Context, zoneID string) (string, error) {
+	var out struct {
+		Value string `json:"value"`
+	}
+	err := c.do(ctx, http.MethodGet, "/zones/"+url.PathEscape(zoneID)+"/settings/ssl", nil, nil, &out)
+	return out.Value, err
+}
+
+// IPRanges are the addresses Cloudflare connects to origin servers from.
+type IPRanges struct {
+	IPv4 []string `json:"ipv4_cidrs"`
+	IPv6 []string `json:"ipv6_cidrs"`
+}
+
+// IPs returns Cloudflare's address ranges.
+func (c *Client) IPs(ctx context.Context) (IPRanges, error) {
+	var out IPRanges
+	err := c.do(ctx, http.MethodGet, "/ips", nil, nil, &out)
+	return out, err
 }

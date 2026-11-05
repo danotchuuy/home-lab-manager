@@ -635,6 +635,10 @@ select:disabled {
   font-size: 0.85rem;
 }
 
+.warn-text {
+  color: var(--warn);
+}
+
 /* Deploy progress */
 
 .deploy-progress {
@@ -4162,4 +4166,10 @@ pre .muted {
 
 .status-site-cloudflare {
   margin: 0.5rem 0;
+}
+
+/* The status page sites' HTTPS choice on the Proxy page. */
+.status-tls {
+  max-width: 46rem;
+  margin-top: 0.75rem;
 }

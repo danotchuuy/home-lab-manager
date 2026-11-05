@@ -427,7 +427,14 @@ func (s *Service) wantedRules(servers []Proxied) []linode.Rule {
 	}
 	// HTTP and HTTPS for the status page's sites, while relays are applied.
 	if st, ok, err := s.Settings(); err == nil && ok && st.StatusPage && servers != nil {
-		rules = append(rules, statusRule())
+		var from *linode.Addresses
+		if st.StatusTLS == TLSCloudflare {
+			var cf linode.Addresses
+			if ok, err := s.secrets.Get(secretCloudflareIPs, &cf); err == nil && ok {
+				from = &cf
+			}
+		}
+		rules = append(rules, statusRule(from))
 	}
 	return rules
 }

@@ -748,19 +748,26 @@ function SiteProxy({
       </>
     );
   } else if (r.https.includes(host)) {
+    const note = r.tls === "cloudflare" ? r.notes?.find((n) => n.startsWith(host + "'")) : undefined;
     state = (
       <>
-        served over HTTPS:{" "}
+        served over HTTPS{r.tls === "cloudflare" ? " through Cloudflare" : ""}:{" "}
         <a href={`https://${host}/status`} target="_blank" rel="noreferrer">
           https://{host}/status ↗
         </a>
+        {note && <span className="warn-text"> ({note})</span>}
       </>
     );
   } else {
     state = (
       <>
         served over HTTP
-        {r.failed?.[host] && <span className="form-error"> (no certificate yet: {r.failed[host]})</span>}
+        {r.failed?.[host] && (
+          <span className="form-error">
+            {" "}
+            ({r.tls === "cloudflare" ? "not set up on Cloudflare" : "no certificate yet"}: {r.failed[host]})
+          </span>
+        )}
       </>
     );
   }

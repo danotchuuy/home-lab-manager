@@ -72,10 +72,12 @@ type Settings struct {
 	// Servers are the names of the game servers to proxy.
 	Servers []string `json:"servers"`
 	// StatusPage serves the status page's sites on the proxy, through the
-	// WireGuard tunnel; with StatusHTTPS, with Let's Encrypt certificates
-	// (StatusEmail gets their expiry notices).
+	// WireGuard tunnel. StatusTLS is how they get HTTPS: "" (none),
+	// "letsencrypt" (certbot on the proxy; StatusEmail gets the expiry
+	// notices) or "cloudflare" (Cloudflare in front, with an Origin CA
+	// certificate on the proxy).
 	StatusPage  bool   `json:"statusPage"`
-	StatusHTTPS bool   `json:"statusHttps"`
+	StatusTLS   string `json:"statusTls,omitempty"`
 	StatusEmail string `json:"statusEmail,omitempty"`
 }
 
@@ -103,6 +105,9 @@ type Service struct {
 	run func(ctx context.Context, script string, stdin []byte, onLine func(string)) (remote.Result, error)
 	// statusSites finds the status page's sites; see UseStatusSites.
 	statusSites func(ctx context.Context) ([]string, int, error)
+	// cloudflare puts the status page's sites behind Cloudflare; see
+	// UseCloudflare.
+	cloudflare Cloudflare
 	// ports lists a server's ports; see UsePorts.
 	ports func(info docker.ContainerJSON) ([]forwarding.Mapping, error)
 	// wanLookup finds the gateway's public address; see UseWANLookup.
@@ -215,6 +220,11 @@ func Validate(st *Settings) error {
 	st.StatusEmail = strings.TrimSpace(st.StatusEmail)
 	if st.StatusEmail != "" && !statusEmail.MatchString(st.StatusEmail) {
 		return fmt.Errorf("%q isn't an email address", st.StatusEmail)
+	}
+	switch st.StatusTLS {
+	case "", TLSLetsEncrypt, TLSCloudflare:
+	default:
+		return fmt.Errorf("unknown HTTPS option %q for the status page's sites", st.StatusTLS)
 	}
 	if !validHost(st.Host) {
 		return fmt.Errorf("invalid host %q", st.Host)
@@ -788,6 +798,7 @@ if [ -d /run/systemd/system ] && systemctl cat nginx >/dev/null 2>&1; then syste
 	}
 	_ = s.secrets.Delete(secretStatusServed)
 	_ = s.secrets.Delete(secretStatusResult)
+	s.forgetCloudflare(ctx, nil)
 	return RemoveResult{Output: res.Output(), Firewall: s.syncFirewallAfter(ctx, nil)}, nil
 }
 
