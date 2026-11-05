@@ -116,9 +116,9 @@ type Options struct {
 	Secrets *secrets.Store
 	Servers Servers
 	Docker  Docker
-	// HostAddresses are where the Docker host's published ports can be
-	// reached from hlm, in order of preference.
-	HostAddresses func() []string
+	// HostAddresses are where the published ports of a server's Docker
+	// host (by the server's ID) can be reached from hlm, best first.
+	HostAddresses func(id string) []string
 	Log           *slog.Logger
 }
 
@@ -165,7 +165,7 @@ func New(o Options) *Service {
 		o.Log = slog.New(slog.DiscardHandler)
 	}
 	if o.HostAddresses == nil {
-		o.HostAddresses = func() []string { return []string{"127.0.0.1"} }
+		o.HostAddresses = func(string) []string { return []string{"127.0.0.1"} }
 	}
 	return &Service{
 		opts:     o,
@@ -683,7 +683,7 @@ func (s *Service) rconAddresses(info docker.ContainerJSON, set Settings) ([]stri
 	if port == 0 {
 		return nil, errors.New("couldn't find the RCON port; enter it in the console settings")
 	}
-	out := reach.Addresses(info, port, "tcp", s.opts.HostAddresses())
+	out := reach.Addresses(info, port, "tcp", s.opts.HostAddresses(info.ID))
 	if len(out) == 0 {
 		return nil, errors.New("the RCON port can't be reached: the container has no address hlm can use, and the port isn't published")
 	}

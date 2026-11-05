@@ -4,6 +4,7 @@ import { api } from "../api";
 import { AppIcon, Overview, Spinner } from "../components/common";
 import { ConfigForm } from "../components/ConfigForm";
 import { DeployProgress } from "../components/DeployProgress";
+import { HostPicker } from "../components/HostPicker";
 import { ImportImage } from "../components/ImportImage";
 import type { App, DeployEvent, DeployRequest } from "../types";
 
@@ -15,13 +16,14 @@ export function InstallPage() {
   const [events, setEvents] = useState<DeployEvent[]>([]);
   const [running, setRunning] = useState(false);
   const [rereading, setRereading] = useState(false);
+  const [host, setHost] = useState("local");
   // Reload when the template was just re-read from its image.
   const refreshed = (useLocation().state as { refreshed?: number } | null)?.refreshed;
 
+  // The template's paths are the chosen host's.
   useEffect(() => {
-    setApp(undefined);
-    api.app(id).then(setApp, (e) => setError(e.message));
-  }, [id, refreshed]);
+    api.app(id, host).then(setApp, (e) => setError(e.message));
+  }, [id, refreshed, host]);
 
   async function deleteTemplate() {
     if (!confirm("Delete this template? Servers already installed from it keep running, but can't be reconfigured from it.")) return;
@@ -38,10 +40,14 @@ export function InstallPage() {
     setEvents([]);
     let created: string | undefined;
     try {
-      await api.install(req, (e) => {
-        setEvents((prev) => [...prev, e]);
-        if (e.stage === "done" && e.server) created = e.server.name;
-      });
+      await api.install(
+        req,
+        (e) => {
+          setEvents((prev) => [...prev, e]);
+          if (e.stage === "done" && e.server) created = e.server.name;
+        },
+        host,
+      );
     } catch (e) {
       setEvents((prev) => [...prev, { stage: "error", message: (e as Error).message }]);
     } finally {
@@ -122,7 +128,15 @@ export function InstallPage() {
         <div className="card">
           <h2>Configure</h2>
           {events.length > 0 && <DeployProgress events={events} />}
-          <ConfigForm app={app} submitLabel={running ? "Installing…" : "Install & start"} busy={running} onSubmit={install} />
+          <HostPicker value={host} onChange={setHost} />
+          <ConfigForm
+            key={host}
+            app={app}
+            host={host}
+            submitLabel={running ? "Installing…" : "Install & start"}
+            busy={running}
+            onSubmit={install}
+          />
         </div>
       </div>
     </div>

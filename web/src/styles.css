@@ -3661,3 +3661,33 @@ textarea.code-input {
   color: var(--danger);
   font-weight: 600;
 }
+
+/* Docker hosts */
+.badge.host-badge {
+  text-transform: none;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+  margin-left: 0.4rem;
+}
+.badge.host-badge.down {
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  color: var(--danger);
+}
+.docker-hosts .row-actions {
+  white-space: nowrap;
+  text-align: right;
+}
+.docker-hosts .host-ok {
+  color: var(--success);
+}
+.docker-hosts .host-down {
+  color: var(--danger);
+}
+.host-form {
+  margin-top: 1rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+.host-form h3 {
+  margin-top: 0;
+}

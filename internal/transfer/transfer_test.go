@@ -64,17 +64,25 @@ func (m *fakeManager) List(context.Context) ([]manager.Server, error) {
 	return out, nil
 }
 func (m *fakeManager) Config(_ context.Context, id string) (*catalog.App, deploy.Request, error) {
-	app, _ := m.App(m.reqs[id].TemplateID)
+	app, _ := m.AppOn(m.reqs[id].TemplateID, manager.HostOf(id))
 	return app, m.reqs[id], nil
 }
-func (m *fakeManager) App(id string) (*catalog.App, bool) {
+func (m *fakeManager) AppOn(id, host string) (*catalog.App, bool) {
 	a, ok := m.cat.Get(id)
 	if !ok {
 		return nil, false
 	}
-	return a.Localize(m.root), true
+	return a.Localize(m.AppdataRootOf(host)), true
 }
-func (m *fakeManager) AppdataRoot() string { return m.root }
+
+// The other host, "nas", keeps data in /nas/appdata.
+func (m *fakeManager) AppdataRootOf(host string) string {
+	if host == "nas" {
+		return "/nas/appdata"
+	}
+	return m.root
+}
+func (m *fakeManager) KnownHost(host string) bool { return host == manager.LocalHost || host == "nas" }
 func (m *fakeManager) add(req deploy.Request) (manager.Server, error) {
 	if _, ok := m.servers[req.Name]; ok {
 		return manager.Server{}, errors.New("exists")
@@ -103,8 +111,13 @@ func (m *fakeManager) CopyData(_ context.Context, from, to string, folders []str
 	m.call("copy " + from + " " + to + " " + strings.Join(folders, ","))
 	return files.ArchiveStats{Files: 3, Bytes: 2048}, m.copyFail
 }
-func (m *fakeManager) HostPortsInUse(context.Context) (map[string]bool, error) { return m.used, nil }
-func (m *fakeManager) Networks(context.Context) ([]manager.NetworkInfo, error) {
+func (m *fakeManager) HostPortsInUse(_ context.Context, host string) (map[string]bool, error) {
+	if host != manager.LocalHost {
+		return map[string]bool{}, nil
+	}
+	return m.used, nil
+}
+func (m *fakeManager) Networks(context.Context, string) ([]manager.NetworkInfo, error) {
 	return m.nets, nil
 }
 
@@ -269,7 +282,7 @@ func TestExportAndImport(t *testing.T) {
 	// Into another hlm, with another appdata root and without the template.
 	s2, m2, f2 := setup(t, "/mnt/games")
 	delete(m2.cat.apps, "valheim")
-	p, err := s2.PreviewImport(ctx, back)
+	p, err := s2.PreviewImport(ctx, back, manager.LocalHost)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +313,7 @@ func TestExportAndImport(t *testing.T) {
 	}
 
 	// On the same hlm, the folders are the original's.
-	p, _ = s.PreviewImport(ctx, back)
+	p, _ = s.PreviewImport(ctx, back, manager.LocalHost)
 	if w := strings.Join(p.Warnings, "\n"); !strings.Contains(w, "/srv/appdata/valheim/server) is already valheim's") ||
 		!strings.Contains(w, "named valheim already exists") {
 		t.Errorf("same-host warnings = %s", w)
@@ -314,7 +327,7 @@ func TestExportAndImport(t *testing.T) {
 
 	// Files hlm can't read.
 	for _, bad := range []Export{{}, {HLMExport: Version + 1, Request: back.Request}, {HLMExport: 1}} {
-		if _, err := s2.PreviewImport(ctx, bad); err == nil {
+		if _, err := s2.PreviewImport(ctx, bad, manager.LocalHost); err == nil {
 			t.Errorf("accepted %+v", bad)
 		}
 	}
@@ -385,6 +398,54 @@ func TestPreviewClone(t *testing.T) {
 	p, _ = s.PreviewClone(ctx, "valheim", "valheim-test")
 	if p.Request.Values["port"] != "" {
 		t.Errorf("ports moved on a macvlan network: %v", p.Request.Values["port"])
+	}
+}
+
+// A clone on another host keeps its name and ports, takes that host's data
+// folder, and copies every folder: the same path there is another folder.
+func TestCloneToOtherHost(t *testing.T) {
+	s, m, f := setup(t, "/srv/appdata")
+	addValheim(m, f, "/srv/appdata")
+	ctx := context.Background()
+
+	if _, err := s.PreviewClone(ctx, "valheim", "valheim@nowhere"); err == nil {
+		t.Error("cloned onto a host that doesn't exist")
+	}
+	p, err := s.PreviewClone(ctx, "valheim", CloneName("valheim", "nas", "valheim"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := p.Request.Values
+	if p.Request.Name != "valheim@nas" || v["port"] != "" || v["worlds"] != "/nas/appdata/valheim/server" ||
+		v["config"] != "/nas/appdata/valheim/config" || p.Request.Extra[0].Value != "/nas/appdata/valheim/mods" {
+		t.Errorf("request = %+v", p.Request)
+	}
+	want := []Copy{
+		{Target: "/config", From: "/srv/appdata/valheim/config", To: "/nas/appdata/valheim/config"},
+		{Target: "/opt/valheim", From: "/srv/appdata/valheim/server", To: "/nas/appdata/valheim/server"},
+		{Target: "/var/lib/cache", From: "Docker volume", To: "a new Docker volume"},
+	}
+	if !slices.Equal(p.Copies, want) {
+		t.Errorf("copies = %+v", p.Copies)
+	}
+
+	srv, err := s.Clone(ctx, "valheim", CloneOptions{Name: "valheim", Host: "nas", CopyData: CopyNow}, func(manager.Event) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if srv.Name != "valheim@nas" || f.consoles["valheim@nas"].Password != "rcon-secret" ||
+		!slices.Contains(m.calls, "copy id-valheim id-valheim@nas /config,/opt/valheim,/var/lib/cache") {
+		t.Errorf("server %+v, calls %q", srv, m.calls)
+	}
+
+	// Exported from the other host, it's named without the host and its
+	// paths are relative to that host's data folder.
+	e, err := s.Export(ctx, "valheim@nas", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Server != "valheim" || e.Request.Name != "valheim" || e.Request.Values["worlds"] != AppdataVar+"/valheim/server" {
+		t.Errorf("export = %s %+v", e.Server, e.Request)
 	}
 }
 

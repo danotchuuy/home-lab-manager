@@ -30,6 +30,8 @@ const (
 // CloneOptions say how to clone a server.
 type CloneOptions struct {
 	Name string `json:"name"`
+	// Host is the Docker host the clone goes on; the original's if empty.
+	Host string `json:"host,omitempty"`
 	// Request is the clone's settings, from the clone form (starting from
 	// PreviewClone's); nil uses PreviewClone's.
 	Request  *deploy.Request `json:"request,omitempty"`
@@ -51,7 +53,9 @@ func (s *Service) PreviewClone(ctx context.Context, id, name string) (Preview, e
 	if err != nil {
 		return Preview{}, err
 	}
-	old := strings.TrimPrefix(src.Name, "/")
+	// The clone may go on another host (its name ends in @host).
+	_, old := manager.SplitID(strings.TrimPrefix(src.Name, "/"))
+	host, bare := manager.SplitID(name)
 	if err := s.checkNewName(ctx, name); err != nil {
 		return Preview{}, err
 	}
@@ -59,11 +63,11 @@ func (s *Service) PreviewClone(ctx context.Context, id, name string) (Preview, e
 	if err != nil {
 		return Preview{}, err
 	}
-	app, _, err := s.template(e)
+	app, _, err := s.template(e, host)
 	if err != nil {
 		return Preview{}, err
 	}
-	root := strings.TrimRight(s.opts.Manager.AppdataRoot(), "/")
+	root := strings.TrimRight(s.opts.Manager.AppdataRootOf(host), "/")
 	req := localPaths(e.Request, root)
 	req.Name = name
 	p := Preview{App: app, Warnings: []string{}, Settings: e.Settings.Summary()}
@@ -88,7 +92,10 @@ func (s *Service) PreviewClone(ctx context.Context, id, name string) (Preview, e
 		if it.Type != catalog.TypePath || it.Disabled || it.Effective == "" {
 			continue
 		}
-		moved, ok := clonePath(it.Effective, root, old, name)
+		moved, ok := clonePath(it.Effective, root, old, bare)
+		if !ok && host != manager.HostOf(src.ID) {
+			continue // the same path, on the other host
+		}
 		if !ok {
 			p.Warnings = append(p.Warnings, fmt.Sprintf("%s (%s) is outside the appdata folder and isn't named after the server, so the copy shares it with the original. Change it if they shouldn't share it.",
 				it.Name, it.Effective))
@@ -116,8 +123,11 @@ func (s *Service) PreviewClone(ctx context.Context, id, name string) (Preview, e
 }
 
 func (s *Service) checkNewName(ctx context.Context, name string) error {
-	if !ValidName.MatchString(name) {
+	if !validServer(name) {
 		return errors.New("a server name is letters, digits, dots, dashes and underscores, starting with a letter or digit")
+	}
+	if !s.opts.Manager.KnownHost(manager.HostOf(name)) {
+		return fmt.Errorf("there is no Docker host %s", manager.HostOf(name))
 	}
 	if _, err := s.opts.Manager.Inspect(ctx, name); err == nil || !errors.Is(err, manager.ErrNotFound) {
 		if err == nil || errors.Is(err, manager.ErrNotManaged) {
@@ -126,6 +136,17 @@ func (s *Service) checkNewName(ctx context.Context, name string) error {
 		return err
 	}
 	return nil
+}
+
+// CloneName is a clone's full name: on host, or on the original's host.
+func CloneName(srcID, host, name string) string {
+	if strings.Contains(name, "@") {
+		return name
+	}
+	if host == "" {
+		host = manager.HostOf(srcID)
+	}
+	return manager.JoinID(host, name)
 }
 
 // clonePath moves a data folder to the clone's: under the appdata root, the
@@ -166,7 +187,8 @@ func (s *Service) shiftPorts(ctx context.Context, app *catalog.App, req *deploy.
 		p.Warnings = append(p.Warnings, "The original uses the host's network, so the copy listens on the same ports: change the game's ports in its settings files before starting both.")
 		return nil
 	}
-	if nets, err := s.opts.Manager.Networks(ctx); err == nil {
+	host := manager.HostOf(req.Name)
+	if nets, err := s.opts.Manager.Networks(ctx, host); err == nil {
 		for _, n := range nets {
 			if n.Name == network && n.DirectIP {
 				return nil // its own address on the LAN: no ports to clash
@@ -200,11 +222,13 @@ func (s *Service) shiftPorts(ctx context.Context, app *catalog.App, req *deploy.
 	if len(ports) == 0 {
 		return nil
 	}
-	used, err := s.opts.Manager.HostPortsInUse(ctx)
+	used, err := s.opts.Manager.HostPortsInUse(ctx, host)
 	if err != nil {
 		return err
 	}
-	for step := 1; step <= 2000; step++ {
+	// The original's own ports count as used on its host, so there the
+	// ports always move; on another host they may stay as they are.
+	for step := 0; step <= 2000; step++ {
 		free := true
 		for _, pt := range ports {
 			for n := pt.r.Start + step; n <= pt.r.End+step && free; n++ {
@@ -213,6 +237,9 @@ func (s *Service) shiftPorts(ctx context.Context, app *catalog.App, req *deploy.
 		}
 		if !free {
 			continue
+		}
+		if step == 0 {
+			return nil
 		}
 		var moved []string
 		for _, pt := range ports {
@@ -236,6 +263,8 @@ func (s *Service) shiftPorts(ctx context.Context, app *catalog.App, req *deploy.
 // clone has somewhere else, and its anonymous Docker volumes. A volume that
 // can't be copied has an empty From.
 func (s *Service) copies(_ context.Context, src docker.ContainerJSON, app *catalog.App, req deploy.Request) ([]Copy, error) {
+	// On another host, the same path is another folder.
+	otherHost := manager.HostOf(req.Name) != manager.HostOf(src.ID)
 	items, err := deploy.Items(app, req)
 	if err != nil {
 		return nil, err
@@ -251,7 +280,7 @@ func (s *Service) copies(_ context.Context, src docker.ContainerJSON, app *catal
 		dest := path.Clean(m.Destination)
 		switch m.Type {
 		case "bind":
-			if t, ok := to[dest]; ok && t != m.Source {
+			if t, ok := to[dest]; ok && (t != m.Source || otherHost) {
 				out = append(out, Copy{Target: dest, From: m.Source, To: t})
 			}
 		case "volume":
@@ -295,6 +324,7 @@ func (s *Service) Clone(ctx context.Context, id string, opts CloneOptions, emit 
 	default:
 		return manager.Server{}, fmt.Errorf("unknown way to copy data %q", opts.CopyData)
 	}
+	opts.Name = CloneName(src.ID, opts.Host, opts.Name)
 	p, err := s.PreviewClone(ctx, id, opts.Name)
 	if err != nil {
 		return manager.Server{}, err

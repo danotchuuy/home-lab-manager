@@ -47,10 +47,58 @@ func newWatchState() *watchState {
 	return &watchState{killed: map[string]time.Time{}, oom: map[string]bool{}, unhealthy: map[string]bool{}}
 }
 
-// WatchEvents follows Docker's container events until ctx ends, reporting
-// servers that crash or turn unhealthy and connection containers that stop
-// on their own. It reconnects when the stream drops.
+// WatchEvents follows Docker's container events on every host until ctx
+// ends, reporting servers that crash or turn unhealthy and connection
+// containers that stop on their own. It reconnects when a stream drops,
+// and follows hosts as they're added and removed (see SetHosts).
 func (m *Manager) WatchEvents(ctx context.Context) {
+	m.watchMu.Lock()
+	m.watchCtx = ctx
+	m.watchers = map[string]watcher{}
+	m.watchMu.Unlock()
+	go m.watchHost(ctx, LocalHost, m.docker.local)
+	m.hostsChanged()
+	<-ctx.Done()
+}
+
+// watcher follows one other host's events.
+type watcher struct {
+	client *docker.Client
+	cancel context.CancelFunc
+}
+
+// hostsChanged starts following hosts that were added (or reached
+// differently) and stops following removed ones.
+func (m *Manager) hostsChanged() {
+	m.watchMu.Lock()
+	defer m.watchMu.Unlock()
+	if m.watchCtx == nil {
+		return // WatchEvents hasn't started
+	}
+	m.docker.mu.RLock()
+	remotes := make(map[string]RemoteHost, len(m.docker.remotes))
+	for id, h := range m.docker.remotes {
+		remotes[id] = h
+	}
+	m.docker.mu.RUnlock()
+	for id, w := range m.watchers {
+		if h, ok := remotes[id]; !ok || h.Docker != w.client {
+			w.cancel()
+			delete(m.watchers, id)
+		}
+	}
+	for id, h := range remotes {
+		if _, ok := m.watchers[id]; ok || h.Docker == nil {
+			continue
+		}
+		ctx, cancel := context.WithCancel(m.watchCtx)
+		m.watchers[id] = watcher{client: h.Docker, cancel: cancel}
+		go m.watchHost(ctx, id, h.Docker)
+	}
+}
+
+// watchHost follows one host's events.
+func (m *Manager) watchHost(ctx context.Context, host string, c *docker.Client) {
 	st := newWatchState()
 	filters := map[string][]string{
 		"type":  {"container"},
@@ -60,7 +108,14 @@ func (m *Manager) WatchEvents(ctx context.Context) {
 	var since time.Time
 	for {
 		start := time.Now()
-		err := m.docker.Events(ctx, since, filters, func(e docker.EventMessage) {
+		err := c.Events(ctx, since, filters, func(e docker.EventMessage) {
+			e.Actor.ID = JoinID(host, e.Actor.ID)
+			if n, ok := e.Actor.Attributes["name"]; ok {
+				e.Actor.Attributes["name"] = JoinID(host, n)
+			}
+			if host != LocalHost && e.Actor.Attributes[deploy.LabelManaged] != "true" {
+				return // hlm's connections run on the local host only
+			}
 			m.handleEvent(ctx, st, e)
 		})
 		if ctx.Err() != nil {
@@ -69,7 +124,7 @@ func (m *Manager) WatchEvents(ctx context.Context) {
 		if time.Since(start) > time.Minute {
 			wait = 5 * time.Second
 		}
-		m.log.Debug("docker event stream ended; reconnecting", "err", err, "in", wait)
+		m.log.Debug("docker event stream ended; reconnecting", "host", host, "err", err, "in", wait)
 		select {
 		case <-ctx.Done():
 			return

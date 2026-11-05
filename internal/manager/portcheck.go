@@ -79,20 +79,27 @@ func hostPorts(networkMode string, exposed map[string]struct{}, bindings map[str
 // the other containers on the Docker host (running or not: a stopped one
 // takes its ports back when it starts) and, when the host can be read, the
 // programs listening on it. self is the server being reconfigured, if any.
+// The server is on the host its name (or self) says.
 func (m *Manager) PortConflicts(ctx context.Context, req deploy.Request, self string) ([]PortConflict, error) {
-	spec, err := m.build(ctx, req)
+	host, bare := SplitID(req.Name)
+	if self != "" {
+		host = HostOf(self)
+	}
+	req.Name = bare
+	spec, err := m.build(ctx, host, req)
 	if err != nil {
 		return nil, err
 	}
-	return m.portConflicts(ctx, spec.Create, self)
+	return m.portConflicts(ctx, host, spec.Create, self)
 }
 
-// PortConflictsOf is PortConflicts for a container's create request.
+// PortConflictsOf is PortConflicts for a container's create request on the
+// local host.
 func (m *Manager) PortConflictsOf(ctx context.Context, c docker.CreateRequest, self string) ([]PortConflict, error) {
-	return m.portConflicts(ctx, c, self)
+	return m.portConflicts(ctx, LocalHost, c, self)
 }
 
-func (m *Manager) portConflicts(ctx context.Context, c docker.CreateRequest, self string) ([]PortConflict, error) {
+func (m *Manager) portConflicts(ctx context.Context, host string, c docker.CreateRequest, self string) ([]PortConflict, error) {
 	if c.Labels[deploy.LabelDirectIP] == "true" {
 		return []PortConflict{}, nil
 	}
@@ -101,7 +108,7 @@ func (m *Manager) portConflicts(ctx context.Context, c docker.CreateRequest, sel
 	if len(wanted) == 0 {
 		return out, nil
 	}
-	list, err := m.docker.ListContainers(ctx)
+	list, err := m.docker.ListContainersOn(ctx, host)
 	if err != nil {
 		return nil, fmt.Errorf("list containers: %w", err)
 	}
@@ -141,7 +148,7 @@ func (m *Manager) portConflicts(ctx context.Context, c docker.CreateRequest, sel
 		}
 	}
 
-	if m.host != nil && m.host.Available() {
+	if host == LocalHost && m.host != nil && m.host.Available() {
 		if ls, err := m.host.Listeners(); err == nil {
 			for _, w := range wanted {
 				if published[hostPort{port: w.port, proto: w.proto}] {
@@ -171,11 +178,11 @@ func (m *Manager) portConflicts(ctx context.Context, c docker.CreateRequest, sel
 	return out, nil
 }
 
-// HostPortsInUse lists the host ports ("27015/udp") that containers publish
-// (running or not) and, when the host can be read, that programs on it
-// listen on.
-func (m *Manager) HostPortsInUse(ctx context.Context) (map[string]bool, error) {
-	list, err := m.docker.ListContainers(ctx)
+// HostPortsInUse lists the ports ("27015/udp") on a host that containers
+// publish (running or not) and, when the host can be read, that programs
+// on it listen on.
+func (m *Manager) HostPortsInUse(ctx context.Context, host string) (map[string]bool, error) {
+	list, err := m.docker.ListContainersOn(ctx, host)
 	if err != nil {
 		return nil, fmt.Errorf("list containers: %w", err)
 	}
@@ -189,7 +196,7 @@ func (m *Manager) HostPortsInUse(ctx context.Context) (map[string]bool, error) {
 			used[fmt.Sprintf("%d/%s", p.port, p.proto)] = true
 		}
 	}
-	if m.host != nil && m.host.Available() {
+	if host == LocalHost && m.host != nil && m.host.Available() {
 		if ls, err := m.host.Listeners(); err == nil {
 			for _, l := range ls {
 				used[fmt.Sprintf("%d/%s", l.Port, l.Proto)] = true
@@ -200,8 +207,8 @@ func (m *Manager) HostPortsInUse(ctx context.Context) (map[string]bool, error) {
 }
 
 // checkPorts refuses settings whose host ports are already in use.
-func (m *Manager) checkPorts(ctx context.Context, spec *deploy.Spec, self string) error {
-	conflicts, err := m.portConflicts(ctx, spec.Create, self)
+func (m *Manager) checkPorts(ctx context.Context, host string, spec *deploy.Spec, self string) error {
+	conflicts, err := m.portConflicts(ctx, host, spec.Create, self)
 	if err != nil {
 		return err
 	}

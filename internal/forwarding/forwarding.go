@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/netip"
 	"sort"
 	"strconv"
@@ -64,6 +65,9 @@ type Service struct {
 	secrets *secrets.Store
 	servers Inspector
 	hostIP  func() string
+	// hostAddress is where a server on another Docker host publishes its
+	// ports; see UseHostAddress.
+	hostAddress func(id string) string
 
 	// The UniFi client is kept between requests so its sign-in session is
 	// reused: UniFi OS answers 429 when a client signs in too often.
@@ -78,6 +82,10 @@ type Service struct {
 func New(store *secrets.Store, servers Inspector, hostIP func() string, log *slog.Logger) *Service {
 	return &Service{secrets: store, servers: servers, hostIP: hostIP, log: log}
 }
+
+// UseHostAddress says where servers on other Docker hosts publish their
+// ports (by server ID; "" for local servers): their rules forward there.
+func (s *Service) UseHostAddress(f func(id string) string) { s.hostAddress = f }
 
 // ErrNotConfigured is returned when UniFi hasn't been set up.
 var ErrNotConfigured = errors.New("UniFi isn't set up yet; add it under System → Integrations")
@@ -346,7 +354,21 @@ func (s *Service) Wants(info docker.ContainerJSON, cfg Config, ports []Mapping) 
 	if network == "none" {
 		note = "This server has no network."
 	}
-	if !direct {
+	remote := ""
+	if s.hostAddress != nil {
+		remote = s.hostAddress(info.ID)
+	}
+	switch {
+	case !direct && remote != "":
+		// The router needs the other host's address, not a name.
+		if _, err := netip.ParseAddr(remote); err == nil {
+			target = remote
+		} else if addrs, err := net.LookupHost(remote); err == nil && len(addrs) > 0 {
+			target = addrs[0]
+		} else {
+			note = "This server's host's address (" + remote + ") isn't an IP address and can't be looked up; set its LAN IP on the Hosts page."
+		}
+	case !direct:
 		target = cfg.ForwardTo
 		if target == "" {
 			target = s.hostIP()

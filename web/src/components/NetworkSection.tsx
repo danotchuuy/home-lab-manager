@@ -19,6 +19,8 @@ const NEW_LABEL: Record<NetworkKind, string> = {
 interface Props {
   /** The server being edited, so its own address isn't reported as taken. */
   serverName?: string;
+  /** The Docker host whose networks these are. */
+  host?: string;
   templateNetwork?: string;
   network: string;
   ipAddress: string;
@@ -27,12 +29,12 @@ interface Props {
 }
 
 /** Picks the Docker network for the server and, where Docker allows it, a fixed IP. */
-export function NetworkSection({ serverName, templateNetwork, network, ipAddress, onNetwork, onIPAddress }: Props) {
+export function NetworkSection({ serverName, host, templateNetwork, network, ipAddress, onNetwork, onIPAddress }: Props) {
   const [networks, setNetworks] = useState<NetworkInfo[]>([]);
   const [error, setError] = useState<string>();
   const [creating, setCreating] = useState<NetworkKind | false>(false);
 
-  const reload = useCallback(() => api.networks().then(setNetworks, (e) => setError(e.message)), []);
+  const reload = useCallback(() => api.networks(host).then(setNetworks, (e) => setError(e.message)), [host]);
   useEffect(() => {
     reload();
   }, [reload]);
@@ -61,7 +63,7 @@ export function NetworkSection({ serverName, templateNetwork, network, ipAddress
   async function removeSelected() {
     if (!selected || !confirm(`Delete the network ${selected.name}?`)) return;
     try {
-      await api.removeNetwork(selected.name);
+      await api.removeNetwork(selected.name, host);
       onNetwork("");
       await reload();
     } catch (e) {
@@ -186,6 +188,7 @@ export function NetworkSection({ serverName, templateNetwork, network, ipAddress
 
       {creating && (
         <CreateNetwork
+          host={host}
           kind={creating}
           onKind={setCreating}
           existing={networks}
@@ -261,12 +264,15 @@ function suggestRange(subnet: string): string {
 
 function CreateNetwork({
   existing,
+  host,
   kind,
   onKind: setKind,
   onCreated,
   onCancel,
 }: {
   existing: NetworkInfo[];
+  /** The Docker host it's made on; another host's interfaces can't be read. */
+  host?: string;
   /** The kind of network, kept by the parent so its dropdown can name it. */
   kind: NetworkKind;
   onKind: (k: NetworkKind) => void;
@@ -283,8 +289,9 @@ function CreateNetwork({
   const [error, setError] = useState<string>();
 
   useEffect(() => {
+    if (host && host !== "local") return;
     api.hostInterfaces().then(setIfaces, () => setIfaces([]));
-  }, []);
+  }, [host]);
 
   // Fill in suggestions for the chosen type and interface.
   useEffect(() => {
@@ -319,7 +326,7 @@ function CreateNetwork({
       ipRange: ipRange || undefined,
     };
     try {
-      onCreated(await api.createNetwork(req));
+      onCreated(await api.createNetwork(req, host));
     } catch (e) {
       setError((e as Error).message);
     } finally {

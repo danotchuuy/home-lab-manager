@@ -106,7 +106,9 @@ func (m *Manager) DeletedServers() ([]DeletedServer, error) {
 // recordDeleted remembers the data folders of a server about to be deleted,
 // with their sizes from the last storage report.
 func (m *Manager) recordDeleted(info docker.ContainerJSON) error {
-	if m.deleted == nil {
+	// The Host page is about the local host: other hosts' folders can't be
+	// measured or deleted from here.
+	if m.deleted == nil || HostOf(info.ID) != LocalHost {
 		return nil
 	}
 	known := map[string]int64{}
@@ -282,7 +284,7 @@ func (m *Manager) DeleteDeletedData(ctx context.Context, id, p string, volume bo
 		return ErrNotTracked
 	}
 	if volume {
-		if err := m.docker.RemoveVolume(ctx, p); err != nil && !docker.IsNotFound(err) {
+		if err := m.docker.RemoveVolume(ctx, LocalHost, p); err != nil && !docker.IsNotFound(err) {
 			return fmt.Errorf("remove volume %s: %w", p, err)
 		}
 	} else {
@@ -321,7 +323,7 @@ func (m *Manager) checkDeletable(ctx context.Context, p string) error {
 	if root := path.Clean(m.appdataRoot); m.appdataRoot != "" && (root == p || strings.HasPrefix(root, p+"/")) {
 		return fmt.Errorf("refusing to delete %s: it holds every server's data (%s)", p, root)
 	}
-	list, err := m.docker.ListContainers(ctx)
+	list, err := m.docker.ListContainersOn(ctx, LocalHost)
 	if err != nil {
 		return err
 	}
@@ -346,42 +348,71 @@ func (m *Manager) checkDeletable(ctx context.Context, p string) error {
 const cleanupImage = "busybox:1.37"
 
 func (m *Manager) removeHostDir(ctx context.Context, p string) error {
-	if _, err := m.docker.InspectImage(ctx, cleanupImage); err != nil {
-		if err := m.docker.PullImage(ctx, cleanupImage, nil); err != nil {
-			return fmt.Errorf("pull %s to delete the folder: %w", cleanupImage, err)
-		}
-	}
 	parent, base := path.Split(p)
-	id, _, err := m.docker.CreateContainer(ctx, "", docker.CreateRequest{
-		Image:  cleanupImage,
-		Cmd:    []string{"rm", "-rf", "--", "/hlm-parent/" + base},
-		Labels: map[string]string{"io.hlm.cleanup": "true"},
-		HostConfig: docker.HostConfig{
-			Binds:       []string{strings.TrimRight(parent, "/") + ":/hlm-parent"},
-			NetworkMode: "none",
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("create cleanup container: %w", err)
-	}
-	defer m.docker.RemoveContainer(context.Background(), id, true)
-	if err := m.docker.StartContainer(ctx, id); err != nil {
-		return fmt.Errorf("start cleanup container: %w", err)
-	}
-	code, err := m.docker.WaitContainer(ctx, id)
+	code, out, err := m.runHelper(ctx, LocalHost, strings.TrimRight(parent, "/")+":/hlm-parent", "rm", "-rf", "--", "/hlm-parent/"+base)
 	if err != nil {
 		return fmt.Errorf("delete %s: %w", p, err)
 	}
 	if code != 0 {
-		msg := ""
+		return fmt.Errorf("deleting %s failed (exit status %d): %s", p, code, out)
+	}
+	return nil
+}
+
+// checkRemoteFresh is checkFreshData's folder check on another host: a
+// helper container looks for the folder there.
+func (m *Manager) checkRemoteFresh(ctx context.Context, host, base string, inUse error) error {
+	parent, name := path.Split(base)
+	code, out, err := m.runHelper(ctx, host, strings.TrimRight(parent, "/")+":/hlm-parent:ro", "test", "!", "-e", "/hlm-parent/"+name)
+	if err != nil {
+		return fmt.Errorf("check %s on %s: %w", base, m.HostName(host), err)
+	}
+	if code != 0 {
+		if out != "" {
+			return fmt.Errorf("check %s on %s: %s", base, m.HostName(host), out)
+		}
+		return inUse
+	}
+	return nil
+}
+
+// runHelper runs a command in a throwaway busybox container on a host, with
+// one bind mount, and returns its exit status and the end of its output.
+func (m *Manager) runHelper(ctx context.Context, host, bind string, cmd ...string) (int, string, error) {
+	if _, err := m.docker.InspectImage(ctx, host, cleanupImage); err != nil {
+		if err := m.docker.PullImage(ctx, host, cleanupImage, nil); err != nil {
+			return 0, "", fmt.Errorf("pull %s: %w", cleanupImage, err)
+		}
+	}
+	id, _, err := m.docker.CreateContainerOn(ctx, host, "", docker.CreateRequest{
+		Image:  cleanupImage,
+		Cmd:    cmd,
+		Labels: map[string]string{"io.hlm.cleanup": "true"},
+		HostConfig: docker.HostConfig{
+			Binds:       []string{bind},
+			NetworkMode: "none",
+		},
+	})
+	if err != nil {
+		return 0, "", fmt.Errorf("create helper container: %w", err)
+	}
+	defer m.docker.RemoveContainer(context.Background(), id, true)
+	if err := m.docker.StartContainer(ctx, id); err != nil {
+		return 0, "", fmt.Errorf("start helper container: %w", err)
+	}
+	code, err := m.docker.WaitContainer(ctx, id)
+	if err != nil {
+		return 0, "", err
+	}
+	msg := ""
+	if code != 0 {
 		if r, err := m.docker.Logs(ctx, id, docker.LogsOptions{Tail: "20"}); err == nil {
 			out, _ := io.ReadAll(io.LimitReader(r, 4096))
 			r.Close()
 			msg = strings.TrimSpace(string(out))
 		}
-		return fmt.Errorf("deleting %s failed (exit status %d): %s", p, code, msg)
 	}
-	return nil
+	return code, msg, nil
 }
 
 // deletedReport measures the folders of deleted servers for the storage
@@ -437,9 +468,10 @@ func statErr(m *Manager, p string) error {
 // root is new. Something else may have put symlinks in a folder that's already
 // there, which Docker would follow on the host when it mounts them.
 func (m *Manager) checkFreshData(ctx context.Context, name string) error {
-	base := path.Join(m.appdataRoot, name)
+	host, bare := SplitID(name)
+	base := path.Join(m.appdataFor(host), bare)
 	inUse := fmt.Errorf("%s already has data in it, so a server named %s has to be created by an admin", base, name)
-	list, err := m.docker.ListContainers(ctx)
+	list, err := m.docker.ListContainersOn(ctx, host)
 	if err != nil {
 		return fmt.Errorf("list containers: %w", err)
 	}
@@ -450,6 +482,11 @@ func (m *Manager) checkFreshData(ctx context.Context, name string) error {
 				return inUse
 			}
 		}
+	}
+	if host != LocalHost {
+		// hlm can't look at another host's folders, so it can't tell an
+		// empty folder from a planted one.
+		return m.checkRemoteFresh(ctx, host, base, inUse)
 	}
 	if m.deleted != nil {
 		gone, err := m.deleted.load()

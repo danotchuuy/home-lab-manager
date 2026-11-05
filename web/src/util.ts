@@ -98,3 +98,15 @@ export function timeUntil(iso?: string): string {
   if (s < 48 * 3600) return `in ${Math.round(s / 3600)} h`;
   return `in ${Math.round(s / 86400)} days`;
 }
+
+/** The Docker host a server (by name or ID) is on: "local", or what follows its "@". */
+export function hostOf(name?: string): string {
+  const i = name?.lastIndexOf("@") ?? -1;
+  return name && i >= 0 ? name.slice(i + 1) : "local";
+}
+
+/** A server's name without its host. */
+export function bareName(name: string): string {
+  const i = name.lastIndexOf("@");
+  return i >= 0 ? name.slice(0, i) : name;
+}

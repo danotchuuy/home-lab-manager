@@ -3,7 +3,7 @@ import { api } from "../api";
 import type { App, ConfigItem, ConfigType, DeployRequest, ExtraConfig, PortConflict } from "../types";
 import { DockerOptions, ExtraItems } from "./AdditionalSettings";
 import { NetworkSection } from "./NetworkSection";
-import { suggestName } from "../util";
+import { hostOf, suggestName } from "../util";
 
 interface Props {
   app: App;
@@ -17,6 +17,8 @@ interface Props {
   restricted?: boolean;
   /** Nothing can be changed. */
   readOnly?: boolean;
+  /** The Docker host a new server goes on; a server being edited is on the one its name says. */
+  host?: string;
   onSubmit: (req: DeployRequest) => void;
 }
 
@@ -30,8 +32,9 @@ const sections: { type: ConfigType; title: string }[] = [
 
 const NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
 
-export function ConfigForm({ app, initial, isNew, submitLabel, busy, restricted, readOnly, onSubmit }: Props) {
+export function ConfigForm({ app, initial, isNew, submitLabel, busy, restricted, readOnly, host, onSubmit }: Props) {
   const editing = !!initial && !isNew;
+  const onHost = editing ? hostOf(initial?.name) : host;
   const [name, setName] = useState(initial?.name ?? suggestName(app.name));
   const [tag, setTag] = useState(initial?.tag ?? "");
   const [values, setValues] = useState<Record<string, string>>(() => {
@@ -55,7 +58,8 @@ export function ConfigForm({ app, initial, isNew, submitLabel, busy, restricted,
       app.config.filter((c) => c.required && !disabled.has(c.id) && !(values[c.id] ?? "").trim()).map((c) => c.name),
     [app.config, values, disabled],
   );
-  const nameValid = NAME_PATTERN.test(name);
+  // A server being edited keeps its name (with its host, name@host).
+  const nameValid = editing || NAME_PATTERN.test(name);
 
   const request = (): DeployRequest => ({
     templateId: app.id,
@@ -83,7 +87,7 @@ export function ConfigForm({ app, initial, isNew, submitLabel, busy, restricted,
     if (readOnly) return;
     let live = true;
     const t = setTimeout(() => {
-      api.checkPorts(JSON.parse(checkKey), editing ? initial?.name : undefined).then(
+      api.checkPorts(JSON.parse(checkKey), editing ? initial?.name : undefined, editing ? undefined : onHost).then(
         (r) => live && setConflicts(r.conflicts ?? []),
         () => live && setConflicts([]),
       );
@@ -92,7 +96,7 @@ export function ConfigForm({ app, initial, isNew, submitLabel, busy, restricted,
       live = false;
       clearTimeout(t);
     };
-  }, [checkKey, editing, initial?.name, readOnly]);
+  }, [checkKey, editing, initial?.name, readOnly, onHost]);
   const portItems = app.config.filter((c) => c.type === "Port" && !disabled.has(c.id));
   const conflictsFor = (item: ConfigItem) => conflicts.filter((c) => portItemMaps(item, c.container));
   // Conflicts from ports not shown as a field, e.g. extra ports.
@@ -156,6 +160,7 @@ export function ConfigForm({ app, initial, isNew, submitLabel, busy, restricted,
       ) : (
         <NetworkSection
           serverName={editing ? initial?.name : undefined}
+          host={onHost}
           templateNetwork={app.network}
           network={network}
           ipAddress={ipAddress}

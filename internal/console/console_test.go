@@ -80,7 +80,7 @@ func newService(t *testing.T, servers fakeServers) (*Service, *fakeDocker) {
 		t.Fatal(err)
 	}
 	d := &fakeDocker{}
-	s := New(Options{Secrets: store, Servers: servers, Docker: d, HostAddresses: func() []string { return []string{"127.0.0.1", "192.168.1.10"} }})
+	s := New(Options{Secrets: store, Servers: servers, Docker: d, HostAddresses: func(string) []string { return []string{"127.0.0.1", "192.168.1.10"} }})
 	return s, d
 }
 

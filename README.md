@@ -219,11 +219,50 @@ certificates. `docker-compose.yml` has a commented-out "Option B" for this setup
   certificate, as the docker CLI does.
 - Plain `tcp://` without TLS works, but anyone who can reach that port has root on the host. hlm logs a warning when you
   use it.
-- `ssh://` hosts aren't supported.
+- `ssh://` in `DOCKER_HOST` isn't supported; add an SSH host on the Host page instead (below).
 
 With a remote host, `HLM_APPDATA_ROOT` and template paths refer to the remote machine's filesystem, and game server
 ports are published on the remote machine. Web UI links in the dashboard point to it, and the header shows which Docker
 host is in use.
+
+### More Docker hosts
+
+One hlm can run servers on several machines: a NAS, a mini-PC, a GPU box. The host above (`DOCKER_HOST`, or the local
+socket) is **this host**; add others on the **Host** page, under **Docker hosts**. Their servers are listed with this
+host's, with a badge for their host, and have their console, files, backups, schedule, updates, health checks and
+alerts as usual.
+
+- **Names.** A server on another host is named `name@host`, where `host` is the short ID you give the host (`nas`).
+  The container on that host is just `name`, so the same name can be used on two hosts. Servers on this host keep
+  their plain names, so nothing changes for an existing install. Server groups, backups and other settings use the full
+  name.
+- **Install, import and clone** have a **Docker host** picker once there's more than one host. Paths in the form are
+  under that host's data folder, port checks look at that host, and the networks are that host's. Cloning to another
+  host copies the data folders across (through hlm), and keeps the name and ports if they're free there.
+- **SSH (recommended).** hlm signs in with its SSH key (the same key the [proxy](#relaying-through-a-proxy-server-nginx-over-ssh)
+  uses; the form shows it, to add to `~user/.ssh/authorized_keys`) as a user in the host's `docker` group, and talks to
+  Docker's socket over the connection. The host's SSH key is checked against the fingerprint you confirmed the first
+  time. If the SSH server doesn't allow forwarding (`AllowTcpForwarding no`), hlm runs `docker system dial-stdio`
+  there instead, as the `docker` CLI does for `ssh://` hosts; that needs the `docker` command on the host.
+- **TCP with TLS.** For a daemon started with `--tlsverify`: its address (`tcp://nas.lan:2376`), the CA that signed its
+  certificate and a client certificate and key. The daemon's certificate is always checked, and plain TCP isn't
+  accepted. The client key is kept encrypted with hlm's settings and never shown again.
+- **Data folder.** Where servers' data folders go on that host, like `HLM_APPDATA_ROOT` here.
+- **LAN address.** Where the host's published ports are reached (the SSH host or the TCP address's host, unless you set
+  another). Web UI links, game status checks and console connections (RCON, Palworld's REST API) use it, UniFi port
+  forwards point at it (set an IP address, or a name hlm can look up), and Cloudflare Tunnel routes to it from this
+  host.
+
+If a host can't be reached, the Servers page says so and its servers are left out until it's back; their settings in
+hlm are kept. Removing a host stops hlm managing its servers: they keep running there.
+
+Limits for now:
+
+- The Host page's CPU, memory, disks, disk usage by server and the data of deleted servers are this host's only.
+- [Compose stacks](#compose-stacks), hlm's own WireGuard and Cloudflare Tunnel containers, and self-update run on this
+  host.
+- Container IP addresses on another host's bridge networks can't be reached from here; hlm uses the host's published
+  ports (or a server's own LAN address on a macvlan network) instead.
 
 ## Updates and start on boot
 
@@ -1717,15 +1756,15 @@ when the `HLM_*` one isn't set.
 | `POST /api/auth/oidc/secret`                   | A new client secret, with its digest for Authelia's configuration; nothing is saved. |
 | `GET /auth/login?return=`, `GET /auth/callback` | Browser sign-in: off to the provider and back.                                   |
 | `GET /api/catalog/apps?q=&category=&sort=`     | Search templates (default category `GameServers`; `category=` for all).           |
-| `GET /api/catalog/apps/{id}`                   | Full template, with paths localized.                                              |
+| `GET /api/catalog/apps/{id}?host=`             | Full template, with paths localized for a [Docker host](#more-docker-hosts) (this host by default). |
 | `GET /api/catalog/categories`                  | Categories with counts.                                                           |
 | `POST /api/catalog/import`                     | `{image}`: pull an image and make a template from its defaults. Streams NDJSON; the final `done` event's message is the template ID. |
 | `DELETE /api/catalog/apps/{id}`                | Delete a template made from an image.                                             |
 | `POST /api/catalog/refresh`                    | Re-download the feed now.                                                         |
-| `GET /api/networks`                            | Docker networks with subnets, addresses in use, and whether static IPs are allowed. |
+| `GET /api/networks?host=`                      | Docker networks with subnets, addresses in use, and whether static IPs are allowed. `host` (here and for `POST`/`DELETE`) is a [Docker host](#more-docker-hosts); this host by default. |
 | `GET /api/servers`                             | Managed servers.                                                                  |
-| `POST /api/servers/check-ports`               | Host ports `{request, server?}` would use that are already in use (`conflicts`); `server` is the one being reconfigured. |
-| `POST /api/servers`                            | Install: `{templateId, name, tag?, values?, disabled?, network?, ipAddress?, extra?, extraParams?, postArgs?, privileged?}`, plus `group?` for a [deployer key](#deployer-keys). Streams NDJSON progress. |
+| `POST /api/servers/check-ports`               | Host ports `{request, server?, host?}` would use that are already in use (`conflicts`); `server` is the one being reconfigured, `host` the Docker host a new one goes on. |
+| `POST /api/servers`                            | Install: `{templateId, name, tag?, values?, disabled?, network?, ipAddress?, extra?, extraParams?, postArgs?, privileged?}`, plus `group?` for a [deployer key](#deployer-keys) and `host?` for another [Docker host](#more-docker-hosts). Streams NDJSON progress. |
 | `GET /api/servers/{id}`                        | One server (`id` is the container name or ID).                                    |
 | `POST /api/servers/{id}/start\|stop\|restart`  | Lifecycle actions.                                                                |
 | `POST /api/servers/{id}/update`                | Pull the latest image and recreate. Streams NDJSON.                               |
@@ -1757,16 +1796,22 @@ when the `HLM_*` one isn't set.
 | `POST /api/servers/{id}/backups`               | Start a backup now (202); progress shows in `GET .../backups`.                     |
 | `POST /api/servers/{id}/backups/restore`       | `{key, target?, backupFirst}`: start restoring a backup (202); progress shows in `GET .../backups`. |
 | `GET /api/servers/{id}/backups/download?key=&target=` | Download one of the server's backups (decrypted).                           |
+| `GET /api/hosts`                               | [Docker hosts](#more-docker-hosts) and whether they could be reached. Admins also get how each is reached (never a client key) and hlm's SSH public key. |
+| `POST /api/hosts/test`                         | Connect to a host as given, without saving it: its Docker version, or (for SSH) the host key to confirm (`hostKey`, `hostKeyFingerprint`). Admins. |
+| `POST /api/hosts`, `PUT /api/hosts/{id}`       | `{id, name, kind: "ssh"\|"tcp", ssh?: {host, port, user, hostKey}, socket?, url?, ca?, cert?, key?, appdataRoot, address?}`: add or change a host, after connecting to it. An empty `key` keeps the saved one. [Confirmed](#confirming-its-you) session. |
+| `DELETE /api/hosts/{id}`                       | Stop managing a host's servers (they keep running there). Confirmed session.      |
+| `POST /api/hosts/{id}/check`                   | Connect to a saved host now. Admins.                                              |
+| `POST /api/hosts/ssh-key`                      | Make hlm's SSH key, if there isn't one. Admins.                                   |
 | `GET /api/stacks`, `GET /api/stacks/{name}`   | [Compose stacks](#compose-stacks) and their services' state (the services the caller can see); admins also get the file and `.env`. |
 | `POST /api/stacks/preview`                     | `{name, yaml, env, existing}`: what creating (or, with `existing`, changing) the stack would do, per service. Admins. |
 | `POST /api/stacks`, `PUT /api/stacks/{name}`   | `{name, yaml, env}`: create a stack, or apply a changed file. Streams NDJSON. Admins. |
 | `POST /api/stacks/{name}/{action}`             | `start`, `stop`, `restart` or `update` the whole stack. Streams NDJSON. Operators of every service. |
 | `DELETE /api/stacks/{name}`                    | Remove the stack's containers and networks (data is kept). Admins.              |
 | `GET /api/servers/{id}/export?secrets=0\|1`    | The server's settings as an [export file](#export-import-and-clone). Operators; `secrets=1` (passwords included) takes a manager in a [confirmed](#confirming-its-you) browser session. |
-| `POST /api/servers/import/preview`             | Read an export file: the install form's template and settings, warnings, what was left out and what comes along. Admins. |
-| `POST /api/servers/import`                     | `{export, request}`: install a server from an export file with the form's settings, and give it the file's other settings. Streams NDJSON. Admins. |
-| `POST /api/servers/{id}/clone/preview`         | `{name}`: a clone's settings (new data folders and free ports), what it copies, and warnings. Admins. |
-| `POST /api/servers/{id}/clone`                 | `{name, request?, copyData: "none"\|"now"\|"backup", backupKey?, stopSource, start}`: clone the server. Streams NDJSON. Admins. |
+| `POST /api/servers/import/preview?host=`       | Read an export file: the install form's template and settings (for a [Docker host](#more-docker-hosts)), warnings, what was left out and what comes along. Admins. |
+| `POST /api/servers/import`                     | `{export, request, host?}`: install a server from an export file with the form's settings, and give it the file's other settings. Streams NDJSON. Admins. |
+| `POST /api/servers/{id}/clone/preview`         | `{name, host?}`: a clone's settings (new data folders and free ports), what it copies, and warnings; `host` puts it on another [Docker host](#more-docker-hosts). Admins. |
+| `POST /api/servers/{id}/clone`                 | `{name, host?, request?, copyData: "none"\|"now"\|"backup", backupKey?, stopSource, start}`: clone the server. Streams NDJSON. Admins. |
 | `DELETE /api/servers/{id}/backups?key=&target=` | Delete one of the server's backups (and its checksum) from the bucket.          |
 | `GET /api/system/backup`                       | Configuration backups: their plan, a running backup, and the backups in the bucket. |
 | `PUT /api/system/backup`                       | `{intervalHours, keep, retention?, includeKey}`: when to back up hlm's configuration, and which backups to keep. |

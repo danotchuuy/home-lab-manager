@@ -149,14 +149,15 @@ func (m *Manager) calculateStorage(ctx context.Context) {
 	}()
 
 	var r StorageReport
-	du, err := m.docker.SystemDiskUsage(ctx)
+	// The Host page is about the local host.
+	du, err := m.docker.SystemDiskUsage(ctx, LocalHost)
 	if err != nil {
 		r.DockerError = err.Error()
 	} else {
 		r.Docker = &du
 	}
 
-	list, err := m.docker.ListContainersWithSize(ctx, deploy.LabelManaged+"=true")
+	list, err := m.docker.ListContainersWithSizeOn(ctx, LocalHost, deploy.LabelManaged+"=true")
 	if err != nil {
 		r.DockerError = err.Error()
 		m.setStorage(r)

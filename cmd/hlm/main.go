@@ -41,6 +41,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/gamequery"
 	"github.com/danotchuuy/home-lab-manager/internal/health"
 	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
+	"github.com/danotchuuy/home-lab-manager/internal/hosts"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
 	"github.com/danotchuuy/home-lab-manager/internal/metrics"
 	"github.com/danotchuuy/home-lab-manager/internal/metricstore"
@@ -299,6 +300,17 @@ func run(log *slog.Logger) error {
 		tunnel.UseAPI(base)
 	}
 	go tunnel.RenameLegacyConnector(ctx)
+	// Other Docker hosts, whose servers hlm manages too. They sign in over
+	// SSH with the same key as the proxy.
+	dockerHosts := hosts.New(hosts.Options{
+		Secrets: store, SSHKey: relay.KeyPair, Credentials: registries.For, OnChange: mgr.SetHosts, Log: log,
+	})
+	if err := dockerHosts.Load(); err != nil {
+		log.Warn("load Docker hosts", "err", err)
+	}
+	defer dockerHosts.Close()
+	fwd.UseHostAddress(mgr.HostAddress)
+	tunnel.UseHostAddress(mgr.HostAddress)
 	// The containers these run show up beside the servers, with their usage
 	// and update checks.
 	mgr.UseConnection(proxy.LabelWireGuard, manager.ConnectionKind{
@@ -392,7 +404,11 @@ func run(log *slog.Logger) error {
 		gateways  []string
 		gatewayOK bool
 	)
-	hostAddresses := func() []string {
+	hostAddresses := func(id string) []string {
+		// A server on another Docker host is reached at that host.
+		if a := mgr.HostAddress(id); a != "" {
+			return []string{a}
+		}
 		if !strings.HasPrefix(dc.Host(), "unix://") {
 			if u, err := url.Parse(dc.Host()); err == nil {
 				return []string{u.Hostname()}
@@ -416,7 +432,7 @@ func run(log *slog.Logger) error {
 		return append(out, host.LANAddress())
 	}
 	consoles := console.New(console.Options{
-		Secrets: store, Servers: mgr, Docker: dc, HostAddresses: hostAddresses, Log: log,
+		Secrets: store, Servers: mgr, Docker: mgr.Docker(), HostAddresses: hostAddresses, Log: log,
 	})
 	go consoles.Run(ctx)
 	// Games that don't save when told to stop (Palworld) are saved first.
@@ -509,6 +525,7 @@ func run(log *slog.Logger) error {
 		HealthMonitor: healthMonitor,
 		Transfer:      transfers,
 		Stacks:        stacks,
+		Hosts:         dockerHosts,
 		// Set when HLM_UPDATE_CHECK overrides the setting.
 		UpdateCheckEnv: updateCheckEnv,
 		Token:          env("HLM_TOKEN", ""),

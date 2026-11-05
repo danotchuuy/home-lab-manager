@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"github.com/danotchuuy/home-lab-manager/internal/deploy"
@@ -61,7 +62,11 @@ func (s *server) previewImport(w http.ResponseWriter, r *http.Request) {
 	if !readExport(w, r, &exp) {
 		return
 	}
-	p, err := s.Transfer.PreviewImport(r.Context(), exp)
+	host, ok := s.hostParam(w, r)
+	if !ok {
+		return
+	}
+	p, err := s.Transfer.PreviewImport(r.Context(), exp, host)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -73,10 +78,17 @@ func (s *server) importServer(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Export  transfer.Export `json:"export"`
 		Request deploy.Request  `json:"request"`
+		// Host is the Docker host the server goes on; the local one if empty.
+		Host string `json:"host"`
 	}
 	if !readExport(w, r, &body) {
 		return
 	}
+	if strings.Contains(body.Request.Name, "@") {
+		writeError(w, http.StatusBadRequest, errors.New("choose the host with \"host\", not in the name"))
+		return
+	}
+	body.Request.Name = manager.JoinID(body.Host, body.Request.Name)
 	audit.SetServer(r.Context(), body.Request.Name)
 	audit.Add(r.Context(), "template", body.Export.Request.TemplateID)
 	audit.Add(r.Context(), "from", body.Export.Server)
@@ -93,12 +105,13 @@ func (s *server) previewClone(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Name string `json:"name"`
+		Host string `json:"host"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	p, err := s.Transfer.PreviewClone(r.Context(), name, body.Name)
+	p, err := s.Transfer.PreviewClone(r.Context(), name, transfer.CloneName(name, body.Host, body.Name))
 	if err != nil {
 		writeManagerError(w, err)
 		return

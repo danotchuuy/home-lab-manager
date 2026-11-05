@@ -54,6 +54,12 @@ type Config struct {
 	// enables TLS; cert.pem and key.pem, if present, are sent as the client
 	// certificate.
 	CertPath string
+	// TLS, when set, is used for a tcp:// host instead of the files in
+	// CertPath (for certificates kept in hlm's settings).
+	TLS *tls.Config
+	// Dial, when set, opens connections to the daemon instead of Host's
+	// address, such as a socket reached over SSH. Host only names it then.
+	Dial func(ctx context.Context) (net.Conn, error)
 }
 
 // ConfigFromEnv reads the same environment variables as the docker CLI:
@@ -75,7 +81,7 @@ func ConfigFromEnv() Config {
 
 // UsesTLS reports whether connections to a TCP daemon are encrypted.
 func (c Config) UsesTLS() bool {
-	return c.TLSVerify || c.CertPath != "" || strings.HasPrefix(c.Host, "https://")
+	return c.TLS != nil || c.TLSVerify || c.CertPath != "" || strings.HasPrefix(c.Host, "https://")
 }
 
 // NewClient creates a client for the daemon described by cfg.
@@ -94,8 +100,11 @@ func NewClient(cfg Config) (*Client, error) {
 		IdleConnTimeout: 90 * time.Second,
 	}
 	var base string
-	switch u.Scheme {
-	case "unix":
+	switch {
+	case cfg.Dial != nil:
+		transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) { return cfg.Dial(ctx) }
+		base = "http://docker"
+	case u.Scheme == "unix":
 		// TLS settings don't apply to a local socket and are ignored, as the
 		// docker CLI does.
 		sock := u.Path
@@ -107,14 +116,16 @@ func NewClient(cfg Config) (*Client, error) {
 			return d.DialContext(ctx, "unix", sock)
 		}
 		base = "http://docker"
-	case "tcp", "http", "https":
+	case u.Scheme == "tcp" || u.Scheme == "http" || u.Scheme == "https":
 		if u.Host == "" {
 			return nil, fmt.Errorf("docker host %q has no address", host)
 		}
 		if cfg.UsesTLS() {
-			tlsConfig, err := loadTLS(cfg)
-			if err != nil {
-				return nil, err
+			tlsConfig := cfg.TLS
+			if tlsConfig == nil {
+				if tlsConfig, err = loadTLS(cfg); err != nil {
+					return nil, err
+				}
 			}
 			transport.TLSClientConfig = tlsConfig
 			base = "https://" + u.Host
@@ -126,6 +137,13 @@ func NewClient(cfg Config) (*Client, error) {
 	}
 
 	return &Client{http: &http.Client{Transport: transport}, base: base, host: host}, nil
+}
+
+// Close closes idle connections to the daemon.
+func (c *Client) Close() {
+	if t, ok := c.http.Transport.(*http.Transport); ok {
+		t.CloseIdleConnections()
+	}
 }
 
 // Host returns the daemon address the client connects to.

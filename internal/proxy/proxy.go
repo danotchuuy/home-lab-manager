@@ -135,6 +135,10 @@ func (s *Service) key() (remote.KeyPair, bool, error) {
 	return kp, ok, err
 }
 
+// KeyPair returns hlm's SSH key pair, which other features (such as other
+// Docker hosts reached over SSH) sign in with too.
+func (s *Service) KeyPair() (remote.KeyPair, bool, error) { return s.key() }
+
 // Key returns the public key, or nil if there is none yet.
 func (s *Service) Key() (*KeyInfo, error) {
 	kp, ok, err := s.key()

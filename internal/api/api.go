@@ -37,6 +37,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/gamequery"
 	"github.com/danotchuuy/home-lab-manager/internal/health"
 	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
+	"github.com/danotchuuy/home-lab-manager/internal/hosts"
 	"github.com/danotchuuy/home-lab-manager/internal/linode"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
 	"github.com/danotchuuy/home-lab-manager/internal/metrics"
@@ -101,6 +102,8 @@ type Options struct {
 	Transfer *transfer.Service
 	// Stacks runs Docker Compose stacks.
 	Stacks *stack.Service
+	// Hosts are the other Docker hosts servers can be on.
+	Hosts *hosts.Registry
 	// UpdateCheckEnv is HLM_UPDATE_CHECK, which overrides the setting for
 	// how often updates are checked for, if set.
 	UpdateCheckEnv string
@@ -298,8 +301,13 @@ func (s *server) searchApps(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"total": total, "items": items})
 }
 
+// getApp returns a template, with its paths for the ?host= it's for.
 func (s *server) getApp(w http.ResponseWriter, r *http.Request) {
-	app, ok := s.Manager.App(r.PathValue("id"))
+	host, ok := s.hostParam(w, r)
+	if !ok {
+		return
+	}
+	app, ok := s.Manager.AppOn(r.PathValue("id"), host)
 	if !ok {
 		writeError(w, http.StatusNotFound, errors.New("app not found"))
 		return
@@ -347,8 +355,13 @@ func (s *server) refreshCatalog(w http.ResponseWriter, r *http.Request) {
 
 // --- networks ---
 
+// Networks are per host (?host=, the local one by default).
 func (s *server) listNetworks(w http.ResponseWriter, r *http.Request) {
-	networks, err := s.Manager.Networks(r.Context())
+	host, ok := s.hostParam(w, r)
+	if !ok {
+		return
+	}
+	networks, err := s.Manager.Networks(r.Context(), host)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
 		return
@@ -357,12 +370,16 @@ func (s *server) listNetworks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) createNetwork(w http.ResponseWriter, r *http.Request) {
+	host, ok := s.hostParam(w, r)
+	if !ok {
+		return
+	}
 	var req manager.NetworkRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	n, err := s.Manager.CreateNetwork(r.Context(), req)
+	n, err := s.Manager.CreateNetwork(r.Context(), host, req)
 	if err != nil {
 		var apiErr *docker.APIError
 		if errors.As(err, &apiErr) {
@@ -376,7 +393,11 @@ func (s *server) createNetwork(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) removeNetwork(w http.ResponseWriter, r *http.Request) {
-	if err := s.Manager.RemoveNetwork(r.Context(), r.PathValue("name")); err != nil {
+	host, ok := s.hostParam(w, r)
+	if !ok {
+		return
+	}
+	if err := s.Manager.RemoveNetwork(r.Context(), host, r.PathValue("name")); err != nil {
 		if errors.Is(err, manager.ErrNotFound) {
 			writeError(w, http.StatusNotFound, err)
 			return
@@ -521,12 +542,25 @@ func (s *server) installServer(w http.ResponseWriter, r *http.Request) {
 		deploy.Request
 		// Group is the server group a deployer's server goes in.
 		Group string `json:"group"`
+		// Host is the Docker host it goes on; the local one if empty.
+		Host string `json:"host"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	req := body.Request
+	if strings.Contains(req.Name, "@") {
+		writeError(w, http.StatusBadRequest, errors.New("choose the host with \"host\", not in the name"))
+		return
+	}
+	if body.Host != "" && body.Host != manager.LocalHost {
+		if !s.Manager.KnownHost(body.Host) {
+			writeError(w, http.StatusNotFound, errors.New("there is no Docker host "+body.Host))
+			return
+		}
+		req.Name = manager.JoinID(body.Host, req.Name)
+	}
 	audit.SetServer(r.Context(), req.Name)
 	audit.Add(r.Context(), "template", req.TemplateID)
 	access := s.access(r)
@@ -563,6 +597,8 @@ func (s *server) checkServerPorts(w http.ResponseWriter, r *http.Request) {
 		Request deploy.Request `json:"request"`
 		// Server is the server being reconfigured, whose own ports are fine.
 		Server string `json:"server"`
+		// Host is the host a new server goes on.
+		Host string `json:"host"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -576,6 +612,13 @@ func (s *server) checkServerPorts(w http.ResponseWriter, r *http.Request) {
 	}
 	if !validServerName.MatchString(body.Request.Name) {
 		body.Request.Name = "port-check" // only the ports matter here
+	}
+	if body.Server == "" && body.Host != "" {
+		if !s.Manager.KnownHost(body.Host) {
+			writeError(w, http.StatusNotFound, errors.New("there is no Docker host "+body.Host))
+			return
+		}
+		body.Request.Name = manager.JoinID(body.Host, body.Request.Name)
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()

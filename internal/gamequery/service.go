@@ -96,7 +96,7 @@ type Options struct {
 	Servers       Servers
 	Console       Console
 	Notifier      notify.Notifier
-	HostAddresses func() []string
+	HostAddresses func(id string) []string
 	Log           *slog.Logger
 	// Probes and Now are for tests.
 	Probes map[string]func(ctx context.Context, addr string) (Result, error)
@@ -144,7 +144,7 @@ func New(o Options) *Service {
 		o.Now = time.Now
 	}
 	if o.HostAddresses == nil {
-		o.HostAddresses = func() []string { return []string{"127.0.0.1"} }
+		o.HostAddresses = func(string) []string { return []string{"127.0.0.1"} }
 	}
 	if o.Probes == nil {
 		o.Probes = map[string]func(context.Context, string) (Result, error){
@@ -441,7 +441,7 @@ func (s *Service) query(ctx context.Context, info docker.ContainerJSON, m Settin
 	if m.Protocol == ProtoMinecraft || m.Protocol == ProtoTCP {
 		proto = "tcp"
 	}
-	addrs := reach.Addresses(info, m.Port, proto, s.opts.HostAddresses())
+	addrs := reach.Addresses(info, m.Port, proto, s.opts.HostAddresses(info.ID))
 	// The address that answered last time goes first, so one that can't be
 	// reached (another bridge network, say) isn't waited for every time.
 	if i := slices.Index(addrs, prefer); i > 0 {

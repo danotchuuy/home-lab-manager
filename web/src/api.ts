@@ -88,6 +88,9 @@ import type {
   WireGuardResult,
   WireGuardStatus,
   SSHKeyInfo,
+  DockerHost,
+  DockerHostInput,
+  DockerVersion,
   NetworkRequest,
   UpdateCheckInfo,
   Role,
@@ -258,6 +261,11 @@ export async function download(path: string) {
   window.location.href = url;
 }
 
+/** ?host= for requests about a Docker host other than the local one. */
+function hostQuery(host?: string): string {
+  return host && host !== "local" ? `?host=${encodeURIComponent(host)}` : "";
+}
+
 export const api = {
   status: () => json<Status>("/api/status"),
 
@@ -269,17 +277,20 @@ export const api = {
     }
     return json<{ total: number; items: AppSummary[] }>(`/api/catalog/apps?${qs}`);
   },
-  app: (id: string) => json<App>(`/api/catalog/apps/${encodeURIComponent(id)}`),
+  /** A template, with its paths for the host it's going on. */
+  app: (id: string, host?: string) =>
+    json<App>(`/api/catalog/apps/${encodeURIComponent(id)}${hostQuery(host)}`),
   /** Pulls an image and makes a template from its defaults; the "done" event's message is the template ID. */
   importImage: (image: string, onEvent: (e: DeployEvent) => void) =>
     stream("/api/catalog/import", { method: "POST", body: JSON.stringify({ image }) }, onEvent),
   deleteTemplate: (id: string) => json<void>(`/api/catalog/apps/${encodeURIComponent(id)}`, { method: "DELETE" }),
   refreshCatalog: () => json<{ apps: number }>("/api/catalog/refresh", { method: "POST" }),
 
-  networks: () => json<NetworkInfo[]>("/api/networks"),
-  createNetwork: (req: NetworkRequest) =>
-    json<NetworkInfo>("/api/networks", { method: "POST", body: JSON.stringify(req) }),
-  removeNetwork: (name: string) => json<void>(`/api/networks/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  networks: (host?: string) => json<NetworkInfo[]>(`/api/networks${hostQuery(host)}`),
+  createNetwork: (req: NetworkRequest, host?: string) =>
+    json<NetworkInfo>(`/api/networks${hostQuery(host)}`, { method: "POST", body: JSON.stringify(req) }),
+  removeNetwork: (name: string, host?: string) =>
+    json<void>(`/api/networks/${encodeURIComponent(name)}${hostQuery(host)}`, { method: "DELETE" }),
   hostInterfaces: () => json<HostInterface[]>("/api/networks/interfaces"),
 
   servers: () => json<Server[]>("/api/servers"),
@@ -380,18 +391,26 @@ export const api = {
   /** A server's settings as a file; with secrets, its passwords too (a manager, after confirming it's them). */
   exportServer: (id: string, secrets: boolean) =>
     json<ServerExport>(`/api/servers/${encodeURIComponent(id)}/export${secrets ? "?secrets=1" : ""}`),
-  previewImport: (exp: ServerExport) =>
-    json<TransferPreview>("/api/servers/import/preview", { method: "POST", body: JSON.stringify(exp) }),
-  importServer: (exp: ServerExport, request: DeployRequest, onEvent: (e: DeployEvent) => void) =>
-    stream("/api/servers/import", { method: "POST", body: JSON.stringify({ export: exp, request }) }, onEvent),
-  previewClone: (id: string, name: string) =>
+  previewImport: (exp: ServerExport, host?: string) =>
+    json<TransferPreview>(`/api/servers/import/preview${hostQuery(host)}`, { method: "POST", body: JSON.stringify(exp) }),
+  importServer: (exp: ServerExport, request: DeployRequest, onEvent: (e: DeployEvent) => void, host?: string) =>
+    stream("/api/servers/import", { method: "POST", body: JSON.stringify({ export: exp, request, host }) }, onEvent),
+  previewClone: (id: string, name: string, host?: string) =>
     json<TransferPreview>(`/api/servers/${encodeURIComponent(id)}/clone/preview`, {
       method: "POST",
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, host }),
     }),
   cloneServer: (
     id: string,
-    opts: { name: string; request?: DeployRequest; copyData: CopyData; backupKey?: string; stopSource: boolean; start: boolean },
+    opts: {
+      name: string;
+      host?: string;
+      request?: DeployRequest;
+      copyData: CopyData;
+      backupKey?: string;
+      stopSource: boolean;
+      start: boolean;
+    },
     onEvent: (e: DeployEvent) => void,
   ) => stream(`/api/servers/${encodeURIComponent(id)}/clone`, { method: "POST", body: JSON.stringify(opts) }, onEvent),
   stacks: () => json<Stack[]>("/api/stacks"),
@@ -406,14 +425,26 @@ export const api = {
   stackAction: (name: string, action: "start" | "stop" | "restart" | "update", onEvent: (e: DeployEvent) => void) =>
     stream(`/api/stacks/${encodeURIComponent(name)}/${action}`, { method: "POST" }, onEvent),
   deleteStack: (name: string) => json<void>(`/api/stacks/${encodeURIComponent(name)}`, { method: "DELETE" }),
-  install: (req: DeployRequest, onEvent: (e: DeployEvent) => void) =>
-    stream("/api/servers", { method: "POST", body: JSON.stringify(req) }, onEvent),
-  /** Host ports the settings would use that are already in use; `server` is the one being edited. */
-  checkPorts: (request: DeployRequest, server?: string) =>
+  /** Installs a server on a Docker host (the local one if none). */
+  install: (req: DeployRequest, onEvent: (e: DeployEvent) => void, host?: string) =>
+    stream("/api/servers", { method: "POST", body: JSON.stringify({ ...req, host }) }, onEvent),
+  /** Host ports the settings would use that are already in use; `server` is the one being edited, `host` where a new one goes. */
+  checkPorts: (request: DeployRequest, server?: string, host?: string) =>
     json<{ conflicts: PortConflict[]; error?: string }>("/api/servers/check-ports", {
       method: "POST",
-      body: JSON.stringify({ request, server }),
+      body: JSON.stringify({ request, server, host }),
     }),
+  /** Docker hosts; admins also get how each is reached, and hlm's SSH key. */
+  hosts: () => json<{ hosts: DockerHost[]; sshKey?: SSHKeyInfo }>("/api/hosts"),
+  testHost: (h: DockerHostInput) =>
+    json<DockerVersion>("/api/hosts/test", { method: "POST", body: JSON.stringify(h) }),
+  createHost: (h: DockerHostInput) => json<DockerHost>("/api/hosts", { method: "POST", body: JSON.stringify(h) }),
+  updateHost: (h: DockerHostInput) =>
+    json<DockerHost>(`/api/hosts/${encodeURIComponent(h.id)}`, { method: "PUT", body: JSON.stringify(h) }),
+  deleteHost: (id: string) => json<void>(`/api/hosts/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  checkHost: (id: string) => json<DockerVersion>(`/api/hosts/${encodeURIComponent(id)}/check`, { method: "POST" }),
+  /** Makes hlm's SSH key, if there isn't one. */
+  hostsSSHKey: () => json<SSHKeyInfo>("/api/hosts/ssh-key", { method: "POST" }),
   reconfigure: (id: string, req: DeployRequest, onEvent: (e: DeployEvent) => void) =>
     stream(`/api/servers/${encodeURIComponent(id)}/config`, { method: "PUT", body: JSON.stringify(req) }, onEvent),
   setAutostart: (id: string, enabled: boolean) =>
