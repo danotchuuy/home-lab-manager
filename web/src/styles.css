@@ -3425,3 +3425,38 @@ progress {
 .chart-head select {
   width: auto;
 }
+
+/* Import and clone */
+.indent {
+  margin-left: 1.6rem;
+}
+
+select.indent {
+  width: auto;
+  max-width: 100%;
+}
+
+.app-hero.compact {
+  margin-bottom: 0.75rem;
+}
+
+.app-hero.compact h2 {
+  margin: 0;
+}
+
+ul.copies {
+  margin: 0.25rem 0 0.75rem;
+  padding-left: 1.2rem;
+}
+
+ul.transfer-warnings {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.75rem;
+  color: var(--warn);
+  font-size: 0.875rem;
+}
+
+ul.transfer-warnings li {
+  margin-bottom: 0.35rem;
+}

@@ -7,6 +7,9 @@ import type {
   HistoryRange,
   MetricHistory,
   MetricsSettings,
+  ServerExport,
+  TransferPreview,
+  CopyData,
   HealthCheck,
   HealthSettings,
   ServerHealth,
@@ -350,6 +353,23 @@ export const api = {
     json<Server>(`/api/servers/${encodeURIComponent(id)}/${action}`, { method: "POST" }),
   remove: (id: string) => json<void>(`/api/servers/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
+  /** A server's settings as a file; with secrets, its passwords too (a manager, after confirming it's them). */
+  exportServer: (id: string, secrets: boolean) =>
+    json<ServerExport>(`/api/servers/${encodeURIComponent(id)}/export${secrets ? "?secrets=1" : ""}`),
+  previewImport: (exp: ServerExport) =>
+    json<TransferPreview>("/api/servers/import/preview", { method: "POST", body: JSON.stringify(exp) }),
+  importServer: (exp: ServerExport, request: DeployRequest, onEvent: (e: DeployEvent) => void) =>
+    stream("/api/servers/import", { method: "POST", body: JSON.stringify({ export: exp, request }) }, onEvent),
+  previewClone: (id: string, name: string) =>
+    json<TransferPreview>(`/api/servers/${encodeURIComponent(id)}/clone/preview`, {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+  cloneServer: (
+    id: string,
+    opts: { name: string; request?: DeployRequest; copyData: CopyData; backupKey?: string; stopSource: boolean; start: boolean },
+    onEvent: (e: DeployEvent) => void,
+  ) => stream(`/api/servers/${encodeURIComponent(id)}/clone`, { method: "POST", body: JSON.stringify(opts) }, onEvent),
   install: (req: DeployRequest, onEvent: (e: DeployEvent) => void) =>
     stream("/api/servers", { method: "POST", body: JSON.stringify(req) }, onEvent),
   /** Host ports the settings would use that are already in use; `server` is the one being edited. */

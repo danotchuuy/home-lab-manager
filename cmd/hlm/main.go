@@ -52,6 +52,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
 	"github.com/danotchuuy/home-lab-manager/internal/selfupdate"
 	"github.com/danotchuuy/home-lab-manager/internal/tlscert"
+	"github.com/danotchuuy/home-lab-manager/internal/transfer"
 )
 
 // version is set at build time with -ldflags "-X main.version=v1.2.3".
@@ -455,6 +456,12 @@ func run(log *slog.Logger) error {
 	}
 	go mgr.RunUpdateChecker(ctx, checkEvery)
 	go notifier.Run(ctx)
+	pinned := configfiles.New(store, mgr)
+	// Servers exported to a file, imported from one, and cloned.
+	transfers := transfer.New(transfer.Options{
+		Manager: mgr, Catalog: cat, Backups: backups, Tasks: sched, Updates: autoUpdates, Query: queries,
+		Console: consoles, ConfigFiles: pinned, Health: healthStore, Version: version, Log: log,
+	})
 	handler := api.Handler(api.Options{
 		Docker:        dc,
 		Catalog:       cat,
@@ -475,7 +482,7 @@ func run(log *slog.Logger) error {
 		Schedule:      sched,
 		AutoUpdate:    autoUpdates,
 		Query:         queries,
-		ConfigFiles:   configfiles.New(store, mgr),
+		ConfigFiles:   pinned,
 		Audit:         auditLog,
 		Registries:    registries,
 		History:       history,
@@ -483,6 +490,7 @@ func run(log *slog.Logger) error {
 		MetricsConfig: metrics.NewConfig(store),
 		Health:        healthStore,
 		HealthMonitor: healthMonitor,
+		Transfer:      transfers,
 		// Set when HLM_UPDATE_CHECK overrides the setting.
 		UpdateCheckEnv: updateCheckEnv,
 		Token:          env("HLM_TOKEN", ""),

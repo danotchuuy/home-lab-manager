@@ -9,6 +9,8 @@ interface Props {
   app: App;
   /** Existing settings when editing a server; omitted for a new install. */
   initial?: DeployRequest;
+  /** initial is the starting point for a new server (an import or a clone), not one being edited. */
+  isNew?: boolean;
   submitLabel: string;
   busy?: boolean;
   /** Only ports and variables can be changed: the rest takes an admin. */
@@ -28,8 +30,8 @@ const sections: { type: ConfigType; title: string }[] = [
 
 const NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
 
-export function ConfigForm({ app, initial, submitLabel, busy, restricted, readOnly, onSubmit }: Props) {
-  const editing = !!initial;
+export function ConfigForm({ app, initial, isNew, submitLabel, busy, restricted, readOnly, onSubmit }: Props) {
+  const editing = !!initial && !isNew;
   const [name, setName] = useState(initial?.name ?? suggestName(app.name));
   const [tag, setTag] = useState(initial?.tag ?? "");
   const [values, setValues] = useState<Record<string, string>>(() => {
@@ -69,6 +71,8 @@ export function ConfigForm({ app, initial, submitLabel, busy, restricted, readOn
     extraParams: extraParams !== (app.extraParams ?? "") ? extraParams : undefined,
     postArgs: postArgs !== (app.postArgs ?? "") ? postArgs : undefined,
     privileged: privileged !== app.privileged ? privileged : undefined,
+    // Kept as it was: start on boot is switched on the server list.
+    restartPolicy: initial?.restartPolicy || undefined,
   });
 
   // Host ports already used by another container or program, checked a

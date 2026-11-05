@@ -346,17 +346,23 @@ type Event struct {
 
 // Install pulls the image for req and creates and starts the container.
 func (m *Manager) Install(ctx context.Context, req deploy.Request, emit func(Event)) (Server, error) {
-	return m.installJob(ctx, req, false, emit)
+	return m.installJob(ctx, req, false, true, emit)
 }
 
 // InstallConfined creates and starts a server that can't reach the host (see
 // deploy.Confine), or refuses to if the template needs more than that. It
 // stays confined whenever it's recreated.
 func (m *Manager) InstallConfined(ctx context.Context, req deploy.Request, emit func(Event)) (Server, error) {
-	return m.installJob(ctx, req, true, emit)
+	return m.installJob(ctx, req, true, true, emit)
 }
 
-func (m *Manager) installJob(ctx context.Context, req deploy.Request, confined bool, emit func(Event)) (srv Server, err error) {
+// Create installs a server without starting it, for a clone whose data is
+// copied in first.
+func (m *Manager) Create(ctx context.Context, req deploy.Request, emit func(Event)) (Server, error) {
+	return m.installJob(ctx, req, false, false, emit)
+}
+
+func (m *Manager) installJob(ctx context.Context, req deploy.Request, confined, start bool, emit func(Event)) (srv Server, err error) {
 	job := Job{Kind: "install", Server: req.Name}
 	if app, ok := m.App(req.TemplateID); ok {
 		job.App, job.Icon, job.Image = app.Name, app.Icon, app.Repository
@@ -366,10 +372,10 @@ func (m *Manager) installJob(ctx context.Context, req deploy.Request, confined b
 		return Server{}, err
 	}
 	defer func() { finish(err) }()
-	return m.install(ctx, req, confined, emit)
+	return m.install(ctx, req, confined, start, emit)
 }
 
-func (m *Manager) install(ctx context.Context, req deploy.Request, confined bool, emit func(Event)) (Server, error) {
+func (m *Manager) install(ctx context.Context, req deploy.Request, confined, start bool, emit func(Event)) (Server, error) {
 	if confined {
 		if app, ok := m.App(req.TemplateID); ok {
 			req = deploy.ConfinePaths(app, req, m.appdataRoot)
@@ -411,6 +417,13 @@ func (m *Manager) install(ctx context.Context, req deploy.Request, confined bool
 	for _, w := range warnings {
 		emit(Event{Stage: "warning", Message: w})
 	}
+	if !start {
+		srv, err := m.Get(ctx, id)
+		if err == nil {
+			emit(Event{Stage: "created", Message: "Created " + spec.Name + " (not started yet)", Server: &srv})
+		}
+		return srv, err
+	}
 	srv, err := m.startNew(ctx, id, emit)
 	if err != nil {
 		// Don't leave a half-installed container behind: it would block
@@ -424,6 +437,9 @@ func (m *Manager) install(ctx context.Context, req deploy.Request, confined bool
 	}
 	return srv, nil
 }
+
+// AppdataRoot is where servers' data folders go on the host.
+func (m *Manager) AppdataRoot() string { return m.appdataRoot }
 
 // Reconfigure recreates a server with new settings. The old container is
 // kept, renamed, until the new one has been created, so a bad configuration

@@ -3,6 +3,7 @@ package manager
 import (
 	"archive/tar"
 	"context"
+	"fmt"
 	"io"
 	"time"
 
@@ -101,4 +102,36 @@ func (m *Manager) RestoreArchive(ctx context.Context, id string, r io.Reader, pr
 	}
 	m.log.Info("restoring files", "server", info.Name)
 	return m.browser().Restore(ctx, info, r, progress)
+}
+
+// CopyData copies folders (container paths, with everything in them) from
+// one server's container to the same paths in another's, as a backup and a
+// restore would, without storing anything in between.
+func (m *Manager) CopyData(ctx context.Context, fromID, toID string, folders []string, progress func(files.ArchiveStats)) (files.ArchiveStats, error) {
+	from, err := m.inspect(ctx, fromID)
+	if err != nil {
+		return files.ArchiveStats{}, err
+	}
+	to, err := m.inspect(ctx, toID)
+	if err != nil {
+		return files.ArchiveStats{}, err
+	}
+	m.log.Info("copying data", "from", from.Name, "to", to.Name, "folders", folders)
+	pr, pw := io.Pipe()
+	archived := make(chan error, 1)
+	go func() {
+		tw := tar.NewWriter(pw)
+		_, err := m.browser().Archive(ctx, from, folders, tw, nil)
+		if err == nil {
+			err = tw.Close()
+		}
+		pw.CloseWithError(err)
+		archived <- err
+	}()
+	st, err := m.browser().Restore(ctx, to, pr, progress)
+	pr.CloseWithError(err) // stop the reader if the restore gave up
+	if aerr := <-archived; aerr != nil && err == nil {
+		err = fmt.Errorf("read %s: %w", from.Name, aerr)
+	}
+	return st, err
 }

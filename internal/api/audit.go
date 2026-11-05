@@ -29,6 +29,9 @@ var auditNames = map[string]string{
 	"GET /api/servers/{id}/backups/download": "servers.backups.download",
 	"GET /api/system/backup/download":        "system.backup.download",
 	"GET /api/audit/export":                  "audit.export",
+	"GET /api/servers/{id}/export":           "servers.export",
+	"POST /api/servers/import/preview":       "-",
+	"POST /api/servers/{id}/clone/preview":   "-",
 }
 
 // actionVerbs are path ends that already say what a POST does; other POSTs
@@ -36,7 +39,7 @@ var auditNames = map[string]string{
 var actionVerbs = []string{
 	"test", "check", "apply", "run", "restore", "start", "stop", "restart", "update", "renew", "import", "refresh",
 	"sync", "install", "command", "adopt", "dismiss", "forget", "delete", "remove", "key", "secret", "wan-check",
-	"detect", "confirm", "login", "logout", "challenge", "download-ticket", "check-ports", "check-ip",
+	"detect", "confirm", "login", "logout", "challenge", "download-ticket", "check-ports", "check-ip", "clone",
 }
 
 var wildcardRE = regexp.MustCompile(`\{(\w+)\.*\}`)

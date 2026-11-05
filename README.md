@@ -657,6 +657,58 @@ its own. With `HLM_SECRET_KEY`, there's no key file to include.
 To restore, stop hlm, extract a backup into its data directory (`/data` in the Docker image), put back the key if it
 wasn't included, and start hlm again.
 
+## Export, import and clone
+
+**Export settings** (a server's **Settings** tab) downloads `<server>.hlm.json`, which holds:
+- the server's template, so it can be installed where the template isn't in the catalog;
+- its settings: ports, data folders, variables, network, Docker options and whether it starts on boot;
+- its scheduled tasks, backup plan, automatic-update policy, status-query, console, health and pinned-files settings.
+
+Its data isn't in the file. Neither are its web addresses, port forwarding and server groups, since those reach outside
+the server.
+
+- **Paths under the appdata folder** (`HLM_APPDATA_ROOT`) are written as `${APPDATA}/…`, so they land in the other hlm's
+  appdata folder.
+- **Passwords and keys** (settings whose names look like passwords, tokens or keys, Docker options and the console's
+  password) are left blank, and the file lists which. **Include passwords and keys** exports them too. That takes a
+  manager of the server, at a browser, after confirming it's them; keep that file safe.
+- Operators can export a server without its passwords.
+
+**Catalog → Import a server** (admins) reads a file and shows the install form, filled in, so you can change anything
+first. It warns when:
+- passwords are blank;
+- a server with that name, or one already using one of its data folders, exists here;
+- a path is outside the appdata folder;
+- it has a fixed IP address;
+- its template isn't in the catalog. The template is then added from the file, as a custom template.
+
+Installing gives the new server the file's other settings too. Files from a newer hlm's format are refused.
+
+**Clone…** (admins, next to Export settings) makes a copy on this hlm. The copy:
+- gets a new name;
+- gets its own data folders: the folder under the appdata folder named after the server is renamed (`valheim` →
+  `valheim-copy`), or else the path goes into a folder named after the copy. A folder outside the appdata folder that
+  isn't named after the server stays shared, with a warning, so you can change it;
+- gets free host ports: all of them move up by the same step, so a game port and the query port after it stay together.
+  Servers with their own LAN address keep their ports; with host networking, you're warned to change the game's ports;
+- doesn't keep a fixed IP address;
+- gets all the other settings, passwords included.
+
+For its data, choose:
+- **Copy the data folders as they are now.** The data folders, and Docker volumes made for the image's `VOLUME` paths,
+  are copied through Docker, the way a backup is made and restored, but without storing anything in between. **Stop the
+  original while copying** (on by default) keeps a game from being caught halfway through a save. The original is
+  started again as soon as the copy is done.
+- **Copy one of its backups:** restores that backup into the copy.
+- **Settings only:** the copy starts with empty data folders.
+
+The settings form is shown before cloning, to change anything. The copy is started when it's ready, unless you untick
+that. If copying fails, the half-made copy is removed; the folders it made stay on disk and are listed under
+[deleted servers' data](#host-metrics) on the Host page.
+
+**Restore as new server…** (a backup on the **Backups** tab, admins) is a clone that copies that backup, leaving the
+original as it is: to look at an old world, or to try something on a copy.
+
 ## A server's ports
 
 **Host ports.** In the install and settings forms, each port field is the port on this host that Docker publishes the
@@ -1568,6 +1620,11 @@ when the `HLM_*` one isn't set.
 | `POST /api/servers/{id}/backups`               | Start a backup now (202); progress shows in `GET .../backups`.                     |
 | `POST /api/servers/{id}/backups/restore`       | `{key, backupFirst}`: start restoring a backup (202); progress shows in `GET .../backups`. |
 | `GET /api/servers/{id}/backups/download?key=`  | Download one of the server's backups.                                             |
+| `GET /api/servers/{id}/export?secrets=0\|1`    | The server's settings as an [export file](#export-import-and-clone). Operators; `secrets=1` (passwords included) takes a manager in a [confirmed](#confirming-its-you) browser session. |
+| `POST /api/servers/import/preview`             | Read an export file: the install form's template and settings, warnings, what was left out and what comes along. Admins. |
+| `POST /api/servers/import`                     | `{export, request}`: install a server from an export file with the form's settings, and give it the file's other settings. Streams NDJSON. Admins. |
+| `POST /api/servers/{id}/clone/preview`         | `{name}`: a clone's settings (new data folders and free ports), what it copies, and warnings. Admins. |
+| `POST /api/servers/{id}/clone`                 | `{name, request?, copyData: "none"\|"now"\|"backup", backupKey?, stopSource, start}`: clone the server. Streams NDJSON. Admins. |
 | `DELETE /api/servers/{id}/backups?key=`        | Delete one of the server's backups from the bucket.                               |
 | `GET /api/system/backup`                       | Configuration backups: their plan, a running backup, and the backups in the bucket. |
 | `PUT /api/system/backup`                       | `{intervalHours, keep, includeKey}`: when to back up hlm's configuration.          |

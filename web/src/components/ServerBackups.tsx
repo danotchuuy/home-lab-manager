@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { useAdmin } from "../access";
 import { api, download } from "../api";
 import type { BackupOverview, BackupPlan, FileListing } from "../types";
 import { usePoll } from "../usePoll";
@@ -59,6 +60,7 @@ export function ServerBackups({
   /** May change the plan, and restore and delete backups. */
   canManage: boolean;
 }) {
+  const admin = useAdmin();
   const [overview, setOverview] = useState<BackupOverview>();
   const [draft, setDraft] = useState<Draft>();
   const [error, setError] = useState<string>();
@@ -360,6 +362,15 @@ export function ServerBackups({
                       >
                         Restore
                       </button>
+                    )}
+                    {admin && (
+                      <Link
+                        className="btn ghost small"
+                        to={`/servers/${encodeURIComponent(server)}/clone?backup=${encodeURIComponent(b.key)}`}
+                        title="Make a new server with this backup's files, leaving this one as it is"
+                      >
+                        Restore as new server…
+                      </Link>
                     )}
                     {canRun && (
                       <a
