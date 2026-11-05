@@ -2,6 +2,26 @@
 
 **Priority:** Low (each item is small; do them opportunistically) · **Depends on:** nothing
 
+> **Status: done** (branch `feature/16-ui-improvements`). See the README's [Using the web UI](../README.md#using-the-web-ui).
+> Where the result differs from this plan:
+>
+> - **Tests:** the web already runs `node --test` on `*.test.ts` (Node strips the types), so the list logic
+>   (`src/serverlist.ts`) is tested that way instead of adding Vitest.
+> - **Filters:** "crash loop" is part of **With a problem** (also failing health checks and dead containers), and
+>   there's a Docker host filter (feature 14). The sort by players uses the game query's counts.
+> - **Favourites** are per principal: account, single sign-on user, or API key; one shared set when sign-in isn't
+>   required. Tags and favourites are in the secrets store (`server-tags`, `favourites`), so configuration backups
+>   include them; a deleted server's are forgotten.
+> - **Bulk actions** stream through `POST /api/servers/bulk` (one request) and reuse the multi-server update progress.
+>   An update of a server that's already up to date is reported as such, not run.
+> - **Tables** don't turn into stacked rows on phones: they scroll sideways (as before); cards, tabs, the header and
+>   touch targets were reworked instead.
+> - **Connect info** has the addresses and ports but no password hint: hlm doesn't know which setting is a game's
+>   join password.
+> - **Accessibility:** checked with axe-core (WCAG 2 A/AA) on the Servers, server, Host, System and Catalog pages in
+>   both themes. The fixes included a darker light-theme accent and success/warning/danger colours (contrast), labels
+>   on selects, `role="img"` on the storage bars, and the activity log's rows opening with a real button.
+
 The UI is React + Vite (`web/src`), with styles in `web/src/styles.css`, which already follows the system light/dark
 setting through `prefers-color-scheme`.
 
@@ -62,12 +82,12 @@ setting through `prefers-color-scheme`.
 
 ## Tasks
 
-- [ ] Theme toggle
-- [ ] Search/filter/sort + URL state
-- [ ] Tags (API + UI) and per-user favourites
-- [ ] Bulk actions (+ optional bulk endpoint)
-- [ ] Mobile layout pass + PWA manifest
-- [ ] Keyboard shortcuts + command palette
-- [ ] Polish items
-- [ ] Accessibility pass
-- [ ] Add Vitest to `web/`
+- [x] Theme toggle
+- [x] Search/filter/sort + URL state
+- [x] Tags (API + UI) and per-user favourites
+- [x] Bulk actions (+ optional bulk endpoint)
+- [x] Mobile layout pass + PWA manifest
+- [x] Keyboard shortcuts + command palette
+- [x] Polish items
+- [x] Accessibility pass
+- [x] Tests for the list logic (with the existing `node --test`, not Vitest)

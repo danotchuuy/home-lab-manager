@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api";
-import { AppIcon, CONNECTION_GLYPH, Spinner, StateBadge } from "../components/common";
+import { Ago, AppIcon, CONNECTION_GLYPH, Spinner, StateBadge } from "../components/common";
 import { DeployProgress } from "../components/DeployProgress";
 import { LogViewer } from "../components/LogViewer";
 import { StatTiles } from "../components/Resources";
@@ -174,7 +174,7 @@ export function ConnectionDetailPage() {
                   <dt>Updates</dt>
                   <dd>
                     {conn.update.state === "available" ? "Update available" : conn.update.state === "current" ? "Up to date" : conn.update.state}
-                    {conn.update.reason && ` (${conn.update.reason})`} · checked {timeAgo(conn.update.checkedAt)}
+                    {conn.update.reason && ` (${conn.update.reason})`} · checked <Ago iso={conn.update.checkedAt} />
                   </dd>
                 </>
               )}

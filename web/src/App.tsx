@@ -3,6 +3,7 @@ import { Link, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { AdminContext } from "./access";
 import { api, getToken, setToken, UNAUTHORIZED_EVENT } from "./api";
 import { ConfirmPrompt } from "./components/ConfirmPrompt";
+import { JobToasts, Shortcuts, ThemeToggle, Toaster } from "./components/Shell";
 import { RecoveryCodes, TwoFactorSetupForm } from "./components/TwoFactor";
 import { usePoll } from "./usePoll";
 import { CatalogPage } from "./pages/Catalog";
@@ -62,6 +63,9 @@ export function App() {
   return (
     <AdminContext.Provider value={admin}>
     <div className="layout">
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
       <header className="topbar">
         <div className="brand">🏠 Home Lab Manager</div>
         <nav>
@@ -79,6 +83,7 @@ export function App() {
         </nav>
         <div className="spacer" />
         {!needToken && <DockerStatus status={status} />}
+        <ThemeToggle />
         {auth?.user && <UserMenu user={auth.user.name || auth.user.username || auth.user.email || auth.user.sub} />}
         {system && (
           <NavLink to="/system" className="version-link" title="Version and updates">
@@ -120,8 +125,11 @@ export function App() {
 
       {needToken && <SignInPrompt auth={auth} onDone={() => window.location.reload()} />}
       <ConfirmPrompt />
+      <Toaster />
+      <JobToasts enabled={!needToken} />
+      <Shortcuts admin={admin} />
 
-      <main>
+      <main id="main">
         <Routes>
           <Route path="/" element={<ServersPage />} />
           <Route path="/catalog" element={<CatalogPage />} />

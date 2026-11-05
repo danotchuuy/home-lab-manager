@@ -3,7 +3,7 @@ import { api } from "../api";
 import type { SSHKey } from "../types";
 import { timeAgo } from "../util";
 import { splitAddresses } from "./APIKeys";
-import { Spinner } from "./common";
+import { Ago, Spinner } from "./common";
 
 /**
  * The public keys that can sign in as an account through the API. Adding one,
@@ -72,7 +72,7 @@ export function SSHKeys({ username, onChange }: { username: string; onChange?: (
                 <strong>{k.name}</strong> <code>{k.fingerprint}</code>
                 <span className="muted small">
                   {" "}
-                  {k.type} · added {timeAgo(k.added)}
+                  {k.type} · added <Ago iso={k.added} />
                   {k.lastUsed ? ` · last used ${timeAgo(k.lastUsed)}` : " · not used yet"} · from{" "}
                   <button type="button" className="link-button" onClick={() => editAllowFrom(k)} disabled={busy} title="Change where the key can be used from">
                     {k.allowFrom?.length ? k.allowFrom.join(", ") : "anywhere"}

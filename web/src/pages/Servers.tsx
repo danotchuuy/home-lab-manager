@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { can, useAdmin } from "../access";
-import { api } from "../api";
-import { AppIcon, CONNECTION_GLYPH, CrashLoopBadge, HealthBadge, Spinner, StateBadge } from "../components/common";
+import { api, type BulkAction } from "../api";
+import { CopyButton, connectAddresses } from "../components/ConnectInfo";
+import { Ago, AppIcon, CONNECTION_GLYPH, CrashLoopBadge, HealthBadge, Spinner, StateBadge } from "../components/common";
 import { GameStatusBadge } from "../components/GameStatus";
 import { HostBadge, useHosts } from "../components/HostPicker";
 import { InstallCard, JobStatus } from "../components/JobProgress";
@@ -23,6 +24,7 @@ import type {
   UpdateStatus,
 } from "../types";
 import { usePoll } from "../usePoll";
+import { allTags, matches, sortServers, viewFromParams, viewToParams, type ListView } from "../serverlist";
 import { bareName, formatInZone, hostOf, formatNetwork, formatPorts, timeAgo, timeUntil, webUILink } from "../util";
 
 export function ServersPage() {
@@ -42,7 +44,22 @@ export function ServersPage() {
   // shown until the backend's job list catches up.
   const [updating, setUpdating] = useState<Record<string, string>>({});
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [group, setGroup] = useState("");
+  // Search, filters and order, in the URL so a view can be bookmarked.
+  const [params, setParams] = useSearchParams();
+  const view = viewFromParams(params);
+  const setView = (change: Partial<ListView>) =>
+    setParams(viewToParams({ ...view, ...change }), { replace: true });
+  const group = view.group;
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    // From the "/" shortcut on another page.
+    if (params.get("focus") === "search") searchRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Servers ticked for a bulk action, and its progress.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkEvents, setBulkEvents] = useState<DeployEvent[]>([]);
+  const [bulkRunning, setBulkRunning] = useState<BulkAction>();
   // Each server's next scheduled task, and the time zone it's in.
   const [nextTasks, setNextTasks] = useState<Record<string, UpcomingTask>>({});
   const [timezone, setTimezone] = useState("");
@@ -129,6 +146,46 @@ export function ServersPage() {
     };
   }, [load]);
 
+  async function toggleFavourite(s: Server) {
+    try {
+      await api.setFavourite(s.id, !s.favourite);
+      setServers((prev) => prev?.map((p) => (p.id === s.id ? { ...p, favourite: !s.favourite } : p)) ?? null);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  function toggleSelected(name: string, on: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(name);
+      else next.delete(name);
+      return next;
+    });
+  }
+
+  async function runBulk(action: BulkAction) {
+    const targets = chosen.filter((s) => can(s, "operator"));
+    const restarting = targets.filter((s) => s.state === "running" && action !== "start" && action !== "backup");
+    const what = `${action === "backup" ? "Back up" : action[0].toUpperCase() + action.slice(1)} ${targets.length} server${targets.length === 1 ? "" : "s"}?`;
+    const warn = restarting.length && action !== "update" ? `\n\nPlayers on ${restarting.map((s) => bareName(s.name)).join(", ")} will be disconnected.` : "";
+    if (!confirm(what + warn)) return;
+    setBulkRunning(action);
+    setBulkEvents([]);
+    try {
+      await api.bulk(
+        targets.map((s) => s.name),
+        action,
+        (e) => setBulkEvents((prev) => [...prev, e]),
+      );
+    } catch (e) {
+      setBulkEvents((prev) => [...prev, { stage: "error", message: (e as Error).message }]);
+    } finally {
+      setBulkRunning(undefined);
+      await load();
+    }
+  }
+
   async function act(s: Server, action: "start" | "stop" | "restart") {
     setBusy(s.id);
     try {
@@ -156,7 +213,12 @@ export function ServersPage() {
   // Stacks' services are updated with their stack.
   const updatable = servers?.filter((s) => s.update?.state === "available" && can(s, "operator") && !s.stack) ?? [];
   const groups = [...new Set(servers?.flatMap((s) => s.groups ?? []))].sort();
-  const shown = servers?.filter((s) => !s.stack && (!group || s.groups?.includes(group)));
+  const tags = allTags(servers ?? []);
+  const listed = servers?.filter((s) => !s.stack) ?? [];
+  const shown = servers ? sortServers(listed.filter((s) => matches(s, view)), view, { stats, games }) : undefined;
+  const filtering = viewToParams({ ...view, sort: "name" }).toString() !== "";
+  const operable = (shown ?? []).filter((s) => can(s, "operator"));
+  const chosen = (servers ?? []).filter((s) => selected.has(s.name));
   const serverGroups = Object.fromEntries((servers ?? []).map((s) => [s.name, s.groups]));
 
   async function checkUpdates() {
@@ -250,16 +312,6 @@ export function ServersPage() {
     <div className="page">
       <div className="page-header">
         <h1>Servers</h1>
-        {groups.length > 0 && (
-          <select aria-label="Server group" value={group} onChange={(e) => setGroup(e.target.value)}>
-            <option value="">All groups</option>
-            {groups.map((g) => (
-              <option key={g} value={g}>
-                {g}
-              </option>
-            ))}
-          </select>
-        )}
         {admin && (
           <Link to="/catalog" className="btn primary">
             + New server
@@ -270,7 +322,13 @@ export function ServersPage() {
       {((servers && servers.length > 0) || connections.length > 0) && (
         <div className="update-bar">
           <span className="muted small">
-            {checkingNow ? "Checking for updates…" : `Updates last checked ${timeAgo(updateInfo?.lastCheck)}`}
+            {checkingNow ? (
+              "Checking for updates…"
+            ) : (
+              <>
+                Updates last checked <Ago iso={updateInfo?.lastCheck} />
+              </>
+            )}
           </span>
           <div className="spacer" />
           {admin && (
@@ -287,6 +345,115 @@ export function ServersPage() {
       )}
 
       {updateEvents.length > 0 && <UpdateProgress events={updateEvents} running={updatingAll} />}
+
+      {listed.length > 0 && (
+        <div className="list-toolbar" role="search">
+          <input
+            ref={searchRef}
+            data-search
+            type="search"
+            className="list-search"
+            placeholder="Search servers (press /)"
+            aria-label="Search servers"
+            value={view.q}
+            onChange={(e) => setView({ q: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setView({ q: "" });
+                e.currentTarget.blur();
+              }
+            }}
+          />
+          <select aria-label="Show" value={view.state} onChange={(e) => setView({ state: e.target.value as ListView["state"] })}>
+            <option value="">All servers</option>
+            <option value="running">Running</option>
+            <option value="stopped">Stopped</option>
+            <option value="problem">With a problem</option>
+            <option value="update">With an update</option>
+          </select>
+          {groups.length > 0 && (
+            <select aria-label="Server group" value={group} onChange={(e) => setView({ group: e.target.value })}>
+              <option value="">All groups</option>
+              {groups.map((g) => (
+                <option key={g} value={g}>
+                  {g}
+                </option>
+              ))}
+            </select>
+          )}
+          {tags.length > 0 && (
+            <select aria-label="Tag" value={view.tag} onChange={(e) => setView({ tag: e.target.value })}>
+              <option value="">All tags</option>
+              {tags.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          )}
+          {hosts && hosts.length > 1 && (
+            <select aria-label="Docker host" value={view.host} onChange={(e) => setView({ host: e.target.value })}>
+              <option value="">All hosts</option>
+              {hosts.map((h) => (
+                <option key={h.id} value={h.id}>
+                  {h.name}
+                </option>
+              ))}
+            </select>
+          )}
+          <select aria-label="Sort by" value={view.sort} onChange={(e) => setView({ sort: e.target.value as ListView["sort"] })}>
+            <option value="name">Sort: name</option>
+            <option value="state">Sort: state</option>
+            <option value="cpu">Sort: CPU</option>
+            <option value="memory">Sort: memory</option>
+            <option value="players">Sort: players</option>
+          </select>
+          {filtering && (
+            <button className="btn small ghost" onClick={() => setParams(viewToParams({ ...view, q: "", state: "", group: "", tag: "", host: "" }), { replace: true })}>
+              Clear filters
+            </button>
+          )}
+        </div>
+      )}
+
+      {operable.length > 0 && (
+        <div className="bulk-bar">
+          <label className="radio small">
+            <input
+              type="checkbox"
+              aria-label="Select every server shown"
+              checked={operable.every((s) => selected.has(s.name))}
+              onChange={(e) => setSelected(e.target.checked ? new Set(operable.map((s) => s.name)) : new Set())}
+            />
+            {chosen.length > 0 ? `${chosen.length} selected` : "Select all"}
+          </label>
+          {chosen.length > 0 && (
+            <>
+              {(["start", "stop", "restart", "update", "backup"] as BulkAction[]).map((a) => (
+                <button
+                  key={a}
+                  className={`btn small${a === "stop" ? " danger" : ""}`}
+                  disabled={!!bulkRunning || updatingAll}
+                  onClick={() => runBulk(a)}
+                >
+                  {bulkRunning === a ? "Working…" : a === "backup" ? "Back up now" : a[0].toUpperCase() + a.slice(1)}
+                </button>
+              ))}
+              <button className="btn small ghost" onClick={() => setSelected(new Set())} disabled={!!bulkRunning}>
+                Clear
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      {bulkEvents.length > 0 && (
+        <UpdateProgress
+          events={bulkEvents}
+          running={!!bulkRunning}
+          title={bulkRunning ? "Working on the selected servers…" : "Done"}
+          onClose={bulkRunning ? undefined : () => setBulkEvents([])}
+        />
+      )}
 
       {installs.length > 0 && (
         <section className="downloads">
@@ -321,7 +488,16 @@ export function ServersPage() {
         </div>
       )}
 
-      <StackList group={group} groups={serverGroups} />
+      {shown && shown.length === 0 && listed.length > 0 && (
+        <div className="empty">
+          <p>No servers match.</p>
+          <button className="btn" onClick={() => setParams(new URLSearchParams(), { replace: true })}>
+            Show all servers
+          </button>
+        </div>
+      )}
+
+      {!filtering && <StackList group={group} groups={serverGroups} />}
 
       <div className="server-list">
         {shown?.map((s) => {
@@ -330,7 +506,27 @@ export function ServersPage() {
           const job = jobFor(s.name);
           const progress = job ? (job.message ?? "Working…") : updating[s.id];
           return (
-            <div key={s.id} className="card server-card">
+            <div key={s.id} className={`card server-card${selected.has(s.name) ? " selected" : ""}`}>
+              <div className="server-pick">
+                {can(s, "operator") && (
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${bareName(s.name)}`}
+                    checked={selected.has(s.name)}
+                    onChange={(e) => toggleSelected(s.name, e.target.checked)}
+                  />
+                )}
+                <button
+                  type="button"
+                  className={`icon-button star${s.favourite ? " on" : ""}`}
+                  aria-pressed={!!s.favourite}
+                  aria-label={s.favourite ? `Unpin ${bareName(s.name)}` : `Pin ${bareName(s.name)} to the top`}
+                  title={s.favourite ? "Pinned to the top: click to unpin" : "Pin to the top"}
+                  onClick={() => toggleFavourite(s)}
+                >
+                  {s.favourite ? "★" : "☆"}
+                </button>
+              </div>
               <Link to={`/servers/${encodeURIComponent(s.name)}`} className="server-main">
                 <AppIcon src={s.icon} />
                 <div>
@@ -351,6 +547,24 @@ export function ServersPage() {
                     {formatNetwork(s.network, s.ipAddress)}
                     {s.ports.length > 0 && ` · ${formatPorts(s.ports)}`}
                   </div>
+                  {s.tags && s.tags.length > 0 && (
+                    <div className="tag-chips">
+                      {s.tags.map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          className="tag-chip"
+                          title={`Show servers tagged ${t}`}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            setView({ tag: t });
+                          }}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {job ? (
                     <JobStatus job={job} />
                   ) : progress ? (
@@ -393,6 +607,14 @@ export function ServersPage() {
                       Web UI
                     </a>
                   )}
+                  {(() => {
+                    const first = connectAddresses(s, hosts)[0];
+                    return first ? (
+                      <CopyButton text={first.address} label={`Copy ${bareName(s.name)}'s address`}>
+                        Copy address
+                      </CopyButton>
+                    ) : null;
+                  })()}
                   {!can(s, "operator") ? null : running ? (
                     <>
                       <button className="btn small" disabled={busy === s.id || !!progress} onClick={() => act(s, "restart")}>

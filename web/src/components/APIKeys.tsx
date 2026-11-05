@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { api } from "../api";
 import type { APIKeyInfo, KeyRole } from "../types";
 import { timeAgo } from "../util";
-import { Spinner } from "./common";
+import { Ago, Spinner } from "./common";
 
 /** API keys for scripts and other programs, sent as a bearer token. A key's secret is shown once. */
 const KEY_ROLE_LABEL: Partial<Record<KeyRole, string>> = {
@@ -143,7 +143,7 @@ export function APIKeys() {
                       {k.allowFrom.length > 0 ? k.allowFrom.join(", ") : "anywhere"}
                     </button>
                   </td>
-                  <td title={k.created}>{timeAgo(k.created)}</td>
+                  <td title={k.created}><Ago iso={k.created} /></td>
                   <td title={k.lastUsed}>{k.lastUsed ? timeAgo(k.lastUsed) : "never"}</td>
                   <td title={k.expires}>
                     {k.expired ? (

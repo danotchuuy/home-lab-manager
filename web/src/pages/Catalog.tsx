@@ -115,7 +115,7 @@ export function CatalogPage() {
           onChange={(e) => setInput(e.target.value)}
           autoFocus
         />
-        <select value={category} onChange={(e) => update({ category: e.target.value })}>
+        <select aria-label="Category" value={category} onChange={(e) => update({ category: e.target.value })}>
           <option value="">All categories</option>
           {categories.map((c) => (
             <option key={c.name} value={c.name}>
@@ -123,7 +123,7 @@ export function CatalogPage() {
             </option>
           ))}
         </select>
-        <select value={sort} onChange={(e) => update({ sort: e.target.value })}>
+        <select aria-label="Sort by" value={sort} onChange={(e) => update({ sort: e.target.value })}>
           <option value="popular">Most downloaded</option>
           <option value="updated">Recently updated</option>
           <option value="name">Name</option>

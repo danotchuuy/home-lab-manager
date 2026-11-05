@@ -4,9 +4,9 @@ import { useAdmin } from "../access";
 import { api, download } from "../api";
 import type { BackupObject, BackupOverview, BackupPlan, BackupRun, BackupTargetRef, FileListing } from "../types";
 import { usePoll } from "../usePoll";
-import { formatBytes, timeAgo } from "../util";
+import { formatBytes } from "../util";
 import { AtFields, describeAt, KeepingFields, VerifyBadge } from "./BackupOptions";
-import { Spinner } from "./common";
+import { Ago, Spinner } from "./common";
 
 export const INTERVALS: [number, string][] = [
   [0, "Off (only when asked)"],
@@ -420,7 +420,7 @@ export function ServerBackups({
           >
             {plan.lastRestore.error ? (
               <>
-                Restoring {baseName(plan.lastRestore.key ?? "")} ({timeAgo(plan.lastRestore.started)}) failed:{" "}
+                Restoring {baseName(plan.lastRestore.key ?? "")} (<Ago iso={plan.lastRestore.started} />) failed:{" "}
                 {plan.lastRestore.error}
                 {plan.lastRestore.before && (
                   <> The files were backed up first, as {baseName(plan.lastRestore.before)}.</>
@@ -428,7 +428,7 @@ export function ServerBackups({
               </>
             ) : (
               <>
-                Restored {baseName(plan.lastRestore.key ?? "")} {timeAgo(plan.lastRestore.finished)}:{" "}
+                Restored {baseName(plan.lastRestore.key ?? "")} <Ago iso={plan.lastRestore.finished} />:{" "}
                 {plan.lastRestore.files} file
                 {plan.lastRestore.files === 1 ? "" : "s"}, {formatBytes(plan.lastRestore.bytes)}.
                 {plan.lastRestore.before && (
@@ -454,11 +454,11 @@ export function ServerBackups({
             {plan.last.error ? (
               <>
                 The last backup ({plan.last.trigger === "schedule" ? "scheduled" : "manual"},{" "}
-                {timeAgo(plan.last.started)}) failed: {plan.last.error}
+                <Ago iso={plan.last.started} />) failed: {plan.last.error}
               </>
             ) : (
               <>
-                Last backup {timeAgo(plan.last.finished)}: {plan.last.files} file{plan.last.files === 1 ? "" : "s"},{" "}
+                Last backup <Ago iso={plan.last.finished} />: {plan.last.files} file{plan.last.files === 1 ? "" : "s"},{" "}
                 {formatBytes(plan.last.bytes)}, stored as {formatBytes(plan.last.size)}
                 {lastExtras(plan.last)}.
               </>
@@ -564,7 +564,7 @@ function BackupList(p: {
             <VerifyBadge v={p.checks[p.checkPrefix + b.key]} />
             <span className="muted small">{formatBytes(b.size)}</span>
             <span className="muted small" title={new Date(b.lastModified).toLocaleString()}>
-              {timeAgo(b.lastModified)}
+              <Ago iso={b.lastModified} />
             </span>
             <span className="btn-row">
               {p.canManage && (

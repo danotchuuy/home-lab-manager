@@ -52,17 +52,20 @@ export function ActivityTable({ entries, showServer = true }: { entries: AuditEn
                 <tr
                   className={`activity-row${isOpen ? " open" : ""}`}
                   onClick={() => setOpen(isOpen ? undefined : i)}
-                  tabIndex={0}
-                  onKeyDown={(ev) => {
-                    if (ev.key === "Enter" || ev.key === " ") {
-                      ev.preventDefault();
-                      setOpen(isOpen ? undefined : i);
-                    }
-                  }}
-                  aria-expanded={isOpen}
                 >
                   <td className="nowrap" title={timeAgo(e.time)}>
-                    {when(e.time)}
+                    {/* The row opens with a click anywhere; this is its keyboard and screen reader control. */}
+                    <button
+                      type="button"
+                      className="row-toggle"
+                      aria-expanded={isOpen}
+                      onClick={(ev) => {
+                        ev.stopPropagation();
+                        setOpen(isOpen ? undefined : i);
+                      }}
+                    >
+                      {when(e.time)}
+                    </button>
                   </td>
                   <td>
                     <strong>{e.actor}</strong>

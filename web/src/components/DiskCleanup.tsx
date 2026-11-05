@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Ago } from "./common";
 import { api } from "../api";
 import type { CleanupItem, CleanupKind, CleanupPlan, CleanupResult, CleanupSettings } from "../types";
 import { formatBytes, timeAgo } from "../util";
@@ -158,7 +159,7 @@ export function DiskCleanup({ onCleaned }: { onCleaned?: () => void }) {
             {settings.lastRun && (
               <span className="muted">
                 {" "}
-                (last {timeAgo(settings.lastRun)}: {formatBytes(settings.lastFreed)} freed
+                (last <Ago iso={settings.lastRun} />: {formatBytes(settings.lastFreed)} freed
                 {settings.lastError ? `; ${settings.lastError}` : ""})
               </span>
             )}

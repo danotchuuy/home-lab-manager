@@ -53,7 +53,7 @@ export function DeployProgress({ events }: { events: DeployEvent[] }) {
 
   return (
     <div className="deploy-progress">
-      <ol className="steps">
+      <ol className="steps" aria-live="polite">
         {steps.map((s, i) => (
           <li key={i}>{s}</li>
         ))}
