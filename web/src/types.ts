@@ -1262,7 +1262,7 @@ export interface NotifyRecord {
 }
 
 /** How a server takes console commands. */
-export type ConsoleMode = "" | "stdin" | "rcon" | "exec";
+export type ConsoleMode = "" | "stdin" | "rcon" | "exec" | "rest";
 
 /** A server's console settings; the password is never sent back. */
 export interface ConsoleSettings {

@@ -410,6 +410,8 @@ func run(log *slog.Logger) error {
 		Secrets: store, Servers: mgr, Docker: dc, HostAddresses: hostAddresses, Log: log,
 	})
 	go consoles.Run(ctx)
+	// Games that don't save when told to stop (Palworld) are saved first.
+	mgr.UseBeforeStop(func(ctx context.Context, id string) { consoles.SaveBeforeStop(ctx, id, 30*time.Second) })
 	// Servers' own status: are they answering, and who's playing.
 	queries := gamequery.New(gamequery.Options{
 		Secrets: store, Servers: mgr, Console: consoles, Notifier: notifier, HostAddresses: hostAddresses, Log: log,

@@ -376,11 +376,12 @@ hang while its container keeps running. So hlm asks each running server how it's
 | **Steam server query** (A2S, UDP) | Most Steam games: Valheim, Enshrouded, ARK, Rust, Counter-Strike 2, 7 Days to Die, V Rising, Conan Exiles… |
 | **Minecraft Java server list ping** (TCP) | Minecraft Java, modded or not |
 | **Minecraft Bedrock ping** (UDP) | Minecraft Bedrock |
-| **Player list through the [console](#sending-commands-to-a-server)** | Palworld (`ShowPlayers`), Minecraft (`list`), ARK (`ListPlayers`): needs the console set up with RCON or a command run in the container |
+| **Player list through the [console](#sending-commands-to-a-server)** | Palworld (through its REST API, with the player limit, server name and version too; or `ShowPlayers` over RCON), Minecraft (`list`), ARK (`ListPlayers`): needs the console set up with RCON, Palworld's REST API, or a command run in the container |
 | **TCP port check** | Anything else: only whether the port is open, no players |
 
 **Finding a way:** hlm finds one by itself. It tries the game's usual way, then ports the template calls "query", the
-game's usual Steam query port, and each UDP port and the one after it, then the console. It looks again every couple of
+game's usual Steam query port, and each UDP port and the one after it, then the console (for Palworld, the console
+comes first). It looks again every couple of
 minutes until something answers. A server's status card has **Query settings** for managers to choose the protocol and
 port instead, **Test** them first, or turn querying **off**.
 
@@ -487,14 +488,36 @@ Under a server's **Console** output there's a command line. Commands go to the s
     When hlm runs in a container, it uses its bridge network's gateway for that (the host, as seen from the container),
     which works even when hlm is also on a macvlan network, from which the host's own LAN address can't be reached.
   - **Connection:** it's kept open between commands and closed after 5 idle minutes.
+- **Palworld's REST API:** Palworld replaced its RCON with a [REST API](https://docs.palworldgame.com/category/rest-api),
+  turned on with `RESTAPIEnabled=True` (`REST_API_ENABLED=true` in most images) on port 8212. hlm signs in as `admin`
+  with the server's admin password (from a variable such as `ADMIN_PASSWORD`, or entered by hand) and reaches the port
+  the way it reaches RCON. It takes the commands people know from RCON and makes the API calls for them:
+
+  | Command | API call |
+  | --- | --- |
+  | `ShowPlayers` | `GET /players`: `name,playeruid,steamid,level,ping`, one line per player |
+  | `Metrics` | `GET /metrics`: players and limit, server FPS and frame time, uptime, in-game day, base camps |
+  | `Info` | `GET /info`: server name, version, description, world |
+  | `Settings` | `GET /settings`: the server's settings, as JSON |
+  | `Save` | `POST /save` |
+  | `Broadcast <message>` | `POST /announce` (spaces are fine, unlike over RCON) |
+  | `KickPlayer <userId> [message]`, `BanPlayer <userId> [message]`, `UnBanPlayer <userId>` | `POST /kick`, `/ban`, `/unban`, with the user ID `ShowPlayers` lists as `steamid` |
+  | `Shutdown <seconds> [message]` | `POST /shutdown`: the server counts down, then quits |
+  | `DoExit` | `POST /stop`: stops it straight away, without saving |
+
+  Palworld doesn't save its world when it's told to stop, so when its console can save (REST API, or RCON or
+  `rcon-cli`), hlm sends `Save` first whenever it stops, restarts or recreates the server: **Stop**, **Restart**,
+  updates, **Save & recreate**, backups that stop it, scheduled tasks and restarts for failing health. It waits up to 30
+  seconds for that, then stops the server anyway. The API isn't meant to face the internet, so don't forward its port.
 - **A command run in the container:** a command line run in the container for each command, with `{command}` replaced
   by what you type (or added at the end), such as `rcon-cli {command}`. It isn't run by a shell. Images like
   `itzg/minecraft-server` and Palworld's come with `rcon-cli`, which already knows the password.
 
-**Console settings** suggest a setup when the server's image or settings make it clear: `rcon-cli` or `send-command`
-for the images that have them, RCON when there's a password variable and a port, and typing into the console for games
-known to read it. **Test** checks the settings before saving them: it signs in over RCON, looks for the command in the
-container, or checks the container takes input.
+**Console settings** suggest a setup when the server's image or settings make it clear: Palworld's REST API when a
+Palworld server turns it on (`REST_API_ENABLED`) or exposes or publishes port 8212, `rcon-cli` or `send-command` for the
+images that have them, RCON when there's a password variable and a port, and typing into the console for games known to
+read it. **Test** checks the settings before saving them: it signs in over RCON or to the REST API (and shows the
+server's name and version), looks for the command in the container, or checks the container takes input.
 
 - Commands are at most 1 KiB; control characters other than tabs are removed. Each person can send at most 5 commands a
   second to a server.

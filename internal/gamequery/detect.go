@@ -81,6 +81,11 @@ func candidates(info docker.ContainerJSON, app *catalog.App, consoleReplies bool
 		}
 	}
 
+	// Palworld's own answers through its console (its REST API, or RCON)
+	// have names and counts; its Steam query port often has nothing.
+	if consoleReplies && hasWord(ws, "palworld") {
+		add(candidate{ProtoRCON, 0})
+	}
 	switch {
 	case hasWord(ws, "minecraft", "bedrock"):
 		add(candidate{ProtoBedrock, envPort(19132)})

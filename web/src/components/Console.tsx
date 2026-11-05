@@ -27,6 +27,7 @@ const MODE_LABEL: Record<ConsoleMode, string> = {
   "": "Not set up",
   stdin: "Typed into the server's console (stdin)",
   rcon: "RCON",
+  rest: "Palworld's REST API",
   exec: "A command run in the container",
 };
 
@@ -272,7 +273,19 @@ function ConsoleSettingsForm({
         </div>
       )}
 
-      {form.mode === "rcon" && (
+      {form.mode === "rest" && (
+        <div className="field-help">
+          Palworld&apos;s REST API replaces its RCON: turn it on with <code>RESTAPIEnabled=True</code> (most images:{" "}
+          <code>REST_API_ENABLED=true</code>). hlm signs in as <code>admin</code> with the server&apos;s admin password and
+          takes the usual commands: <code>ShowPlayers</code>, <code>Metrics</code>, <code>Info</code>, <code>Save</code>,{" "}
+          <code>Broadcast &lt;message&gt;</code>, <code>KickPlayer &lt;userId&gt; [message]</code>,{" "}
+          <code>BanPlayer &lt;userId&gt; [message]</code>, <code>UnBanPlayer &lt;userId&gt;</code>,{" "}
+          <code>Shutdown &lt;seconds&gt; [message]</code> and <code>DoExit</code>. The world is saved before hlm stops,
+          restarts or updates the server. The API isn&apos;t meant for the internet: don&apos;t forward its port.
+        </div>
+      )}
+
+      {(form.mode === "rcon" || form.mode === "rest") && (
         <div className="field-grid">
           <label className="field">
             <span className="field-label">Password from variable</span>
@@ -284,7 +297,9 @@ function ConsoleSettingsForm({
                 </option>
               ))}
             </select>
-            <span className="field-help">The container setting that holds the RCON or admin password.</span>
+            <span className="field-help">
+              The container setting that holds the {form.mode === "rest" ? "admin" : "RCON or admin"} password.
+            </span>
           </label>
           <label className="field">
             <span className="field-label">Or this password</span>
@@ -312,7 +327,7 @@ function ConsoleSettingsForm({
             </span>
           </label>
           <label className="field">
-            <span className="field-label">RCON port</span>
+            <span className="field-label">{form.mode === "rest" ? "REST API port" : "RCON port"}</span>
             <input
               type="number"
               min={1}
@@ -322,7 +337,9 @@ function ConsoleSettingsForm({
               placeholder="Found automatically"
             />
             <span className="field-help">
-              The port inside the container, e.g. 25575 for Minecraft or Palworld, 27020 for ARK, 28016 for Rust.
+              {form.mode === "rest"
+                ? "The port inside the container: 8212 unless RESTAPIPort (or REST_API_PORT) changes it."
+                : "The port inside the container, e.g. 25575 for Minecraft or Palworld, 27020 for ARK, 28016 for Rust."}
             </span>
           </label>
           <label className="field">

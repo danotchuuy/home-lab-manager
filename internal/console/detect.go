@@ -35,11 +35,27 @@ var execImages = []struct {
 		func(env map[string]string) bool { return strings.EqualFold(env["RCON_ENABLED"], "false") }},
 }
 
+// restQuickCommands are the shortcuts for Palworld's REST API.
+var restQuickCommands = []string{"ShowPlayers", "Metrics", "Info", "Save", "Broadcast ", "KickPlayer ", "BanPlayer "}
+
 // Detect works out how a server probably takes commands, and says why. It
 // returns Settings with ModeNone if it can't tell.
 func Detect(info docker.ContainerJSON) (Settings, string) {
 	env := envMap(info.Config.Env)
 	image := strings.ToLower(info.Config.Image)
+	// Palworld's REST API replaces its RCON.
+	if gameOf(image) == "palworld" && restAvailable(info) {
+		set := Settings{Mode: ModeREST}
+		for _, v := range restPasswordVars {
+			if env[v] != "" {
+				set.PasswordVar = v
+				return set, "This Palworld server has its REST API (port " + strconv.Itoa(restPort(info, set)) +
+					") and an admin password in " + v + "."
+			}
+		}
+		return set, "This Palworld server has its REST API on port " + strconv.Itoa(restPort(info, set)) +
+			"; enter its admin password."
+	}
 	for _, e := range execImages {
 		if strings.Contains(image, e.match) && (e.off == nil || !e.off(env)) {
 			return Settings{Mode: ModeExec, Exec: e.exec}, e.because
@@ -60,6 +76,24 @@ func Detect(info docker.ContainerJSON) (Settings, string) {
 		return Settings{Mode: ModeStdin}, "This game reads commands from its console, so they can be typed into it."
 	}
 	return Settings{}, ""
+}
+
+// restAvailable says whether a Palworld container looks like it runs the
+// REST API: a variable turns it on, or it exposes or publishes its port.
+func restAvailable(info docker.ContainerJSON) bool {
+	env := envMap(info.Config.Env)
+	for _, v := range restEnabledVars {
+		switch strings.ToLower(strings.TrimSpace(env[v])) {
+		case "true", "1", "yes":
+			return true
+		case "false", "0", "no":
+			return false
+		}
+	}
+	key := strconv.Itoa(restPort(info, Settings{})) + "/tcp"
+	_, exposed := info.Config.ExposedPorts[key]
+	_, published := info.HostConfig.PortBindings[key]
+	return exposed || published
 }
 
 // rconPort finds a container's RCON port: from a variable that sets it, a

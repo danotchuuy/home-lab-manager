@@ -27,7 +27,7 @@ const PROTOCOL_LABEL: Record<QueryProtocol, string> = {
   a2s: "Steam server query (A2S, UDP)",
   minecraft: "Minecraft Java server list ping (TCP)",
   bedrock: "Minecraft Bedrock ping (UDP)",
-  rcon: "Player list through the console (RCON or exec)",
+  rcon: "Player list through the console (RCON, Palworld's REST API or exec)",
   tcp: "Only check a TCP port is open",
   off: "Don't check",
 };
@@ -239,7 +239,11 @@ function QuerySettingsForm({
             ))}
           </select>
           {set.protocol === "rcon" && (
-            <span className="field-help">Uses the console&apos;s RCON or exec setup; works for Palworld, Minecraft and ARK.</span>
+            <span className="field-help">
+              Uses the console&apos;s setup (RCON, Palworld&apos;s REST API, or a command run in the container); works for
+              Palworld, Minecraft and ARK. Through Palworld&apos;s REST API it also has the player limit, server name and
+              version.
+            </span>
           )}
         </label>
         {needsPort && (
