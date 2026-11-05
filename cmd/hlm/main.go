@@ -291,6 +291,8 @@ func run(log *slog.Logger) error {
 	relay.UseWANLookup(fwd.WANAddress)
 	relay.UsePorts(fwd.ServerPorts)
 	relay.UseDocker(dc, env("HLM_WIREGUARD_IMAGE", ""))
+	// The tunnel's ends on other Docker hosts run on their Docker.
+	relay.UseDockerHosts(func(host string) (proxy.Containers, error) { return mgr.DockerFor(host) })
 	relay.UseNotifier(notifier)
 	go relay.UpgradeWireGuardHome(ctx)
 	if base := env("HLM_LINODE_API", ""); base != "" {
@@ -313,6 +315,8 @@ func run(log *slog.Logger) error {
 		tunnel.UseAPI(base)
 	}
 	go tunnel.RenameLegacyConnector(ctx)
+	// Other Docker hosts can have a tunnel of their own, with cloudflared there.
+	tunnel.UseDockerHosts(func(host string) (cftunnel.Containers, error) { return mgr.DockerFor(host) })
 	// Other Docker hosts, whose servers hlm manages too. They sign in over
 	// SSH with the same key as the proxy.
 	// Hosts can also have hlm's agent, which connects out to hlm.
@@ -330,10 +334,10 @@ func run(log *slog.Logger) error {
 	// The containers these run show up beside the servers, with their usage
 	// and update checks.
 	mgr.UseConnection(proxy.LabelWireGuard, manager.ConnectionKind{
-		Kind: "wireguard", Title: "WireGuard tunnel", Page: "/proxy", Recreate: relay.RecreateWireGuardHome,
+		Kind: "wireguard", Title: "WireGuard tunnel", Page: "/proxy", Recreate: relay.RecreateWireGuardHomeOn,
 	})
 	mgr.UseConnection(cftunnel.LabelConnector, manager.ConnectionKind{
-		Kind: "cloudflared", Title: "Cloudflare Tunnel", Page: "/tunnel", Recreate: tunnel.RecreateConnector,
+		Kind: "cloudflared", Title: "Cloudflare Tunnel", Page: "/tunnel", Recreate: tunnel.RecreateConnectorOn,
 	})
 	// Servers' addresses and ports can change when they're reconfigured;
 	// keep their hostnames pointing at them.

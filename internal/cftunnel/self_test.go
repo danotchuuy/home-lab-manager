@@ -34,7 +34,7 @@ func TestSelfOrigin(t *testing.T) {
 	} {
 		s := &Service{}
 		s.UseSelf(func(context.Context) (SelfOrigin, error) { return tt.self, nil })
-		got, err := s.resolve(ctx, hlm, tt.t)
+		got, err := s.resolve(ctx, hlm, tt.t, "local")
 		if err != nil {
 			got = "error: " + err.Error()
 		}
@@ -42,7 +42,7 @@ func TestSelfOrigin(t *testing.T) {
 			t.Errorf("%s: %s, want %s", tt.name, got, tt.want)
 		}
 	}
-	if _, err := (&Service{}).resolve(ctx, hlm, Tunnel{}); err == nil {
+	if _, err := (&Service{}).resolve(ctx, hlm, Tunnel{}, "local"); err == nil {
 		t.Error("resolved hlm without knowing where it is")
 	}
 }

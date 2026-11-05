@@ -668,6 +668,11 @@ export const api = {
     stream<WireGuardEvent>("/api/proxy/wireguard", { method: "PUT", body: JSON.stringify(input) }, onEvent),
   removeWireGuard: () => json<WireGuardResult>("/api/proxy/wireguard", { method: "DELETE" }),
   checkWireGuard: () => json<WireGuardCheck>("/api/proxy/wireguard/check", { method: "POST" }),
+  /** Sets up the tunnel's end on another Docker host, streaming as setupWireGuard does. */
+  setupHostWireGuard: (host: string, input: { lanNetwork?: string; lanAddress?: string }, onEvent: (e: WireGuardEvent) => void) =>
+    stream<WireGuardEvent>(`/api/proxy/wireguard/hosts/${encodeURIComponent(host)}`, { method: "PUT", body: JSON.stringify(input) }, onEvent),
+  removeHostWireGuard: (host: string) =>
+    json<WireGuardResult>(`/api/proxy/wireguard/hosts/${encodeURIComponent(host)}`, { method: "DELETE" }),
   linode: () => json<FirewallStatus>("/api/integrations/linode"),
   /** Lists the firewalls a token can manage; an empty token uses the saved one. */
   testLinode: (token: string) =>
@@ -693,8 +698,10 @@ export const api = {
   /** Creates the tunnel (the first time) and runs cloudflared, streaming steps and console output. */
   setupTunnel: (input: TunnelSetupInput, onEvent: (e: TunnelEvent) => void) =>
     stream<TunnelEvent>("/api/tunnel", { method: "PUT", body: JSON.stringify(input) }, onEvent),
-  removeTunnel: () => json<TunnelStatus>("/api/tunnel", { method: "DELETE" }),
-  controlTunnel: (action: "start" | "stop" | "restart") => json<TunnelStatus>(`/api/tunnel/${action}`, { method: "POST" }),
+  removeTunnel: (host = "") =>
+    json<TunnelStatus>(`/api/tunnel${host ? `?host=${encodeURIComponent(host)}` : ""}`, { method: "DELETE" }),
+  controlTunnel: (action: "start" | "stop" | "restart", host = "") =>
+    json<TunnelStatus>(`/api/tunnel/${action}${host ? `?host=${encodeURIComponent(host)}` : ""}`, { method: "POST" }),
   tunnelRoutes: () => json<TunnelRoutes>("/api/tunnel/routes"),
   /** Replaces the routes, publishing them if the tunnel is set up. */
   setTunnelRoutes: (routes: TunnelRoute[]) =>

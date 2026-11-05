@@ -53,7 +53,12 @@ func TestManagerHosts(t *testing.T) {
 	nas := &labelDocker{containers: []docker.ContainerJSON{nasGame, wg}}
 
 	m := New(fakeClient(t, local), nil, "/srv/appdata", slog.New(slog.DiscardHandler))
-	m.UseConnection("io.hlm.wireguard", ConnectionKind{Kind: "wireguard"})
+	var recreatedOn []string
+	m.UseConnection("io.hlm.wireguard", ConnectionKind{Kind: "wireguard",
+		Recreate: func(_ context.Context, host string, _, _ func(string)) error {
+			recreatedOn = append(recreatedOn, host)
+			return nil
+		}})
 	gone := httptest.NewServer(nil)
 	gone.Close()
 	goneClient, _ := docker.NewClient(docker.Config{Host: "tcp://" + strings.TrimPrefix(gone.URL, "http://")})
@@ -99,12 +104,17 @@ func TestManagerHosts(t *testing.T) {
 		t.Error("host details are wrong")
 	}
 
-	// hlm's connections only run on the local host.
-	if conns, err := m.Connections(ctx); err != nil || len(conns) != 0 {
+	// hlm's connections on other hosts (a tunnel's end there) are listed
+	// too, named for their host.
+	if conns, err := m.Connections(ctx); err != nil || len(conns) != 1 || conns[0].Name != "hlm-wireguard@nas" || conns[0].ID != "w1@nas" {
 		t.Errorf("connections = %+v, %v", conns, err)
 	}
-	if _, err := m.Connection(ctx, "hlm-wireguard@nas"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("connection on another host: %v", err)
+	if c, err := m.Connection(ctx, "hlm-wireguard@nas"); err != nil || c.Kind != "wireguard" {
+		t.Errorf("connection on another host: %+v %v", c, err)
+	}
+	// Updating it recreates it there, through the service that runs it.
+	if err := m.UpdateConnection(ctx, "hlm-wireguard@nas", func(Event) {}); err != nil || len(recreatedOn) != 1 || recreatedOn[0] != "nas" {
+		t.Errorf("update on nas: %v, recreated on %v", err, recreatedOn)
 	}
 
 	// A removed host's servers are gone; its status is forgotten.

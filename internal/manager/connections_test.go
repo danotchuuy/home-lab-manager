@@ -100,9 +100,9 @@ func TestConnections(t *testing.T) {
 	}
 	var recreated []string
 	m.UseConnection("io.hlm.wireguard", ConnectionKind{Kind: "wireguard", Title: "WireGuard tunnel", Page: "/proxy",
-		Recreate: func(_ context.Context, step, _ func(string)) error {
+		Recreate: func(_ context.Context, host string, step, _ func(string)) error {
 			step("Creating the hlm-wireguard container")
-			recreated = append(recreated, "wireguard")
+			recreated = append(recreated, "wireguard on "+host)
 			return nil
 		}})
 	m.UseConnection("io.hlm.cloudflared", ConnectionKind{Kind: "cloudflared", Title: "Cloudflare Tunnel", Page: "/tunnel"})
@@ -145,7 +145,7 @@ func TestConnections(t *testing.T) {
 	if err := m.UpdateConnection(ctx, "hlm-wireguard", func(e Event) { events = append(events, e) }); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(recreated, ",") != "wireguard" {
+	if strings.Join(recreated, ",") != "wireguard on local" {
 		t.Errorf("recreated = %v", recreated)
 	}
 	if got := strings.Join(fd.actions, ","); got != "restart w1,pull lscr.io/linuxserver/wireguard:latest" {

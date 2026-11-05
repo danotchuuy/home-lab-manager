@@ -3,6 +3,7 @@ import { api, ApiError } from "../api";
 import type { WireGuardCheck, WireGuardInput, WireGuardResult, WireGuardStatus } from "../types";
 import { timeAgo } from "../util";
 import { Ago, Spinner } from "./common";
+import { useHosts } from "./HostPicker";
 
 /**
  * Sets up a WireGuard tunnel between the proxy server and this Docker host,
@@ -36,6 +37,7 @@ export function WireGuardTunnel({
   const [error, setError] = useState<{ message: string; output?: string }>();
   const [note, setNote] = useState<{ text: string; output?: string }>();
   const [check, setCheck] = useState<WireGuardCheck>();
+  const otherHosts = (useHosts() ?? []).filter((h) => !h.local);
   // The last setup's console: its steps and the output of each, as they
   // happen. It stays up afterwards, until the next setup.
   const [log, setLog] = useState<{ step: boolean; text: string }[]>([]);
@@ -110,6 +112,40 @@ export function WireGuardTunnel({
       if (r.applyError) setError({ message: `The tunnel is up, but applying nginx failed: ${r.applyError}`, output: r.apply?.output });
       onChange(r.status, r);
     });
+
+  // The tunnel's end on another Docker host.
+  const setupHost = (host: string) =>
+    run(`host:${host}`, async () => {
+      setLog([]);
+      let r: WireGuardResult | undefined;
+      let failure: string | undefined;
+      await api.setupHostWireGuard(host, {}, (e) => {
+        if (e.stage === "step" || e.stage === "output") {
+          const line = { step: e.stage === "step", text: e.message ?? "" };
+          setLog((l) => [...l.slice(-1999), line]);
+        } else if (e.stage === "done") r = e.result;
+        else if (e.stage === "error") failure = e.message;
+      });
+      if (failure) throw new Error(failure);
+      if (!r) throw new Error("The setup stopped without finishing; set it up again.");
+      load(r.status);
+      const end = r.status.hosts?.find((h) => h.host === host);
+      let text = `${host}'s end of the tunnel is up at ${end?.homeAddress ?? "its address"}.`;
+      if (r.apply && !r.applyError) text += ` nginx now relays ${host}'s servers through it.`;
+      setNote({ text });
+      if (r.applyError) setError({ message: `The end is up, but applying nginx failed: ${r.applyError}`, output: r.apply?.output });
+      onChange(r.status, r);
+    });
+
+  const removeHost = (host: string) => {
+    if (!confirm(`Take the tunnel's end on ${host} down? nginx can't relay ${host}'s servers through the tunnel then.`)) return;
+    run(`remove:${host}`, async () => {
+      const r = await api.removeHostWireGuard(host);
+      load(r.status);
+      setNote({ text: `Removed ${host}'s end of the tunnel.` });
+      onChange(r.status, r);
+    });
+  };
 
   const runCheck = () =>
     run("check", async () => {
@@ -267,6 +303,50 @@ export function WireGuardTunnel({
               {busy === "remove" ? "Removing…" : "Remove tunnel"}
             </button>
           </div>
+          {otherHosts.length > 0 && (
+            <div className="wg-hosts">
+              <h3>Other Docker hosts</h3>
+              <p className="muted small no-margin">
+                Each host needs its own end of the tunnel for nginx to relay its servers: hlm runs a{" "}
+                <code>hlm-wireguard</code> container there (host networking), with its own key and address, and adds it
+                to the proxy server&apos;s tunnel. It connects out to the proxy, so it works wherever that host is.
+              </p>
+              <ul className="server-info">
+                {otherHosts.map((h) => {
+                  const end = status.hosts?.find((e) => e.host === h.id);
+                  const handshake = check?.hosts?.[h.id];
+                  return (
+                    <li key={h.id} className={end ? (end.home.running ? "ok" : "bad") : undefined}>
+                      <strong>{h.name}</strong> <span className="muted">({h.id})</span>:{" "}
+                      {end ? (
+                        <>
+                          <code>{end.homeAddress}</code>,{" "}
+                          {end.home.running
+                            ? "its hlm-wireguard container is running"
+                            : end.home.error || `its hlm-wireguard container is ${end.home.state}`}
+                          {check && (handshake ? `; last handshake ${timeAgo(handshake)}` : "; it hasn't connected yet")}{" "}
+                          <button className="link-button" onClick={() => setupHost(h.id)} disabled={disabled || !!busy}>
+                            {busy === `host:${h.id}` ? "setting up…" : "set up again"}
+                          </button>{" "}
+                          ·{" "}
+                          <button className="link-button danger" onClick={() => removeHost(h.id)} disabled={disabled || !!busy}>
+                            {busy === `remove:${h.id}` ? "removing…" : "remove"}
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          no end of the tunnel, so nginx can&apos;t relay its servers through it.{" "}
+                          <button className="btn small" onClick={() => setupHost(h.id)} disabled={disabled || !!busy}>
+                            {busy === `host:${h.id}` ? "Setting up…" : `Set up ${h.id}'s end`}
+                          </button>
+                        </>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
         </>
       ) : (
         <>

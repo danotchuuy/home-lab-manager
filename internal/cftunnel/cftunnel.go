@@ -230,6 +230,8 @@ type Service struct {
 	hostAddress func(id string) string
 	// self finds hlm itself; see UseSelf.
 	self func(ctx context.Context) (SelfOrigin, error)
+	// dockerFor is other Docker hosts' Docker; see UseDockerHosts.
+	dockerFor func(host string) (Containers, error)
 }
 
 // UseHostAddress says where servers on other Docker hosts publish their
@@ -426,7 +428,9 @@ type Status struct {
 	AccountName string            `json:"accountName,omitempty"`
 	Zones       []cloudflare.Zone `json:"zones"`
 	Tunnel      *TunnelStatus     `json:"tunnel,omitempty"`
-	Image       string            `json:"image"`
+	// Hosts are the tunnels on other Docker hosts.
+	Hosts []HostTunnel `json:"hosts"`
+	Image string       `json:"image"`
 	// LANNetworks are the networks the connector can join.
 	LANNetworks []docker.LANNetwork `json:"lanNetworks"`
 	// Error is set when Cloudflare couldn't be asked.
@@ -463,8 +467,8 @@ type Connector struct {
 
 // Status asks Cloudflare and Docker about the tunnel.
 func (s *Service) Status(ctx context.Context) (Status, error) {
-	out := Status{Image: s.image, Zones: []cloudflare.Zone{}, LANNetworks: []docker.LANNetwork{}}
-	if nets, err := s.docker.ListNetworks(ctx); err == nil {
+	out := Status{Image: s.image, Zones: []cloudflare.Zone{}, LANNetworks: []docker.LANNetwork{}, Hosts: []HostTunnel{}}
+	if nets, err := s.dk(ctx).ListNetworks(ctx); err == nil {
 		out.LANNetworks = docker.LANNetworks(nets)
 	}
 	c, a, err := s.client()
@@ -480,10 +484,30 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	} else {
 		out.Zones = zones
 	}
+	hosts, err := s.hostTunnels()
+	if err != nil {
+		return out, err
+	}
+	for _, host := range sortedHosts(hosts) {
+		ts := s.tunnelStatus(ctx, c, a, hosts[host], host, &out)
+		out.Hosts = append(out.Hosts, HostTunnel{Host: host, TunnelStatus: *ts})
+	}
 	t, ok, err := s.tunnel()
 	if err != nil || !ok {
 		return out, err
 	}
+	out.Tunnel = s.tunnelStatus(ctx, c, a, t, manager.LocalHost, &out)
+	return out, nil
+}
+
+// HostTunnel is the tunnel on another Docker host.
+type HostTunnel struct {
+	Host string `json:"host"`
+	TunnelStatus
+}
+
+// tunnelStatus asks Cloudflare and the host's Docker about a tunnel.
+func (s *Service) tunnelStatus(ctx context.Context, c *cloudflare.Client, a Account, t Tunnel, host string, out *Status) *TunnelStatus {
 	ts := &TunnelStatus{ID: t.ID, Name: t.Name, Created: t.Created, Connections: []cloudflare.Connection{},
 		LANNetwork: t.LANNetwork, LANSubnet: t.LANSubnet, LANAddress: t.LANAddress}
 	if out.Error == "" {
@@ -499,13 +523,16 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 			}
 		}
 	}
-	ts.Connector = s.connector(ctx, t)
-	out.Tunnel = ts
-	return out, nil
+	if hctx, err := s.onHost(ctx, host); err != nil {
+		ts.Connector = Connector{Error: err.Error()}
+	} else {
+		ts.Connector = s.connector(hctx, t)
+	}
+	return ts
 }
 
 func (s *Service) connector(ctx context.Context, t Tunnel) Connector {
-	info, err := s.docker.InspectContainer(ctx, Container)
+	info, err := s.dk(ctx).InspectContainer(ctx, Container)
 	if docker.IsNotFound(err) {
 		return Connector{State: "missing", Error: "The " + Container + " container is gone; set the tunnel up again."}
 	}
@@ -523,6 +550,9 @@ func (s *Service) connector(ctx context.Context, t Tunnel) Connector {
 
 // SetupInput is what the user chooses when setting up the tunnel.
 type SetupInput struct {
+	// Host is the Docker host cloudflared runs on: "" for this one, or
+	// another, which gets a tunnel of its own.
+	Host string `json:"host,omitempty"`
 	// Name is the tunnel's name in Cloudflare; only used when it's created.
 	Name string `json:"name"`
 	// LANNetwork, if set, runs the connector on this macvlan/ipvlan network,
@@ -571,7 +601,7 @@ func (s *Service) resolveLAN(ctx context.Context, t *Tunnel) error {
 	if t.LANNetwork == "" {
 		return nil
 	}
-	nets, err := s.docker.ListNetworks(ctx)
+	nets, err := s.dk(ctx).ListNetworks(ctx)
 	if err != nil {
 		return err
 	}
@@ -614,7 +644,18 @@ func (s *Service) Setup(ctx context.Context, in SetupInput, emit func(Event)) (S
 	}
 	step := func(msg string) { emit(Event{Stage: "step", Message: msg}) }
 	output := func(line string) { emit(Event{Stage: "output", Message: line}) }
+	host := in.Host
+	if isLocal(host) {
+		host = manager.LocalHost
+	} else if strings.TrimSpace(in.Name) == "" {
+		in.Name = DefaultTunnelName + "-" + host
+	}
 	if err := validateSetup(&in); err != nil {
+		return Status{}, nil, err
+	}
+	base := ctx
+	ctx, err := s.onHost(ctx, host)
+	if err != nil {
 		return Status{}, nil, err
 	}
 	c, a, err := s.client()
@@ -629,7 +670,7 @@ func (s *Service) Setup(ctx context.Context, in SetupInput, emit func(Event)) (S
 	if err := s.resolveLAN(ctx, &lan); err != nil {
 		return Status{}, nil, err
 	}
-	t, ok, err := s.tunnel()
+	t, ok, err := s.tunnelOn(host)
 	if err != nil {
 		return Status{}, nil, err
 	}
@@ -661,11 +702,11 @@ func (s *Service) Setup(ctx context.Context, in SetupInput, emit func(Event)) (S
 		output("Created tunnel " + ct.ID)
 		// Remember it straight away, so whatever fails next, it can be set
 		// up again or removed rather than left behind in Cloudflare.
-		if err := s.secrets.Set(secretTunnel, t); err != nil {
+		if err := s.saveTunnelOn(host, t); err != nil {
 			return Status{}, nil, err
 		}
 		// Routes applied to an old tunnel pointed elsewhere.
-		if err := s.secrets.Delete(secretApplied); err != nil {
+		if err := s.deleteAppliedOn(host); err != nil {
 			return Status{}, nil, err
 		}
 	}
@@ -676,23 +717,23 @@ func (s *Service) Setup(ctx context.Context, in SetupInput, emit func(Event)) (S
 	}
 	// The tunnel exists in Cloudflare now, so keep it even if the container
 	// fails: setting up again then only has to fix that.
-	if err := s.secrets.Set(secretTunnel, t); err != nil {
+	if err := s.saveTunnelOn(host, t); err != nil {
 		return Status{}, nil, err
 	}
-	s.log.Info("set up the Cloudflare Tunnel", "tunnel", t.Name, "id", t.ID)
+	s.log.Info("set up the Cloudflare Tunnel", "tunnel", t.Name, "id", t.ID, "host", host)
 
 	if err := s.startConnector(ctx, t, step, output); err != nil {
-		st, _ := s.Status(ctx)
+		st, _ := s.Status(base)
 		return st, nil, fmt.Errorf("the tunnel exists in Cloudflare, but starting cloudflared failed: %w", err)
 	}
-	s.log.Info("started cloudflared", "container", Container)
+	s.log.Info("started cloudflared", "container", Container, "host", host)
 
 	var applied *Apply
 	if rs, err := s.routes(); err == nil && len(rs) > 0 {
 		step("Publishing the hostnames")
-		res, err := s.apply(ctx, c, a, t)
+		res, err := s.apply(base, c, a)
 		if err != nil {
-			st, _ := s.Status(ctx)
+			st, _ := s.Status(base)
 			return st, nil, fmt.Errorf("the tunnel is up, but publishing the hostnames failed: %w", err)
 		}
 		for _, r := range res.Routes {
@@ -704,7 +745,7 @@ func (s *Service) Setup(ctx context.Context, in SetupInput, emit func(Event)) (S
 		}
 		applied = &res
 	}
-	st, err := s.Status(ctx)
+	st, err := s.Status(base)
 	return st, applied, err
 }
 
@@ -715,7 +756,7 @@ func (s *Service) startConnector(ctx context.Context, t Tunnel, step, output fun
 		return err
 	}
 	step("Pulling " + s.image)
-	pullErr := s.docker.PullImage(ctx, s.image, func(p docker.PullProgress) {
+	pullErr := s.dk(ctx).PullImage(ctx, s.image, func(p docker.PullProgress) {
 		// Leave out the flood of byte counts; layer status changes are enough.
 		if p.Status == "" || p.Status == "Downloading" || p.Status == "Extracting" || p.Status == "Waiting" {
 			return
@@ -750,7 +791,7 @@ func (s *Service) startConnector(ctx context.Context, t Tunnel, step, output fun
 		}
 	}
 	step("Creating the " + Container + " container")
-	id, _, err := s.docker.CreateContainer(ctx, Container, req)
+	id, _, err := s.dk(ctx).CreateContainer(ctx, Container, req)
 	if err != nil {
 		if pullErr != nil {
 			return fmt.Errorf("pull %s: %w", s.image, pullErr)
@@ -759,12 +800,12 @@ func (s *Service) startConnector(ctx context.Context, t Tunnel, step, output fun
 	}
 	if t.LANNetwork != "" {
 		// And on the default bridge, to reach the host's published ports.
-		if err := s.docker.ConnectNetwork(ctx, "bridge", id, nil); err != nil {
+		if err := s.dk(ctx).ConnectNetwork(ctx, "bridge", id, nil); err != nil {
 			return fmt.Errorf("connect to the bridge network: %w", err)
 		}
 	}
 	step("Starting it")
-	if err := s.docker.StartContainer(ctx, id); err != nil {
+	if err := s.dk(ctx).StartContainer(ctx, id); err != nil {
 		return err
 	}
 	if !s.followStartup(ctx, id, output) {
@@ -779,10 +820,10 @@ func (s *Service) startConnector(ctx context.Context, t Tunnel, step, output fun
 // instead of being killed.
 func (s *Service) removeConnector(ctx context.Context) error {
 	for _, name := range []string{Container, legacyContainer} {
-		if err := s.docker.StopContainer(ctx, name, 15); err != nil && !docker.IsNotFound(err) {
+		if err := s.dk(ctx).StopContainer(ctx, name, 15); err != nil && !docker.IsNotFound(err) {
 			s.log.Warn("stop cloudflared gracefully", "err", err)
 		}
-		if err := s.docker.RemoveContainer(ctx, name, true); err != nil && !docker.IsNotFound(err) {
+		if err := s.dk(ctx).RemoveContainer(ctx, name, true); err != nil && !docker.IsNotFound(err) {
 			return fmt.Errorf("remove the %s container: %w", name, err)
 		}
 	}
@@ -796,13 +837,13 @@ func (s *Service) RenameLegacyConnector(ctx context.Context) {
 	if s.docker == nil {
 		return
 	}
-	if _, err := s.docker.InspectContainer(ctx, Container); !docker.IsNotFound(err) {
+	if _, err := s.dk(ctx).InspectContainer(ctx, Container); !docker.IsNotFound(err) {
 		return
 	}
-	if _, err := s.docker.InspectContainer(ctx, legacyContainer); err != nil {
+	if _, err := s.dk(ctx).InspectContainer(ctx, legacyContainer); err != nil {
 		return
 	}
-	if err := s.docker.RenameContainer(ctx, legacyContainer, Container); err != nil {
+	if err := s.dk(ctx).RenameContainer(ctx, legacyContainer, Container); err != nil {
 		s.log.Warn("rename cloudflared's container", "from", legacyContainer, "to", Container, "err", err)
 		return
 	}
@@ -828,12 +869,35 @@ func (s *Service) RecreateConnector(ctx context.Context, step, output func(strin
 	return nil
 }
 
+// RecreateConnectorOn replaces the cloudflared container on a host (this
+// one, or another with a tunnel of its own).
+func (s *Service) RecreateConnectorOn(ctx context.Context, host string, step, output func(string)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok, err := s.tunnelOn(host)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNoTunnel
+	}
+	hctx, err := s.onHost(ctx, host)
+	if err != nil {
+		return err
+	}
+	if err := s.startConnector(hctx, t, step, output); err != nil {
+		return err
+	}
+	s.log.Info("recreated cloudflared", "container", Container, "host", host)
+	return nil
+}
+
 // followStartup passes on cloudflared's log until it has connected, the
 // container stops, or a few seconds pass. It reports whether it connected.
 func (s *Service) followStartup(ctx context.Context, id string, output func(string)) bool {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	logs, err := s.docker.Logs(ctx, id, docker.LogsOptions{Follow: true, Tail: "all"})
+	logs, err := s.dk(ctx).Logs(ctx, id, docker.LogsOptions{Follow: true, Tail: "all"})
 	if err != nil {
 		output("Couldn't read the container's log: " + err.Error())
 		return false
@@ -855,19 +919,28 @@ func (s *Service) followStartup(ctx context.Context, id string, output func(stri
 
 // Control starts, stops or restarts the cloudflared container.
 func (s *Service) Control(ctx context.Context, action string) (Status, error) {
-	if _, ok, err := s.tunnel(); err != nil {
+	return s.ControlOn(ctx, manager.LocalHost, action)
+}
+
+// ControlOn starts, stops or restarts the cloudflared container on a host.
+func (s *Service) ControlOn(ctx context.Context, host, action string) (Status, error) {
+	if _, ok, err := s.tunnelOn(host); err != nil {
 		return Status{}, err
 	} else if !ok {
 		return Status{}, ErrNoTunnel
 	}
-	var err error
+	base := ctx
+	ctx, err := s.onHost(ctx, host)
+	if err != nil {
+		return Status{}, err
+	}
 	switch action {
 	case "start":
-		err = s.docker.StartContainer(ctx, Container)
+		err = s.dk(ctx).StartContainer(ctx, Container)
 	case "stop":
-		err = s.docker.StopContainer(ctx, Container, 10)
+		err = s.dk(ctx).StopContainer(ctx, Container, 10)
 	case "restart":
-		err = s.docker.RestartContainer(ctx, Container, 10)
+		err = s.dk(ctx).RestartContainer(ctx, Container, 10)
 	default:
 		return Status{}, fmt.Errorf("unknown action %q", action)
 	}
@@ -877,43 +950,65 @@ func (s *Service) Control(ctx context.Context, action string) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	s.log.Info("cloudflared "+action, "container", Container)
-	return s.Status(ctx)
+	s.log.Info("cloudflared "+action, "container", Container, "host", host)
+	return s.Status(base)
 }
 
 // Logs returns cloudflared's log.
 func (s *Service) Logs(ctx context.Context, opts docker.LogsOptions) (io.ReadCloser, error) {
-	if _, ok, err := s.tunnel(); err != nil {
+	return s.LogsOn(ctx, manager.LocalHost, opts)
+}
+
+// LogsOn returns cloudflared's log on a host.
+func (s *Service) LogsOn(ctx context.Context, host string, opts docker.LogsOptions) (io.ReadCloser, error) {
+	if _, ok, err := s.tunnelOn(host); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, ErrNoTunnel
 	}
-	return s.docker.Logs(ctx, Container, opts)
+	ctx, err := s.onHost(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	return s.dk(ctx).Logs(ctx, Container, opts)
 }
 
 // Remove takes the tunnel down: it removes the container, the DNS records
 // hlm made, and the tunnel in Cloudflare. The routes are kept, so setting a
 // tunnel up again publishes them again.
 func (s *Service) Remove(ctx context.Context) (Status, error) {
+	return s.RemoveOn(ctx, manager.LocalHost)
+}
+
+// RemoveOn takes a host's tunnel down. Routes it carried go through this
+// host's tunnel again, if there is one.
+func (s *Service) RemoveOn(ctx context.Context, host string) (Status, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	t, ok, err := s.tunnel()
+	t, ok, err := s.tunnelOn(host)
 	if err != nil {
 		return Status{}, err
 	}
 	if !ok {
 		return Status{}, ErrNoTunnel
 	}
-	if err := s.removeConnector(ctx); err != nil {
+	base := ctx
+	hctx, err := s.onHost(ctx, host)
+	if err != nil {
+		return Status{}, err
+	}
+	if err := s.removeConnector(hctx); err != nil {
 		return Status{}, err
 	}
 	c, a, err := s.client()
 	if err != nil {
 		return Status{}, err
 	}
-	if ap, ok, err := s.applied(); err != nil {
+	applied, err := s.appliedAll(map[string]Tunnel{host: t})
+	if err != nil {
 		return Status{}, err
-	} else if ok {
+	}
+	if ap, ok := applied[host]; ok {
 		for _, r := range ap.Records {
 			if err := s.deleteRecord(ctx, c, r, t.ID); err != nil {
 				return Status{}, fmt.Errorf("remove the DNS record for %s: %w", r.Hostname, err)
@@ -928,13 +1023,20 @@ func (s *Service) Remove(ctx context.Context) (Status, error) {
 	if err := c.DeleteTunnel(ctx, a.AccountID, t.ID); err != nil && !cloudflare.IsNotFound(err) {
 		return Status{}, fmt.Errorf("delete the tunnel: %w", err)
 	}
-	for _, name := range []string{secretApplied, secretTunnel} {
-		if err := s.secrets.Delete(name); err != nil {
-			return Status{}, err
+	if err := s.deleteAppliedOn(host); err != nil {
+		return Status{}, err
+	}
+	if err := s.deleteTunnelOn(host); err != nil {
+		return Status{}, err
+	}
+	s.log.Info("removed the Cloudflare Tunnel", "tunnel", t.Name, "host", host)
+	// The routes it carried move to another tunnel, if one is left.
+	if tunnels, err := s.tunnels(); err == nil && len(tunnels) > 0 {
+		if _, err := s.apply(base, c, a); err != nil {
+			s.log.Warn("re-apply Cloudflare routes", "err", err)
 		}
 	}
-	s.log.Info("removed the Cloudflare Tunnel", "tunnel", t.Name)
-	return s.Status(ctx)
+	return s.Status(base)
 }
 
 // deleteRecord removes a record hlm made, if it still points at the
@@ -1058,8 +1160,9 @@ func origin(info docker.ContainerJSON, r Route, t Tunnel, remoteHost string) (st
 	return r.Scheme + "://" + net.JoinHostPort(host, strconv.Itoa(r.Port)), nil
 }
 
-// resolve finds where cloudflared sends a route's requests.
-func (s *Service) resolve(ctx context.Context, r Route, t Tunnel) (string, error) {
+// resolve finds where cloudflared sends a route's requests, from the
+// tunnel on the host via.
+func (s *Service) resolve(ctx context.Context, r Route, t Tunnel, via string) (string, error) {
 	if r.Hlm {
 		return s.selfOrigin(ctx, t)
 	}
@@ -1070,9 +1173,14 @@ func (s *Service) resolve(ctx context.Context, r Route, t Tunnel) (string, error
 	if err != nil {
 		return "", err
 	}
+	// The tunnel on the server's own host reaches it as a local connector
+	// would; another host's, over the LAN.
 	remoteHost := ""
-	if s.hostAddress != nil {
+	if s.hostAddress != nil && manager.HostOf(info.ID) != via {
 		remoteHost = s.hostAddress(info.ID)
+		if remoteHost == "" && manager.HostOf(info.ID) != manager.LocalHost {
+			return "", fmt.Errorf("%s's Docker host has no LAN address for the tunnel here to reach it; give it one, or set a tunnel up on that host", r.Server)
+		}
 	}
 	return origin(info, r, t, remoteHost)
 }
@@ -1220,6 +1328,8 @@ func (s *Service) validateRoutes(ctx context.Context, routes []Route, zones []cl
 type RouteState struct {
 	Route
 	URL string `json:"url"`
+	// Via is the Docker host whose tunnel carries it.
+	Via string `json:"via"`
 	// Origin is where cloudflared sends its requests; empty with Error.
 	Origin string `json:"origin,omitempty"`
 	Error  string `json:"error,omitempty"`
@@ -1272,26 +1382,25 @@ func (s *Service) Routes(ctx context.Context) (Routes, error) {
 	if err != nil {
 		return out, err
 	}
-	t, hasTunnel, err := s.tunnel()
+	tunnels, err := s.tunnels()
 	if err != nil {
 		return out, err
 	}
-	out.Tunnel = hasTunnel
-	ap, _, err := s.applied()
+	out.Tunnel = len(tunnels) > 0
+	applied, err := s.appliedAll(tunnels)
 	if err != nil {
 		return out, err
 	}
-	if hasTunnel && ap.TunnelID != t.ID {
-		ap = appliedState{}
-	}
-	out.Routes = s.states(ctx, rs, t, ap)
+	out.Routes = s.states(ctx, rs, tunnels, applied)
 	for _, r := range out.Routes {
 		out.Pending = out.Pending || r.State == "pending"
 	}
 	// Records for routes that were removed are still in place until applied.
-	for _, rec := range ap.Records {
-		if !containsHost(rs, rec.Hostname) {
-			out.Pending = true
+	for _, ap := range applied {
+		for _, rec := range ap.Records {
+			if !containsHost(rs, rec.Hostname) {
+				out.Pending = true
+			}
 		}
 	}
 	servers, err := s.servers.List(ctx)
@@ -1318,13 +1427,15 @@ func containsHost(rs []Route, h string) bool {
 	return false
 }
 
-// states works out each route's origin and state.
-func (s *Service) states(ctx context.Context, rs []Route, t Tunnel, ap appliedState) []RouteState {
+// states works out each route's tunnel, origin and state.
+func (s *Service) states(ctx context.Context, rs []Route, tunnels map[string]Tunnel, applied map[string]appliedState) []RouteState {
 	out := []RouteState{}
 	for _, r := range rs {
-		st := RouteState{Route: r, URL: "https://" + r.Hostname}
+		v := via(r, tunnels)
+		st := RouteState{Route: r, URL: "https://" + r.Hostname, Via: v}
+		ap := applied[v]
 		var err error
-		st.Origin, err = s.resolve(ctx, r, t)
+		st.Origin, err = s.resolve(ctx, r, tunnels[v], v)
 		switch {
 		case err != nil:
 			st.Error, st.State = err.Error(), "error"
@@ -1394,14 +1505,14 @@ func (s *Service) SetRoutes(ctx context.Context, routes []Route) (Apply, error) 
 		return Apply{}, err
 	}
 	s.log.Info("saved Cloudflare routes", "routes", len(rs))
-	t, ok, err := s.tunnel()
+	tunnels, err := s.tunnels()
 	if err != nil {
 		return Apply{}, err
 	}
-	if !ok {
-		return Apply{Routes: s.states(ctx, rs, t, appliedState{})}, nil
+	if len(tunnels) == 0 {
+		return Apply{Routes: s.states(ctx, rs, tunnels, nil)}, nil
 	}
-	return s.apply(ctx, c, a, t)
+	return s.apply(ctx, c, a)
 }
 
 // Apply publishes the routes: the tunnel's ingress rules and the DNS
@@ -1413,51 +1524,69 @@ func (s *Service) Apply(ctx context.Context) (Apply, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	t, ok, err := s.tunnel()
+	tunnels, err := s.tunnels()
 	if err != nil {
 		return Apply{}, err
 	}
-	if !ok {
+	if len(tunnels) == 0 {
 		return Apply{}, ErrNoTunnel
 	}
-	return s.apply(ctx, c, a, t)
+	return s.apply(ctx, c, a)
 }
 
-// apply does Apply's work; s.mu must be held.
-func (s *Service) apply(ctx context.Context, c *cloudflare.Client, a Account, t Tunnel) (Apply, error) {
+// apply does Apply's work for every tunnel: each carries the routes via
+// it; s.mu must be held.
+func (s *Service) apply(ctx context.Context, c *cloudflare.Client, a Account) (Apply, error) {
 	var res Apply
 	rs, err := s.routes()
 	if err != nil {
 		return res, err
 	}
-	prev, _, err := s.applied()
+	tunnels, err := s.tunnels()
 	if err != nil {
 		return res, err
 	}
-	if prev.TunnelID != t.ID {
-		prev = appliedState{}
+	prevs, err := s.appliedAll(tunnels)
+	if err != nil {
+		return res, err
 	}
-	target := cloudflare.TunnelTarget(t.ID)
-	next := appliedState{TunnelID: t.ID, Conflicts: map[string]string{}, Records: []appliedRecord{}, At: time.Now().UTC()}
+	targets := map[string]bool{}
+	for _, t := range tunnels {
+		targets[cloudflare.TunnelTarget(t.ID)] = true
+	}
 
-	// Look at each hostname's DNS records first: a hostname another record
-	// already uses isn't routed.
 	type plan struct {
 		route  Route
+		via    string
 		origin string
 		record *cloudflare.DNSRecord // ours or one to replace; nil to create
 	}
 	var plans []plan
-	ingress := []cloudflare.IngressRule{}
+	nexts := map[string]*appliedState{}
+	ingress := map[string][]cloudflare.IngressRule{}
+	for host, t := range tunnels {
+		nexts[host] = &appliedState{TunnelID: t.ID, Conflicts: map[string]string{}, Records: []appliedRecord{}, At: time.Now().UTC()}
+		ingress[host] = []cloudflare.IngressRule{}
+	}
+	conflicts := map[string]string{}
+
+	// Look at each hostname's DNS records first: a hostname another record
+	// already uses isn't routed.
 	for _, r := range rs {
-		o, err := s.resolve(ctx, r, t)
+		v := via(r, tunnels)
+		t, ok := tunnels[v]
+		if !ok {
+			continue // no tunnel reaches it; states says so
+		}
+		next, prev := nexts[v], prevs[v]
+		o, err := s.resolve(ctx, r, t, v)
 		if err != nil {
 			// Reported by states. A server that's stopped, say, has no LAN
 			// address now: keep what was published for it, so it works
 			// again once the server is back.
 			for _, rule := range prev.Ingress {
 				if rule.Hostname == r.Hostname {
-					ingress = append(ingress, rule)
+					ingress[v] = append(ingress[v], rule)
 				}
 			}
 			for _, rec := range prev.Records {
@@ -1471,33 +1600,45 @@ func (s *Service) apply(ctx context.Context, c *cloudflare.Client, a Account, t 
 		if err != nil {
 			return res, fmt.Errorf("look up %s: %w", r.Hostname, err)
 		}
-		p := plan{route: r, origin: o}
+		p := plan{route: r, via: v, origin: o}
 		for i, rec := range recs {
-			ours := rec.Type == "CNAME" && (rec.Content == target || ((rec.Comment == RecordComment || rec.Comment == legacyRecordComment) && strings.HasSuffix(rec.Content, "."+cloudflare.TunnelDomain)))
+			ours := rec.Type == "CNAME" && (targets[rec.Content] || ((rec.Comment == RecordComment || rec.Comment == legacyRecordComment) && strings.HasSuffix(rec.Content, "."+cloudflare.TunnelDomain)))
 			switch {
 			case ours:
 				p.record = &recs[i]
 			case rec.Type == "A" || rec.Type == "AAAA" || rec.Type == "CNAME":
-				next.Conflicts[r.Hostname] = fmt.Sprintf("%s already has a DNS record (%s %s) that hlm didn't make; delete it in Cloudflare or choose another hostname", r.Hostname, rec.Type, rec.Content)
+				conflicts[r.Hostname] = fmt.Sprintf("%s already has a DNS record (%s %s) that hlm didn't make; delete it in Cloudflare or choose another hostname", r.Hostname, rec.Type, rec.Content)
+				next.Conflicts[r.Hostname] = conflicts[r.Hostname]
 			}
 		}
-		if next.Conflicts[r.Hostname] != "" {
+		if conflicts[r.Hostname] != "" {
 			continue
 		}
 		plans = append(plans, p)
-		ingress = append(ingress, ingressRule(r, o))
+		ingress[v] = append(ingress[v], ingressRule(r, o))
 	}
-	// Anything else gets a 404 rather than reaching a server.
-	ingress = append(ingress, cloudflare.IngressRule{Service: "http_status:404"})
-	if err := c.SetTunnelConfig(ctx, a.AccountID, t.ID, cloudflare.TunnelConfig{Ingress: ingress}); err != nil {
-		return res, fmt.Errorf("set the tunnel's routes: %w", err)
+	// Each tunnel's routes; anything else gets a 404 rather than reaching a
+	// server.
+	for _, host := range sortedHosts(tunnels) {
+		rules := append(ingress[host], cloudflare.IngressRule{Service: "http_status:404"})
+		if err := c.SetTunnelConfig(ctx, a.AccountID, tunnels[host].ID, cloudflare.TunnelConfig{Ingress: rules}); err != nil {
+			return res, fmt.Errorf("set the routes of the tunnel %s: %w", tunnels[host].Name, err)
+		}
+		nexts[host].Ingress = rules
 	}
-	next.Ingress = ingress
 
 	// Save what's done as it's done, so a failure part way still lets the
 	// next apply (or Remove) clean up.
-	save := func() error { return s.secrets.Set(secretApplied, next) }
+	save := func() error {
+		for host, next := range nexts {
+			if err := s.saveAppliedOn(host, *next); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	for _, p := range plans {
+		target := cloudflare.TunnelTarget(tunnels[p.via].ID)
 		want := cloudflare.DNSRecord{Type: "CNAME", Name: p.route.Hostname, Content: target, Proxied: true, TTL: 1, Comment: RecordComment}
 		switch {
 		case p.record == nil:
@@ -1508,7 +1649,7 @@ func (s *Service) apply(ctx context.Context, c *cloudflare.Client, a Account, t 
 			}
 			p.record = &rec
 			res.Created++
-			s.log.Info("added DNS record", "hostname", p.route.Hostname)
+			s.log.Info("added DNS record", "hostname", p.route.Hostname, "via", p.via)
 		case p.record.Content != want.Content || !p.record.Proxied || p.record.Comment != want.Comment:
 			if _, err := c.UpdateDNSRecord(ctx, p.route.ZoneID, p.record.ID, want); err != nil {
 				_ = save()
@@ -1516,29 +1657,41 @@ func (s *Service) apply(ctx context.Context, c *cloudflare.Client, a Account, t 
 			}
 			res.Updated++
 		}
+		next := nexts[p.via]
 		next.Records = append(next.Records, appliedRecord{Hostname: p.route.Hostname, ZoneID: p.route.ZoneID, RecordID: p.record.ID})
 	}
 	// Records for hostnames no longer routed (or now in conflict) go.
-	for _, old := range prev.Records {
-		kept := false
+	kept := map[string]bool{}
+	for _, next := range nexts {
 		for _, rec := range next.Records {
-			kept = kept || rec.Hostname == old.Hostname
+			kept[rec.Hostname] = true
 		}
-		if kept {
-			continue
+	}
+	for host, prev := range prevs {
+		tunnelID := prev.TunnelID
+		for _, old := range prev.Records {
+			if kept[old.Hostname] {
+				continue
+			}
+			if err := s.deleteRecord(ctx, c, old, tunnelID); err != nil {
+				if next, ok := nexts[host]; ok {
+					next.Records = append(next.Records, old) // try again next time
+				}
+				_ = save()
+				return res, fmt.Errorf("remove the DNS record for %s: %w", old.Hostname, err)
+			}
+			res.Removed++
 		}
-		if err := s.deleteRecord(ctx, c, old, t.ID); err != nil {
-			next.Records = append(next.Records, old) // try again next time
-			_ = save()
-			return res, fmt.Errorf("remove the DNS record for %s: %w", old.Hostname, err)
-		}
-		res.Removed++
 	}
 	if err := save(); err != nil {
 		return res, err
 	}
-	res.Routes = s.states(ctx, rs, t, next)
-	s.log.Info("applied Cloudflare routes", "routes", len(plans), "created", res.Created, "updated", res.Updated, "removed", res.Removed)
+	applied := map[string]appliedState{}
+	for host, next := range nexts {
+		applied[host] = *next
+	}
+	res.Routes = s.states(ctx, rs, tunnels, applied)
+	s.log.Info("applied Cloudflare routes", "routes", len(plans), "tunnels", len(tunnels), "created", res.Created, "updated", res.Updated, "removed", res.Removed)
 	return res, nil
 }
 
@@ -1566,7 +1719,7 @@ func (s *Service) ForgetServer(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	if _, ok, _ := s.tunnel(); !ok {
+	if tunnels, _ := s.tunnels(); len(tunnels) == 0 {
 		return nil
 	}
 	_, err = s.Apply(ctx)
@@ -1585,7 +1738,10 @@ func (s *Service) RunSync(ctx context.Context, interval time.Duration) {
 			return
 		case <-t.C:
 		}
-		if _, ok, err := s.applied(); err != nil || !ok {
+		if tunnels, err := s.tunnels(); err != nil || len(tunnels) == 0 {
+			continue
+		}
+		if applied, err := s.appliedAll(map[string]Tunnel{}); err != nil || len(applied) == 0 {
 			continue
 		}
 		r, err := s.Routes(ctx)

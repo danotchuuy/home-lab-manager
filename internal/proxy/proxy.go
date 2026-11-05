@@ -103,6 +103,9 @@ type Service struct {
 	// run runs a script as root on the relay, passing each line of output
 	// to onLine (if non-nil) as it's printed; tests replace it.
 	run func(ctx context.Context, script string, stdin []byte, onLine func(string)) (remote.Result, error)
+	// dockerFor is other Docker hosts' Docker, for the tunnel's ends there;
+	// see UseDockerHosts.
+	dockerFor func(host string) (Containers, error)
 	// statusSites finds the status page's sites; see UseStatusSites.
 	statusSites func(ctx context.Context) ([]string, int, error)
 	// cloudflare puts the status page's sites behind Cloudflare; see
@@ -530,6 +533,9 @@ type Proxied struct {
 	// instead of the home address: its own LAN address, reached through the
 	// WireGuard tunnel. Traffic then goes to the server's own ports.
 	Address string `json:"address,omitempty"`
+	// Upstream, if set, replaces the home address for this server: the
+	// WireGuard tunnel's end on the Docker host it runs on.
+	Upstream string `json:"upstream,omitempty"`
 	// Skipped are ports whose internet port another proxied server already
 	// uses.
 	Skipped []forwarding.Mapping `json:"skipped,omitempty"`
@@ -583,16 +589,27 @@ func (s *Service) relayed(ctx context.Context, st Settings) []Proxied {
 			out = append(out, p)
 			continue
 		}
+		end := wg
+		if host := hostOfID(info.ID); st.UpstreamSource == "wireguard" && host != localHost {
+			// A server on another host goes through that host's end.
+			e, ok := wg.end(host)
+			if !ok {
+				p.Error = "is on the Docker host " + host + ", which has no end of the WireGuard tunnel: set one up for it under the tunnel"
+				out = append(out, p)
+				continue
+			}
+			end, p.Upstream = e, e.HomeAddress().String()
+		}
 		if st.UpstreamSource == "wireguard" && info.Config.Labels[deploy.LabelDirectIP] == "true" {
 			// The tunnel reaches containers with their own (macvlan/ipvlan)
 			// LAN address only when its home end is on their network.
-			addr, err := wg.lanAddressOf(info)
+			addr, err := end.lanAddressOf(info)
 			if err != nil {
 				p.Error = err.Error()
 				out = append(out, p)
 				continue
 			}
-			p.Address = addr.String()
+			p.Address, p.Upstream = addr.String(), ""
 		}
 		for _, m := range ports {
 			if !m.Proxy {
@@ -633,6 +650,9 @@ func Render(st Settings, servers []Proxied) string {
 		}
 		fmt.Fprintf(&b, "\n# %s\n", p.Server)
 		to := upstream
+		if p.Upstream != "" {
+			to = p.Upstream
+		}
 		if p.Address != "" {
 			to = p.Address
 		}
@@ -850,6 +870,9 @@ func (s *Service) RouteFor(ctx context.Context, server string) (Route, error) {
 	one := st
 	one.Servers = []string{server}
 	if p := s.relayed(ctx, one); len(p) == 1 {
+		if p[0].Upstream != "" {
+			r.Target = p[0].Upstream
+		}
 		if p[0].Address != "" {
 			r.Target, r.OwnPorts, r.ServerAddress = p[0].Address, true, true
 		}
