@@ -491,6 +491,31 @@ var rconCommands = map[string]string{
 	"ark":       "ListPlayers",
 }
 
+// addPalworldMetrics reads the console's answer to Metrics (from
+// Palworld's REST API): "Players: 3/32" and so on.
+func addPalworldMetrics(res *Result, out string) {
+	for _, l := range strings.Split(out, "\n") {
+		var n, max int
+		if _, err := fmt.Sscanf(strings.TrimSpace(l), "Players: %d/%d", &n, &max); err == nil {
+			res.Players, res.MaxPlayers = n, max
+		}
+	}
+}
+
+// addPalworldInfo reads the console's answer to Info (from Palworld's REST
+// API): "Server: name" and "Version: v0.1.5.0".
+func addPalworldInfo(res *Result, out string) {
+	for _, l := range strings.Split(out, "\n") {
+		if v, ok := strings.CutPrefix(l, "Server: "); ok {
+			res.Name = strings.TrimSpace(v)
+		}
+		if v, ok := strings.CutPrefix(l, "Version: "); ok {
+			res.Version = strings.TrimSpace(v)
+		}
+	}
+	res.Game = "Palworld"
+}
+
 // parsePlayerList reads a game's answer to its rconCommands command.
 func parsePlayerList(game, out string) (Result, error) {
 	res := Result{HasPlayers: true}

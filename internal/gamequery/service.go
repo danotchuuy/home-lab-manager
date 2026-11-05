@@ -503,7 +503,31 @@ func (s *Service) queryConsole(ctx context.Context, info docker.ContainerJSON) (
 		return Result{}, err
 	}
 	res.Protocol, res.Latency = ProtoRCON, time.Since(start)
+	// Palworld's REST API also has the player limit, name and version.
+	if game == "palworld" && s.consoleMode(cctx, info) == consoleREST {
+		if out, err := s.opts.Console.Query(cctx, strings.TrimPrefix(info.Name, "/"), "Metrics"); err == nil {
+			addPalworldMetrics(&res, out)
+		}
+		if out, err := s.opts.Console.Query(cctx, strings.TrimPrefix(info.Name, "/"), "Info"); err == nil {
+			addPalworldInfo(&res, out)
+		}
+		res.Latency = time.Since(start)
+	}
 	return res, nil
+}
+
+// consoleREST is the console's mode for Palworld's REST API.
+const consoleREST = "rest"
+
+// consoleMode is how a server's console sends commands, if the console
+// says.
+func (s *Service) consoleMode(ctx context.Context, info docker.ContainerJSON) string {
+	if m, ok := s.opts.Console.(interface {
+		Mode(ctx context.Context, id string) string
+	}); ok {
+		return m.Mode(ctx, strings.TrimPrefix(info.Name, "/"))
+	}
+	return ""
 }
 
 // detect looks for a way to query a server, trying each candidate.

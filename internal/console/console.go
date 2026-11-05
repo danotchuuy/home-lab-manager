@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"regexp"
 	"slices"
 	"strconv"
@@ -28,6 +29,8 @@ const (
 	ModeStdin = "stdin"
 	ModeRCON  = "rcon"
 	ModeExec  = "exec"
+	// ModeREST sends commands to Palworld's REST API.
+	ModeREST = "rest"
 )
 
 // Placeholder is replaced by the command in an exec command line.
@@ -127,6 +130,10 @@ type Service struct {
 	mu    sync.Mutex
 	conns map[string]*rconConn // by container ID
 	rate  map[string][]time.Time
+	// restLast is the address each server's REST API last answered at, by
+	// container ID.
+	restLast map[string]string
+	http     *http.Client
 
 	// dial and now are replaced in tests.
 	dial func(ctx context.Context, addr, password string) (rconClient, error)
@@ -161,9 +168,11 @@ func New(o Options) *Service {
 		o.HostAddresses = func() []string { return []string{"127.0.0.1"} }
 	}
 	return &Service{
-		opts:  o,
-		conns: map[string]*rconConn{},
-		rate:  map[string][]time.Time{},
+		opts:     o,
+		conns:    map[string]*rconConn{},
+		rate:     map[string][]time.Time{},
+		restLast: map[string]string{},
+		http:     &http.Client{},
 		dial: func(ctx context.Context, addr, password string) (rconClient, error) {
 			return rcon.Dial(ctx, addr, password)
 		},
@@ -216,6 +225,9 @@ func (s *Service) Status(ctx context.Context, id string) (Status, error) {
 	}
 	st.Game = gameOf(info.Config.Image)
 	st.QuickCommands = slices.Clone(gameCommands[st.Game])
+	if set.Mode == ModeREST {
+		st.QuickCommands = slices.Clone(restQuickCommands)
+	}
 	for _, q := range set.QuickCommands {
 		if !slices.Contains(st.QuickCommands, q) {
 			st.QuickCommands = append(st.QuickCommands, q)
@@ -240,6 +252,8 @@ func ready(info docker.ContainerJSON, set Settings) (bool, string) {
 		return false, "This server's container doesn't accept input: its Docker options turn it off (--interactive=false). Remove that, or choose another way to send commands."
 	case set.Mode == ModeRCON && set.Password == "" && envMap(info.Config.Env)[set.PasswordVar] == "":
 		return false, "There's no RCON password: choose the variable that holds it, or enter it, in the console settings."
+	case set.Mode == ModeREST && set.Password == "" && envMap(info.Config.Env)[set.PasswordVar] == "":
+		return false, "There's no admin password for the REST API: choose the variable that holds it, or enter it, in the console settings."
 	}
 	return true, ""
 }
@@ -263,17 +277,17 @@ func (s *Service) Save(ctx context.Context, id string, in Input) (Status, error)
 	switch set.Mode {
 	case ModeNone, ModeStdin:
 		set = Settings{Mode: set.Mode, QuickCommands: set.QuickCommands}
-	case ModeRCON:
+	case ModeRCON, ModeREST:
 		set.Exec = ""
 		if set.Port < 0 || set.Port > 65535 {
-			return Status{}, errors.New("the RCON port must be between 1 and 65535")
+			return Status{}, errors.New("the port must be between 1 and 65535")
 		}
 		if set.Host != "" {
 			if !hostRE.MatchString(set.Host) || strings.Count(set.Host, ":") == 1 {
 				return Status{}, errors.New("the address is a host name or IP address, without a port")
 			}
 			if set.Port == 0 {
-				return Status{}, errors.New("enter the RCON port at that address")
+				return Status{}, errors.New("enter the port at that address")
 			}
 		}
 		if set.PasswordVar != "" && !envNameRE.MatchString(set.PasswordVar) {
@@ -313,7 +327,7 @@ func (s *Service) Save(ctx context.Context, id string, in Input) (Status, error)
 	all, err := s.all()
 	if err == nil {
 		old := all[name]
-		if set.Mode == ModeRCON && set.Password == "" && !in.ClearPassword && old.Mode == ModeRCON {
+		if usesPassword(set.Mode) && set.Password == "" && !in.ClearPassword && usesPassword(old.Mode) {
 			set.Password = old.Password
 		}
 		all[name] = set
@@ -400,6 +414,8 @@ func (s *Service) Send(ctx context.Context, id, who, command string) (Result, er
 		err = s.opts.Docker.WriteStdin(ctx, info.ID, []byte(command+"\n"))
 	case ModeRCON:
 		res.Output, err = s.sendRCON(ctx, info, set, command)
+	case ModeREST:
+		res.Output, err = s.sendREST(ctx, info, set, command)
 	case ModeExec:
 		res.Output, res.ExitCode, err = s.exec(ctx, info, set, command)
 	}
@@ -427,6 +443,8 @@ func (s *Service) Query(ctx context.Context, id, command string) (string, error)
 	switch set.Mode {
 	case ModeRCON:
 		out, err = s.sendRCON(ctx, info, set, command)
+	case ModeREST:
+		out, err = s.sendREST(ctx, info, set, command)
 	case ModeExec:
 		out, _, err = s.exec(ctx, info, set, command)
 	default:
@@ -447,8 +465,70 @@ func (s *Service) Replies(ctx context.Context, id string) (game string, ok bool)
 		return "", false
 	}
 	ready, _ := ready(info, set)
-	return gameOf(info.Config.Image), ready && (set.Mode == ModeRCON || set.Mode == ModeExec)
+	return gameOf(info.Config.Image), ready && set.Mode != ModeStdin
 }
+
+// Mode is how a server's console sends commands (ModeNone if it isn't set
+// up).
+func (s *Service) Mode(ctx context.Context, id string) string {
+	info, err := s.opts.Servers.Inspect(ctx, id)
+	if err != nil {
+		return ModeNone
+	}
+	set, err := s.settings(serverName(info))
+	if err != nil {
+		return ModeNone
+	}
+	return set.Mode
+}
+
+// saveCommands are commands that save a game's world, sent before hlm stops
+// or restarts it (by game; see SaveBeforeStop).
+var saveCommands = map[string]string{
+	// Palworld doesn't save when it's told to stop.
+	"palworld": "Save",
+}
+
+// SaveBeforeStop saves a running server's world before hlm stops,
+// restarts or recreates it, for games that don't save when they're told to
+// stop and whose console can do it (Palworld through its REST API or RCON).
+// It gives up after timeout; saving is best effort.
+func (s *Service) SaveBeforeStop(ctx context.Context, id string, timeout time.Duration) {
+	info, err := s.opts.Servers.Inspect(ctx, id)
+	if err != nil || !info.State.Running {
+		return
+	}
+	cmd := saveCommands[gameOf(info.Config.Image)]
+	if cmd == "" {
+		return
+	}
+	set, err := s.settings(serverName(info))
+	if err != nil || set.Mode == ModeNone || set.Mode == ModeStdin {
+		return
+	}
+	if ok, _ := ready(info, set); !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	start := time.Now()
+	switch set.Mode {
+	case ModeREST:
+		_, err = s.sendREST(ctx, info, set, cmd)
+	case ModeRCON:
+		_, err = s.sendRCON(ctx, info, set, cmd)
+	case ModeExec:
+		_, _, err = s.exec(ctx, info, set, cmd)
+	}
+	if err != nil {
+		s.opts.Log.Warn("save before stopping", "server", serverName(info), "err", err)
+		return
+	}
+	s.opts.Log.Info("saved before stopping", "server", serverName(info), "took", time.Since(start).Round(time.Millisecond))
+}
+
+// usesPassword says whether a mode signs in with a password.
+func usesPassword(mode string) bool { return mode == ModeRCON || mode == ModeREST }
 
 // cleanCommand trims a command and drops control characters other than
 // tabs, which could do anything on a console.
@@ -493,7 +573,7 @@ func envMap(env []string) map[string]string {
 }
 
 func passwordOf(info docker.ContainerJSON, set Settings) string {
-	if set.Mode != ModeRCON {
+	if !usesPassword(set.Mode) {
 		return ""
 	}
 	if set.Password != "" {
@@ -695,8 +775,8 @@ func (s *Service) Test(ctx context.Context, id string, in Input) (string, error)
 		return "", errors.New("start the server first")
 	}
 	set := in.Settings
-	if set.Mode == ModeRCON && set.Password == "" && !in.ClearPassword {
-		if old, err := s.settings(serverName(info)); err == nil && old.Mode == ModeRCON {
+	if usesPassword(set.Mode) && set.Password == "" && !in.ClearPassword {
+		if old, err := s.settings(serverName(info)); err == nil && usesPassword(old.Mode) {
 			set.Password = old.Password
 		}
 	}
@@ -719,6 +799,11 @@ func (s *Service) Test(ctx context.Context, id string, in Input) (string, error)
 		}
 		client.Close()
 		return "Signed in to RCON at " + addr + ".", nil
+	case ModeREST:
+		if passwordOf(info, set) == "" {
+			return "", errors.New("there's no admin password: choose the variable that holds it, or enter it")
+		}
+		return s.testREST(ctx, info, set)
 	case ModeExec:
 		args, err := splitArgs(set.Exec)
 		if err != nil {

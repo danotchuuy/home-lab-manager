@@ -281,6 +281,7 @@ func (m *Manager) RestartUnhealthy(ctx context.Context, name, reason string) (st
 		m.stopCrashLoop(ctx, info.ID, name, cl)
 		return true, nil
 	}
+	m.prepareStop(ctx, info)
 	return false, m.docker.RestartContainer(ctx, info.ID, -1)
 }
 

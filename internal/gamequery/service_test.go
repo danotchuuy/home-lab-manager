@@ -375,3 +375,49 @@ func TestPrefersWorkingAddress(t *testing.T) {
 		t.Errorf("asked %q, want only the address that worked", r.w.asked)
 	}
 }
+
+// restConsole is a Palworld server's console over its REST API.
+type restConsole struct{ *world }
+
+func (c restConsole) Mode(context.Context, string) string { return "rest" }
+func (c restConsole) Query(_ context.Context, id, cmd string) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.asked = append(c.asked, "console "+id+" "+cmd)
+	switch cmd {
+	case "ShowPlayers":
+		return "name,playeruid,steamid,level,ping\nAlice,1,steam_2,12,30\nBob,3,steam_4,5,40", nil
+	case "Metrics":
+		return "Players: 2/32\nServer FPS: 57 (frame time 16.8 ms)", nil
+	case "Info":
+		return "Server: Pals at home\nVersion: v0.6.1", nil
+	}
+	return "", errors.New("unknown command")
+}
+
+func TestPalworldREST(t *testing.T) {
+	r := newRig(t)
+	r.s.opts.Console = restConsole{r.w}
+	c := ctr("pal", "thijsvanloef/palworld-server-docker:latest", "172.17.0.9", *r.now)
+	c.Config.ExposedPorts["8211/udp"] = struct{}{}
+	c.Config.ExposedPorts["27015/udp"] = struct{}{}
+	r.w.servers["pal"] = c
+	r.w.console["pal"] = "" // its console replies
+	r.step(time.Second)
+	st := r.s.Status("pal", true)
+	if st.Status != StatusOnline || st.Method.Protocol != ProtoRCON {
+		t.Fatalf("%+v", st)
+	}
+	res := st.Result
+	if res.Players != 2 || res.MaxPlayers != 32 || res.Name != "Pals at home" || res.Version != "v0.6.1" ||
+		!slices.Equal(res.PlayerNames, []string{"Alice", "Bob"}) {
+		t.Errorf("result = %+v", res)
+	}
+	// The console comes first for Palworld: its Steam query port isn't
+	// asked.
+	for _, a := range r.w.asked {
+		if strings.HasPrefix(a, ProtoA2S) {
+			t.Errorf("asked %q", a)
+		}
+	}
+}

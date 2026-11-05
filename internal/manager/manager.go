@@ -62,6 +62,20 @@ type Manager struct {
 	crashes      *crashTracker
 	healthPolicy HealthPolicy
 	audit        audit.Recorder
+	// beforeStop saves a running server's world before hlm stops it; see
+	// UseBeforeStop.
+	beforeStop func(ctx context.Context, id string)
+}
+
+// UseBeforeStop sets what runs before hlm stops, restarts or recreates a
+// running server, such as saving a game that doesn't save when it's told
+// to stop. It should give up by itself after a short while.
+func (m *Manager) UseBeforeStop(f func(ctx context.Context, id string)) { m.beforeStop = f }
+
+func (m *Manager) prepareStop(ctx context.Context, info docker.ContainerJSON) {
+	if m.beforeStop != nil && info.State.Running {
+		m.beforeStop(ctx, info.ID)
+	}
 }
 
 // IPChecker asks the LAN's router whether ip is free. It returns a
@@ -529,6 +543,10 @@ func (m *Manager) recreate(ctx context.Context, id string, req *deploy.Request, 
 	}
 
 	wasRunning := info.State.Running
+	if wasRunning && m.beforeStop != nil {
+		emit(Event{Stage: "stop", Message: "Saving " + name})
+		m.prepareStop(ctx, info)
+	}
 	emit(Event{Stage: "stop", Message: "Stopping " + name})
 	if err := m.docker.StopContainer(ctx, info.ID, -1); err != nil {
 		return Server{}, fmt.Errorf("stop old container: %w", err)
@@ -762,6 +780,7 @@ func (m *Manager) Stop(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	m.prepareStop(ctx, info)
 	return m.docker.StopContainer(ctx, info.ID, -1)
 }
 
@@ -772,6 +791,7 @@ func (m *Manager) Restart(ctx context.Context, id string) error {
 		return err
 	}
 	m.ClearCrashLoop(strings.TrimPrefix(info.Name, "/"))
+	m.prepareStop(ctx, info)
 	return m.docker.RestartContainer(ctx, info.ID, -1)
 }
 
