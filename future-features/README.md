@@ -12,7 +12,7 @@ the API and UI it needs, who may use it, how to test it, and a task list. They'r
 | 05 | [Game query: players and status](05-game-query.md) | High | — | Done |
 | 06 | [Audit log](06-audit-log.md) | High | — | Done |
 | 07 | [Private registry credentials](07-registry-credentials.md) | Medium | — | Done |
-| 08 | [Metrics history and Prometheus](08-metrics-history-prometheus.md) | Medium | — | Planned |
+| 08 | [Metrics history and Prometheus](08-metrics-history-prometheus.md) | Medium | — | Done |
 | 09 | [Health checks and crash-loop protection](09-health-crash-loop.md) | Medium | 01 for alerts | Planned |
 | 10 | [Clone, export and import servers](10-clone-export-import.md) | Medium | — | Planned |
 | 11 | [Backup improvements](11-backup-improvements.md) | Medium | 01 for alerts | Planned |

@@ -19,6 +19,7 @@ import { ServerHostnames } from "../components/ServerHostnames";
 import { ServerSchedule } from "../components/ServerSchedule";
 import { ServerUpdatePolicyCard } from "../components/UpdatePolicy";
 import { StatTiles } from "../components/Resources";
+import { ServerHistory } from "../components/ResourceHistory";
 import type { App, DeployEvent, DeployRequest, Server, Stats } from "../types";
 import { usePoll } from "../usePoll";
 import { formatNetwork, formatPorts, webUILink } from "../util";
@@ -179,6 +180,8 @@ export function ServerDetailPage() {
       {stats && <StatTiles stats={stats} />}
 
       <GameStatusCard server={server.name} running={running} canManage={manager} />
+
+      <ServerHistory server={server.name} memLimit={stats?.memoryLimit} />
 
       <div className="tabs">
         {operator && (

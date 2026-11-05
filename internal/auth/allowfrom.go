@@ -83,3 +83,13 @@ func allowedFrom(list []string, remote string) bool {
 	}
 	return false
 }
+
+// ParseAllowFrom checks a list of addresses and ranges, as for an API key's
+// "allowed from" list.
+func ParseAllowFrom(in []string) ([]string, error) { return parseAllowFrom(in) }
+
+// AllowedFrom reports whether remote (a RemoteAddr) is in list. An empty
+// list allows nobody here, unlike a key's list.
+func AllowedFrom(list []string, remote string) bool {
+	return len(list) > 0 && allowedFrom(list, remote)
+}

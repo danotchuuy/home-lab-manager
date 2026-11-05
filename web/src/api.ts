@@ -4,6 +4,9 @@ import type {
   AuditPage,
   AuditSettings,
   RegistryForm,
+  HistoryRange,
+  MetricHistory,
+  MetricsSettings,
   RegistryLogin,
   AutoUpdates,
   APIKeyInfo,
@@ -576,6 +579,11 @@ export const api = {
   auditSettings: () => json<AuditSettings>("/api/system/audit"),
   setAuditSettings: (retentionMonths: number, mirror: boolean) =>
     json<AuditSettings>("/api/system/audit", { method: "PUT", body: JSON.stringify({ retentionMonths, mirror }) }),
+  hostHistory: (range: HistoryRange) => json<MetricHistory>(`/api/host/history?range=${range}`),
+  serverHistory: (id: string, range: HistoryRange) =>
+    json<MetricHistory>(`/api/servers/${encodeURIComponent(id)}/history?range=${range}`),
+  metricsSettings: () => json<MetricsSettings>("/api/system/metrics"),
+  setMetricsSettings: (s: MetricsSettings) => json<MetricsSettings>("/api/system/metrics", { method: "PUT", body: JSON.stringify(s) }),
   registries: () => json<RegistryLogin[]>("/api/registries"),
   addRegistry: (f: RegistryForm) => json<RegistryLogin>("/api/registries", { method: "POST", body: JSON.stringify(f) }),
   updateRegistry: (host: string, f: RegistryForm) =>

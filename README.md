@@ -880,7 +880,7 @@ downloads itself on first start (e.g. through SteamCMD) show up in the server's 
 ## Host metrics
 
 The **Host** page shows the Docker host's CPU, memory, network and disk activity (current values plus 30 minutes of
-history, sampled every 5 seconds), its filesystems, Docker's own disk usage, and disk usage per server. Per-server usage
+history, sampled every 5 seconds, or longer [history](#resource-history) up to 30 days), its filesystems, Docker's own disk usage, and disk usage per server. Per-server usage
 is split into data folders (bind mounts and volumes, measured like `du -s`), the container's writable layer, and its
 image. Data folders are measured in the background every 10 minutes or when you click **Recalculate**, since large game
 installs take a while to scan. A folder mounted inside another of the same server's folders is only counted once, and
@@ -918,6 +918,62 @@ The server list shows each running server's CPU, memory and network use, and the
 count. Both refresh every 5 seconds. CPU is shown as a share of the whole host (the server page also shows cores in use),
 so it compares directly with memory. Memory is shown against the container's limit, or the host's total memory when
 there is no limit. Network and disk figures are totals since the container started.
+
+### Resource history
+
+hlm keeps a month of resource history itself, without a database, so "why was it laggy last night?" has an answer:
+
+- **What:** for the host, CPU, memory, network, disk reads and writes, and each filesystem's space used; for each
+  server, CPU, memory, network, disk reads and writes, and players online (when its [game status](#is-the-game-up-players-and-status) counts
+  them). The host is sampled every 5 seconds and servers every 15.
+- **How long:** each minute's average and peak for 24 hours, and each quarter hour's for 30 days.
+- **Where:** the **Host** page's range buttons (Live, 6 h, 24 h, 7 days, 30 days), and **Resource history** on a server's
+  page (anyone who can see the server). CPU charts show the peak as a dashed line beside the average, since a short
+  spike is what players notice.
+- **Storage:** `<data>/metrics/`. Each finished minute is appended to `minutes.jsonl` (a few kilobytes a minute), and
+  the whole history is written to `snapshot.gob` every 6 hours and when hlm stops, which starts the log again. A restart
+  loses at most the minute in progress. At 20 servers the snapshot is around 15 MB. History is kept by server name, so
+  it carries on across updates and settings changes; a deleted server's goes 30 days after its last sample. A damaged
+  snapshot is set aside (`snapshot.gob.bad`) and history starts again.
+
+### Prometheus
+
+`GET /metrics` serves hlm's state in Prometheus' text format, for Grafana dashboards and alerts:
+
+- **Servers** (labels `server`, `app`, `image`): `hlm_server_up`, `hlm_server_cpu_ratio` (in cores),
+  `hlm_server_memory_bytes`, `hlm_server_memory_limit_bytes`, `hlm_server_network_{receive,transmit}_bytes_total`,
+  `hlm_server_block_{read,write}_bytes_total`, `hlm_server_restarts_total`, `hlm_server_update_available`, and from the
+  [game status](#is-the-game-up-players-and-status) `hlm_server_query_up`, `hlm_server_players` and `hlm_server_players_max`.
+- **Backups** (label `server`): `hlm_backup_last_success_timestamp_seconds`, `hlm_backup_last_size_bytes`,
+  `hlm_backup_last_duration_seconds`.
+- **Host:** `hlm_host_cpu_ratio`, `hlm_host_cpu_cores`, `hlm_host_load1`, `hlm_host_memory_{used,total}_bytes`,
+  `hlm_host_filesystem_{size,avail}_bytes` (labels `mount`, `device`) and `hlm_host_network_{receive,transmit}_bytes_total`
+  (label `interface`), when [host metrics](#host-metrics) are available.
+- **hlm:** `hlm_build_info{version}`, and `hlm_https_cert_expiry_timestamp_seconds` with [HTTPS](#https) on.
+
+Server figures are from the last 15-second sample, so scraping doesn't add load on Docker.
+
+To scrape it, make an [API key](#api-keys) with the **Metrics** role. It can read `/metrics` and nothing else; every
+`/api` request with it is refused. Admin keys and `HLM_TOKEN` work too, and so does anyone when sign-in isn't required.
+**System → Prometheus** shows a scrape config to copy:
+
+```yaml
+scrape_configs:
+  - job_name: hlm
+    metrics_path: /metrics
+    authorization:
+      credentials: hlm_…   # the metrics key
+    static_configs:
+      - targets: ["192.168.11.5:8080"]
+```
+
+**System → Prometheus** can also let listed addresses or ranges (your Prometheus server) scrape without a key. That's
+off until you list one, and needs a [confirmed](#confirming-its-you) admin, since server names and images are in the
+metrics.
+
+A starter Grafana dashboard is in [`docs/grafana/hlm-dashboard.json`](docs/grafana/hlm-dashboard.json)
+(**Dashboards → New → Import**). It covers servers running, players, updates, backup age, CPU, memory, network,
+restarts, and the host's CPU, memory and disk space, with a server picker.
 
 ## Any Docker image
 
@@ -1211,7 +1267,8 @@ curl -H "Authorization: Bearer hlm_…" https://hlm.example.com/api/servers
 Keys work whether or not sign-in is required, and don't need the `X-HLM-Request` header that cookie sign-ins do. Send
 them only in the `Authorization` header; a token in the URL (`?token=`) isn't accepted, since URLs end up in logs and
 browser history. An admin key can do everything except the changes that [need you at a browser](#confirming-its-you);
-a member key only what server groups give it; a [deployer key](#deployer-keys) can also create servers.
+a member key only what server groups give it; a [deployer key](#deployer-keys) can also create servers; a metrics key
+can only read [`/metrics`](#prometheus).
 
 **Allowed from** limits a key to addresses and ranges, like OpenSSH's `from=` (`10.0.3.115, 192.168.11.0/24`). It's
 checked on every request, against the address the connection comes from; `X-Forwarded-For` is ignored, since anyone can
@@ -1501,6 +1558,10 @@ when the `HLM_*` one isn't set.
 | `POST /api/system/update/apply`                | Install the latest release. Streams NDJSON; hlm restarts afterwards.             |
 | `POST /api/system/update/dismiss`              | Clear the result of the last update.                                              |
 | `GET /api/host`                                | Host CPU, memory, network, filesystems and disk I/O, with 30 minutes of history.  |
+| `GET /api/host/history?range=1h\|6h\|24h\|7d\|30d` | The host's [resource history](#resource-history): `{step, times, series: {name: {avg, max}}}`, `null` where nothing was recorded. Admins only. |
+| `GET /api/servers/{id}/history?range=…`        | A server's resource history (a viewer).                                           |
+| `GET /metrics`                                 | [Prometheus](#prometheus) metrics: a metrics or admin key, or an allowed address. |
+| `GET/PUT /api/system/metrics`                  | `{allowFrom}`: who may scrape without a key; `PUT` needs a [confirmed](#confirming-its-you) session. |
 | `GET /api/host/storage`                        | Disk usage per server and Docker's totals (last background calculation).          |
 | `POST /api/host/storage/refresh`               | Recalculate disk usage now (runs in the background).                              |
 | `POST /api/host/storage/deleted/{id}/delete`   | Delete a deleted server's folder or volume `{path, volume}` from disk.             |

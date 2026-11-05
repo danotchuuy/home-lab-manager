@@ -5,6 +5,13 @@ import { timeAgo } from "../util";
 import { Spinner } from "./common";
 
 /** API keys for scripts and other programs, sent as a bearer token. A key's secret is shown once. */
+const KEY_ROLE_LABEL: Partial<Record<KeyRole, string>> = {
+  admin: "Admin",
+  deployer: "Deployer",
+  metrics: "Metrics",
+  member: "Member",
+};
+
 export function APIKeys() {
   const [keys, setKeys] = useState<APIKeyInfo[]>();
   const [name, setName] = useState("");
@@ -86,7 +93,8 @@ export function APIKeys() {
         For scripts and other programs. Send a key as <code>Authorization: Bearer hlm_…</code>; it works even when
         sign-in is required. An admin key can do everything except manage keys, accounts, groups and sign-in, which
         take you at a browser; a member key only what server groups give it. A deployer key can also create servers in
-        a group it manages, but they can&apos;t reach the host. Limit a key to the addresses that use it where you can.
+        a group it manages, but they can&apos;t reach the host. A metrics key can only read <code>/metrics</code>, for
+        Prometheus. Limit a key to the addresses that use it where you can.
       </p>
       {made && (
         <div className="alert success new-key">
@@ -129,7 +137,7 @@ export function APIKeys() {
                   <td>
                     <code>{k.prefix}</code>
                   </td>
-                  <td>{k.role === "admin" ? "Admin" : k.role === "deployer" ? "Deployer" : "Member"}</td>
+                  <td>{KEY_ROLE_LABEL[k.role] ?? "Member"}</td>
                   <td>
                     <button type="button" className="link-button" onClick={() => editAllowFrom(k)} disabled={busy} title="Change where the key can be used from">
                       {k.allowFrom.length > 0 ? k.allowFrom.join(", ") : "anywhere"}
@@ -177,6 +185,7 @@ export function APIKeys() {
           <select value={role} onChange={(e) => setRole(e.target.value as KeyRole)}>
             <option value="member">Member</option>
             <option value="deployer">Deployer</option>
+            <option value="metrics">Metrics (Prometheus)</option>
             <option value="admin">Admin</option>
           </select>
         </label>

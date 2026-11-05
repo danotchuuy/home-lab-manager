@@ -3,7 +3,8 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import { StackedBar, TimeSeriesChart, usePoll } from "../components/charts";
 import { AppIcon, Spinner } from "../components/common";
-import type { DataFolder, DeletedStorage, HostSnapshot, ServerStorage, StorageReport } from "../types";
+import { HostHistory, RangePicker } from "../components/ResourceHistory";
+import type { HistoryRange, DataFolder, DeletedStorage, HostSnapshot, ServerStorage, StorageReport } from "../types";
 import { formatBytes, timeAgo } from "../util";
 
 const rate = (v: number) => `${formatBytes(v)}/s`;
@@ -76,8 +77,18 @@ export function HostPage() {
   );
 }
 
+type HostRange = "live" | HistoryRange;
+const HOST_RANGES: { value: HostRange; label: string }[] = [
+  { value: "live", label: "Live" },
+  { value: "6h", label: "6 h" },
+  { value: "24h", label: "24 h" },
+  { value: "7d", label: "7 days" },
+  { value: "30d", label: "30 days" },
+];
+
 function HostMetrics({ host }: { host: HostSnapshot }) {
   const [showTable, setShowTable] = useState(false);
+  const [range, setRange] = useState<HostRange>("live");
   const history = host.history ?? [];
   const times = useMemo(() => history.map((p) => new Date(p.t).getTime()), [history]);
   const mem = host.memory;
@@ -113,6 +124,41 @@ function HostMetrics({ host }: { host: HostSnapshot }) {
         )}
       </div>
 
+      <div className="chart-range">
+        <span className="muted small">
+          {range === "live"
+            ? "Every 5 seconds, last 30 minutes"
+            : "History kept by hlm: a day by the minute, 30 days by the quarter hour"}
+        </span>
+        <RangePicker value={range} onChange={setRange} options={HOST_RANGES} />
+      </div>
+
+      {range !== "live" ? (
+        <HostHistory range={range} memTotal={mem.total} cores={host.cpu.cores} />
+      ) : (
+        <LiveCharts host={host} history={history} times={times} showTable={showTable} setShowTable={setShowTable} />
+      )}
+      <HostDetails host={host} />
+    </>
+  );
+}
+
+function LiveCharts({
+  host,
+  history,
+  times,
+  showTable,
+  setShowTable,
+}: {
+  host: HostSnapshot;
+  history: NonNullable<HostSnapshot["history"]>;
+  times: number[];
+  showTable: boolean;
+  setShowTable: (f: (s: boolean) => boolean) => void;
+}) {
+  const mem = host.memory;
+  return (
+    <>
       <div className="chart-grid">
         <section className="card">
           <h2>CPU</h2>
@@ -181,7 +227,14 @@ function HostMetrics({ host }: { host: HostSnapshot }) {
           </table></div>
         </div>
       )}
+    </>
+  );
+}
 
+function HostDetails({ host }: { host: HostSnapshot }) {
+  const net = host.network ?? [];
+  return (
+    <>
       <div className="chart-grid">
         <section className="card">
           <h2>Filesystems</h2>

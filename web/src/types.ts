@@ -176,7 +176,7 @@ export type GroupRole = "viewer" | "operator" | "manager";
 /** A global role. */
 export type Role = "admin" | "member";
 /** Keys have one more role than accounts: they can create confined servers. */
-export type KeyRole = Role | "deployer";
+export type KeyRole = Role | "deployer" | "metrics";
 export type GrantKind = "local" | "oidc-user" | "oidc-group" | "key";
 
 export interface ServerGrant {
@@ -1526,4 +1526,23 @@ export interface RegistryLogin {
 export interface RegistryForm extends RegistryLogin {
   password: string;
   image?: string;
+}
+
+/** A range of resource history. */
+export type HistoryRange = "1h" | "6h" | "24h" | "7d" | "30d";
+
+/** GET /api/host/history, /api/servers/{id}/history: per-step averages and peaks; null where nothing was recorded. */
+export interface MetricHistory {
+  /** Seconds per step: 60 up to a day, 900 beyond. */
+  step: number;
+  /** Each step's start, epoch ms. */
+  times: number[];
+  /** cpu, mem, rx, tx, diskRead, diskWrite, players, and fs:<mount> (percent used) for the host. */
+  series: Record<string, { avg: (number | null)[]; max: (number | null)[] }>;
+}
+
+/** GET/PUT /api/system/metrics */
+export interface MetricsSettings {
+  /** Addresses and ranges that may read /metrics without a key. */
+  allowFrom: string[];
 }

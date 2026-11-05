@@ -1,11 +1,14 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 
 export interface Series {
   key: string;
   label: string;
   /** CSS color, normally a var(--series-n) token. */
   color: string;
-  values: number[];
+  /** One per time; null where nothing was recorded (the line breaks there). */
+  values: (number | null)[];
+  /** Drawn dashed: a secondary reading of the same thing, such as the peak beside the average. */
+  dashed?: boolean;
 }
 
 interface ChartProps {
@@ -18,6 +21,8 @@ interface ChartProps {
   binary?: boolean;
   height?: number;
   label: string;
+  /** Shown instead of a chart with fewer than two points. */
+  empty?: string;
 }
 
 const PAD = { top: 10, right: 12, bottom: 22, left: 64 };
@@ -54,13 +59,36 @@ function useWidth<T extends HTMLElement>() {
 }
 
 const clock = (t: number) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const day = (t: number) => new Date(t).toLocaleDateString([], { month: "short", day: "numeric" });
+
+/** Time labels that suit the span: clock times within a day, dates beyond. */
+function timeLabels(span: number) {
+  const DAY = 86400e3;
+  if (span <= DAY) return { axis: clock, tip: clock };
+  const both = (t: number) => `${day(t)} ${clock(t)}`;
+  return { axis: span > 3 * DAY ? day : both, tip: both };
+}
+
+/** The runs of consecutive recorded values, as [index, value] pairs. */
+function runs(values: (number | null)[]): [number, number][][] {
+  const out: [number, number][][] = [];
+  let cur: [number, number][] = [];
+  values.forEach((v, i) => {
+    if (v === null || v === undefined || Number.isNaN(v)) {
+      if (cur.length) out.push(cur);
+      cur = [];
+    } else cur.push([i, v]);
+  });
+  if (cur.length) out.push(cur);
+  return out;
+}
 
 /**
  * A line chart over time with one shared y-axis, a crosshair that snaps to
  * the nearest sample, and a tooltip listing every series. A single series gets
  * a light area wash; two or more get a legend.
  */
-export function TimeSeriesChart({ times, series, format, max, binary, height = 180, label }: ChartProps) {
+export function TimeSeriesChart({ times, series, format, max, binary, height = 180, label, empty }: ChartProps) {
   const [wrapRef, width] = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
 
@@ -69,7 +97,7 @@ export function TimeSeriesChart({ times, series, format, max, binary, height = 1
   const innerH = height - PAD.top - PAD.bottom;
   const top = useMemo(() => {
     if (max !== undefined) return max;
-    const peak = Math.max(0, ...series.flatMap((s) => s.values));
+    const peak = Math.max(0, ...series.flatMap((s) => s.values.filter((v): v is number => v !== null)));
     return niceMax(peak * 1.1, binary);
   }, [series, max, binary]);
 
@@ -79,6 +107,7 @@ export function TimeSeriesChart({ times, series, format, max, binary, height = 1
   const y = (v: number) => PAD.top + innerH - (Math.min(v, top) / top) * innerH;
 
   const ticks = [0, top / 2, top];
+  const labels = timeLabels(t1 - t0);
   // Time labels at the start, middle and end.
   const xTicks = n > 1 ? [times[0], times[Math.floor((n - 1) / 2)], times[n - 1]] : [];
 
@@ -93,6 +122,7 @@ export function TimeSeriesChart({ times, series, format, max, binary, height = 1
   }
 
   const single = series.length === 1;
+  const hasData = series.some((s) => s.values.some((v) => v !== null && v !== undefined));
 
   return (
     <figure className="viz chart" ref={wrapRef} aria-label={label}>
@@ -100,15 +130,15 @@ export function TimeSeriesChart({ times, series, format, max, binary, height = 1
         <div className="legend" role="list">
           {series.map((s) => (
             <span key={s.key} className="legend-item" role="listitem">
-              <span className="legend-line" style={{ background: s.color }} />
+              <span className={`legend-line${s.dashed ? " dashed" : ""}`} style={{ background: s.color }} />
               {s.label}
             </span>
           ))}
         </div>
       )}
-      {n < 2 ? (
+      {n < 2 || !hasData ? (
         <div className="chart-empty muted small" style={{ height }}>
-          Collecting data… the chart fills in over the next minute.
+          {empty ?? "Collecting data… the chart fills in over the next minute."}
         </div>
       ) : (
         <div className="chart-plot">
@@ -130,37 +160,47 @@ export function TimeSeriesChart({ times, series, format, max, binary, height = 1
                 y={height - 6}
                 textAnchor={i === 0 ? "start" : i === xTicks.length - 1 ? "end" : "middle"}
               >
-                {clock(t)}
+                {labels.axis(t)}
               </text>
             ))}
-            {series.map((s) => {
-              const pts = s.values.map((v, i) => `${x(times[i]).toFixed(1)},${y(v).toFixed(1)}`);
-              return (
-                <g key={s.key}>
-                  {single && (
-                    <path
-                      className="area"
-                      d={`M${x(times[0])},${y(0)} L${pts.join(" L")} L${x(times[n - 1])},${y(0)} Z`}
-                      style={{ fill: s.color }}
-                    />
-                  )}
-                  <polyline className="line" points={pts.join(" ")} style={{ stroke: s.color }} />
-                </g>
-              );
-            })}
+            {series.map((s) => (
+              <g key={s.key}>
+                {runs(s.values).map((run) => {
+                  const pts = run.map(([i, v]) => `${x(times[i]).toFixed(1)},${y(v).toFixed(1)}`);
+                  const first = run[0][0];
+                  const last = run[run.length - 1][0];
+                  return (
+                    <Fragment key={first}>
+                      {single && (
+                        <path
+                          className="area"
+                          d={`M${x(times[first])},${y(0)} L${pts.join(" L")} L${x(times[last])},${y(0)} Z`}
+                          style={{ fill: s.color }}
+                        />
+                      )}
+                      {run.length === 1 ? (
+                        <circle className="dot" cx={x(times[first])} cy={y(run[0][1])} r={2} style={{ fill: s.color }} />
+                      ) : (
+                        <polyline
+                          className="line"
+                          points={pts.join(" ")}
+                          style={{ stroke: s.color, strokeDasharray: s.dashed ? "4 3" : undefined }}
+                        />
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </g>
+            ))}
             {hover !== null && (
               <g>
                 <line className="crosshair" x1={x(times[hover])} x2={x(times[hover])} y1={PAD.top} y2={PAD.top + innerH} />
-                {series.map((s) => (
-                  <circle
-                    key={s.key}
-                    className="dot"
-                    cx={x(times[hover])}
-                    cy={y(s.values[hover])}
-                    r={4}
-                    style={{ fill: s.color }}
-                  />
-                ))}
+                {series.map((s) => {
+                  const v = s.values[hover];
+                  return v === null || v === undefined ? null : (
+                    <circle key={s.key} className="dot" cx={x(times[hover])} cy={y(v)} r={4} style={{ fill: s.color }} />
+                  );
+                })}
               </g>
             )}
             <rect
@@ -181,11 +221,11 @@ export function TimeSeriesChart({ times, series, format, max, binary, height = 1
                 top: PAD.top,
               }}
             >
-              <div className="tooltip-time">{clock(times[hover])}</div>
+              <div className="tooltip-time">{labels.tip(times[hover])}</div>
               {series.map((s) => (
                 <div key={s.key} className="tooltip-row">
-                  <span className="legend-line" style={{ background: s.color }} />
-                  <strong>{format(s.values[hover])}</strong>
+                  <span className={`legend-line${s.dashed ? " dashed" : ""}`} style={{ background: s.color }} />
+                  <strong>{s.values[hover] === null || s.values[hover] === undefined ? "—" : format(s.values[hover]!)}</strong>
                   <span className="muted">{s.label}</span>
                 </div>
               ))}

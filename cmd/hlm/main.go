@@ -40,6 +40,8 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/gamequery"
 	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
+	"github.com/danotchuuy/home-lab-manager/internal/metrics"
+	"github.com/danotchuuy/home-lab-manager/internal/metricstore"
 	"github.com/danotchuuy/home-lab-manager/internal/notify"
 	"github.com/danotchuuy/home-lab-manager/internal/proxy"
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
@@ -405,6 +407,20 @@ func run(log *slog.Logger) error {
 		Secrets: store, Servers: mgr, Console: consoles, Notifier: notifier, HostAddresses: hostAddresses, Log: log,
 	})
 	go queries.Run(ctx)
+	// A month of host and server resource use, and /metrics.
+	history, err := metricstore.Open(filepath.Join(dataDir, "metrics"), log)
+	if err != nil {
+		return fmt.Errorf("open metrics history: %w", err)
+	}
+	defer func() {
+		if err := history.Close(); err != nil {
+			log.Warn("save metrics history", "err", err)
+		}
+	}()
+	go history.Run(ctx)
+	sampler := metrics.New(history, mgr, queries, log)
+	host.Observe(sampler.ObserveHost)
+	go sampler.Run(ctx)
 	// Servers' scheduled tasks, such as a nightly restart.
 	sched = schedule.New(schedule.Options{
 		Secrets: store, Servers: mgr, Backups: backups, Console: consoles, Notifier: notifier,
@@ -424,28 +440,31 @@ func run(log *slog.Logger) error {
 	go mgr.RunUpdateChecker(ctx, checkEvery)
 	go notifier.Run(ctx)
 	handler := api.Handler(api.Options{
-		Docker:      dc,
-		Catalog:     cat,
-		Manager:     mgr,
-		Host:        host,
-		Updater:     updater,
-		Forwarding:  fwd,
-		Proxy:       relay,
-		Tunnel:      tunnel,
-		Backup:      backups,
-		Auth:        signIn,
-		Version:     version,
-		AppdataRoot: appdataRoot,
-		Groups:      groups,
-		HTTPS:       certs,
-		Notify:      notifier,
-		Console:     consoles,
-		Schedule:    sched,
-		AutoUpdate:  autoUpdates,
-		Query:       queries,
-		ConfigFiles: configfiles.New(store, mgr),
-		Audit:       auditLog,
-		Registries:  registries,
+		Docker:        dc,
+		Catalog:       cat,
+		Manager:       mgr,
+		Host:          host,
+		Updater:       updater,
+		Forwarding:    fwd,
+		Proxy:         relay,
+		Tunnel:        tunnel,
+		Backup:        backups,
+		Auth:          signIn,
+		Version:       version,
+		AppdataRoot:   appdataRoot,
+		Groups:        groups,
+		HTTPS:         certs,
+		Notify:        notifier,
+		Console:       consoles,
+		Schedule:      sched,
+		AutoUpdate:    autoUpdates,
+		Query:         queries,
+		ConfigFiles:   configfiles.New(store, mgr),
+		Audit:         auditLog,
+		Registries:    registries,
+		History:       history,
+		Sampler:       sampler,
+		MetricsConfig: metrics.NewConfig(store),
 		// Set when HLM_UPDATE_CHECK overrides the setting.
 		UpdateCheckEnv: updateCheckEnv,
 		Token:          env("HLM_TOKEN", ""),
