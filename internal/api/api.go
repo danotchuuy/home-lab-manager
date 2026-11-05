@@ -149,7 +149,8 @@ const csrfHeader = "X-HLM-Request"
 func (s *server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/auth/status", "/api/auth/login", "/api/auth/logout", "/api/auth/ssh/challenge", "/api/auth/ssh/login":
+		case "/api/auth/status", "/api/auth/login", "/api/auth/logout", "/api/auth/ssh/challenge", "/api/auth/ssh/login",
+			"/api/auth/login/2fa", "/api/auth/login/2fa/setup", "/api/auth/login/2fa/enable":
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -2332,7 +2333,15 @@ func (s *server) localLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	u, err := s.Auth.LocalLogin(w, r)
 	var le *auth.LoginError
+	var tf *auth.TwoFactorNeeded
 	switch {
+	case errors.As(err, &tf):
+		// The password was right; the second step comes next.
+		if tf.Setup {
+			writeJSON(w, http.StatusOK, map[string]bool{"twoFactorSetup": true})
+		} else {
+			writeJSON(w, http.StatusOK, map[string]bool{"twoFactor": true})
+		}
 	case errors.As(err, &le):
 		if le.RetryAfter > 0 {
 			w.Header().Set("Retry-After", strconv.Itoa(int(le.RetryAfter.Seconds())+1))
@@ -2343,6 +2352,166 @@ func (s *server) localLogin(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusOK, u)
 	}
+}
+
+// decodeCode reads {code} from a request.
+func decodeCode(w http.ResponseWriter, r *http.Request) (string, bool) {
+	var in struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return "", false
+	}
+	return in.Code, true
+}
+
+// writeLoginError answers a failed sign-in step.
+func writeLoginError(w http.ResponseWriter, err error) {
+	var le *auth.LoginError
+	switch {
+	case errors.As(err, &le):
+		if le.RetryAfter > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(int(le.RetryAfter.Seconds())+1))
+		}
+		writeError(w, http.StatusUnauthorized, err)
+	case errors.Is(err, auth.ErrHalfExpired):
+		writeError(w, http.StatusUnauthorized, err)
+	default:
+		writeError(w, http.StatusBadRequest, err)
+	}
+}
+
+// loginCode finishes a sign-in with a two-factor code.
+func (s *server) loginCode(w http.ResponseWriter, r *http.Request) {
+	if !requireCSRFHeader(w, r) {
+		return
+	}
+	code, ok := decodeCode(w, r)
+	if !ok {
+		return
+	}
+	u, err := s.Auth.LoginCode(w, r, code)
+	if err != nil {
+		writeLoginError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, u)
+}
+
+// loginSetup starts two-factor for an account that has to have it, during
+// sign-in.
+func (s *server) loginSetup(w http.ResponseWriter, r *http.Request) {
+	if !requireCSRFHeader(w, r) {
+		return
+	}
+	setup, err := s.Auth.LoginSetup(r)
+	if err != nil {
+		writeLoginError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, setup)
+}
+
+// loginEnable turns two-factor on during sign-in and finishes it.
+func (s *server) loginEnable(w http.ResponseWriter, r *http.Request) {
+	if !requireCSRFHeader(w, r) {
+		return
+	}
+	code, ok := decodeCode(w, r)
+	if !ok {
+		return
+	}
+	codes, u, err := s.Auth.LoginEnable(w, r, code)
+	if err != nil {
+		writeLoginError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"recoveryCodes": codes, "user": u})
+}
+
+// ownAccount reports whether the request is signed in at a browser as the
+// local account in the path.
+func (s *server) ownAccount(r *http.Request) bool {
+	u, ok := s.Auth.Session(r)
+	return ok && u.Method == auth.MethodLocal && strings.EqualFold(u.Username, r.PathValue("username"))
+}
+
+// beginTwoFactor starts setting up two-factor for the caller's own account.
+func (s *server) beginTwoFactor(w http.ResponseWriter, r *http.Request) {
+	if !s.ownAccount(r) {
+		writeError(w, http.StatusForbidden, errors.New("two-factor is set up by the account's owner, signed in at a browser"))
+		return
+	}
+	if !s.stepUp(w, r) {
+		return
+	}
+	setup, err := s.Auth.BeginTwoFactor(r.PathValue("username"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, setup)
+}
+
+func (s *server) enableTwoFactor(w http.ResponseWriter, r *http.Request) {
+	if !s.ownAccount(r) {
+		writeError(w, http.StatusForbidden, errNotAllowed)
+		return
+	}
+	code, ok := decodeCode(w, r)
+	if !ok {
+		return
+	}
+	codes, err := s.Auth.EnableTwoFactor(r.PathValue("username"), code)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"recoveryCodes": codes})
+}
+
+// disableTwoFactor turns off an account's two-factor: the owner's own (if
+// it isn't required), or an admin resetting someone's.
+func (s *server) disableTwoFactor(w http.ResponseWriter, r *http.Request) {
+	own := s.ownAccount(r)
+	if !own && !s.access(r).Admin() {
+		writeError(w, http.StatusForbidden, errNotAllowed)
+		return
+	}
+	if !s.stepUp(w, r) {
+		return
+	}
+	err := s.Auth.DisableTwoFactor(r.PathValue("username"), !own)
+	switch {
+	case errors.Is(err, auth.ErrNoAccount):
+		writeError(w, http.StatusNotFound, err)
+	case err != nil:
+		writeError(w, http.StatusBadRequest, err)
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func (s *server) newRecoveryCodes(w http.ResponseWriter, r *http.Request) {
+	if !s.ownAccount(r) {
+		writeError(w, http.StatusForbidden, errNotAllowed)
+		return
+	}
+	if !s.stepUp(w, r) {
+		return
+	}
+	codes, err := s.Auth.NewRecoveryCodes(r.PathValue("username"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"recoveryCodes": codes})
 }
 
 func (s *server) logout(w http.ResponseWriter, r *http.Request) {

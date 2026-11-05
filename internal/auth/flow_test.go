@@ -1,12 +1,17 @@
 package auth_test
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/sha256"
+	"encoding/base32"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -417,7 +422,7 @@ func TestLocalAccounts(t *testing.T) {
 	}
 
 	// reset-password works on the same store, even with hlm running.
-	pw, created, err := auth.New(e.store, false, slog.New(slog.DiscardHandler)).ResetPassword("rescue", false)
+	pw, created, err := auth.New(e.store, false, slog.New(slog.DiscardHandler)).ResetPassword("rescue", false, false)
 	if err != nil || !created || len(pw) < 20 {
 		t.Fatalf("reset = %q %v %v", pw, created, err)
 	}
@@ -602,10 +607,10 @@ func TestRoles(t *testing.T) {
 
 	// reset-password can restore an admin, but only says so without --admin.
 	svc := auth.New(e.store, false, slog.New(slog.DiscardHandler))
-	if _, _, err := svc.ResetPassword("first", false); err != nil || svc.AccountRole("first") != rbac.Member {
+	if _, _, err := svc.ResetPassword("first", false, false); err != nil || svc.AccountRole("first") != rbac.Member {
 		t.Errorf("reset without --admin: %v, role %s", err, svc.AccountRole("first"))
 	}
-	if _, _, err := svc.ResetPassword("first", true); err != nil || svc.AccountRole("first") != rbac.Admin {
+	if _, _, err := svc.ResetPassword("first", true, false); err != nil || svc.AccountRole("first") != rbac.Admin {
 		t.Errorf("reset with --admin: %v, role %s", err, svc.AccountRole("first"))
 	}
 }
@@ -809,5 +814,220 @@ func TestConfirmWithPassword(t *testing.T) {
 	// Without a session there's nothing to confirm.
 	if code, _ := do(t, &http.Client{}, "POST", e.hlm.URL+"/api/auth/confirm", csrf, `{"password":"correct horse"}`); code != 403 && code != 401 {
 		t.Errorf("no session = %d", code)
+	}
+}
+
+// totp is an authenticator app for secret, at now plus steps of 30 seconds.
+func totp(t *testing.T, secret string, steps int64) string {
+	t.Helper()
+	key, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var msg [8]byte
+	binary.BigEndian.PutUint64(msg[:], uint64(time.Now().Unix()/30+steps))
+	m := hmac.New(sha1.New, key)
+	m.Write(msg[:])
+	sum := m.Sum(nil)
+	off := sum[len(sum)-1] & 0x0f
+	return fmt.Sprintf("%06d", binary.BigEndian.Uint32(sum[off:off+4])&0x7fffffff%1_000_000)
+}
+
+func TestTwoFactor(t *testing.T) {
+	e := setup(t, "")
+	for _, u := range []string{"admin", "bob"} {
+		role := rbac.Admin
+		if u == "bob" {
+			role = rbac.Member
+		}
+		if _, err := e.svc.CreateAccount(u, "correct horse", role); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b := browser(t)
+	e.localLogin(t, b, "admin", "correct horse")
+	e.confirm(t, b, "correct horse")
+	if code, body := e.require(t, b, true); code != 200 {
+		t.Fatalf("require = %d %s", code, body)
+	}
+
+	// Set up: it takes a confirmed session, then a right code.
+	setupURL := e.hlm.URL + "/api/auth/accounts/admin/2fa/setup"
+	if code, body := do(t, b2fa(t, e), "POST", setupURL, csrf, ""); code != 403 {
+		t.Fatalf("setup by another = %d %s", code, body)
+	}
+	code, body := do(t, b, "POST", setupURL, csrf, "")
+	var setup auth.Setup
+	json.Unmarshal([]byte(body), &setup)
+	if code != 200 || len(setup.Secret) != 32 || !strings.HasPrefix(setup.URL, "otpauth://totp/hlm:admin?") || !strings.HasPrefix(setup.QR, "<svg") {
+		t.Fatalf("setup = %d %s", code, body)
+	}
+	// Someone else can't set up admin's.
+	b2 := browser(t)
+	e.localLogin(t, b2, "bob", "correct horse")
+	if code, _ := do(t, b2, "POST", setupURL, csrf, ""); code != 403 {
+		t.Errorf("bob set up admin's = %d", code)
+	}
+	enable := e.hlm.URL + "/api/auth/accounts/admin/2fa/enable"
+	if code, _ := do(t, b, "POST", enable, csrf, `{"code":"000000"}`); code != 400 {
+		t.Errorf("wrong code enabled = %d", code)
+	}
+	enableCode := totp(t, setup.Secret, 0)
+	code, body = do(t, b, "POST", enable, csrf, jsonBody(map[string]string{"code": enableCode}))
+	var enabled struct {
+		RecoveryCodes []string `json:"recoveryCodes"`
+	}
+	json.Unmarshal([]byte(body), &enabled)
+	if code != 200 || len(enabled.RecoveryCodes) != 10 {
+		t.Fatalf("enable = %d %s", code, body)
+	}
+
+	// Signing in now takes a code.
+	c := browser(t)
+	if code, body := e.localLogin(t, c, "admin", "correct horse"); code != 200 || !strings.Contains(body, `"twoFactor":true`) {
+		t.Fatalf("password = %d %s", code, body)
+	}
+	if code, _ := do(t, c, "GET", e.hlm.URL+"/api/auth/accounts", nil, ""); code != 401 {
+		t.Errorf("signed in with only the password: %d", code)
+	}
+	login2fa := e.hlm.URL + "/api/auth/login/2fa"
+	// The code used to enable it can't be used again.
+	if code, _ := do(t, c, "POST", login2fa, csrf, jsonBody(map[string]string{"code": enableCode})); code != 401 {
+		t.Errorf("replayed code = %d", code)
+	}
+	if code, body := do(t, c, "POST", login2fa, csrf, jsonBody(map[string]string{"code": totp(t, setup.Secret, 1)})); code != 200 {
+		t.Fatalf("code = %d %s", code, body)
+	}
+	if code, _ := do(t, c, "GET", e.hlm.URL+"/api/auth/accounts", nil, ""); code != 200 {
+		t.Errorf("not signed in after the code: %d", code)
+	}
+	// Without the password first, a code does nothing.
+	if code, _ := do(t, browser(t), "POST", login2fa, csrf, `{"code":"123456"}`); code != 401 {
+		t.Errorf("code without password = %d", code)
+	}
+
+	// A recovery code works once.
+	d := browser(t)
+	e.localLogin(t, d, "admin", "correct horse")
+	rc := enabled.RecoveryCodes[0]
+	if code, body := do(t, d, "POST", login2fa, csrf, jsonBody(map[string]string{"code": strings.ToUpper(rc)})); code != 200 {
+		t.Fatalf("recovery code = %d %s", code, body)
+	}
+	d = browser(t)
+	e.localLogin(t, d, "admin", "correct horse")
+	if code, _ := do(t, d, "POST", login2fa, csrf, jsonBody(map[string]string{"code": rc})); code != 401 {
+		t.Errorf("recovery code used twice = %d", code)
+	}
+	for _, a := range e.svc.Accounts() {
+		if a.Username == "admin" && (!a.TwoFactor || a.RecoveryLeft != 9) {
+			t.Errorf("account = %+v", a)
+		}
+	}
+
+	// Confirming asks for a code too.
+	if code, body := do(t, c, "POST", e.hlm.URL+"/api/auth/confirm", csrf, `{"password":"correct horse"}`); code != 403 || !strings.Contains(body, "code_required") {
+		t.Errorf("confirm without code = %d %s", code, body)
+	}
+	if code, body := do(t, c, "PUT", e.hlm.URL+"/api/auth/keys/x", csrf, "{}"); !strings.Contains(body, `"twoFactor":true`) {
+		t.Errorf("confirm prompt doesn't say a code is needed: %d %s", code, body)
+	}
+	if code, body := do(t, c, "POST", e.hlm.URL+"/api/auth/confirm", csrf,
+		jsonBody(map[string]string{"password": "correct horse", "code": totp(t, setup.Secret, -1)})); code != 200 {
+		// -1 is older than the code just used: refused. A fresh one works.
+		if code, body = do(t, c, "POST", e.hlm.URL+"/api/auth/confirm", csrf,
+			jsonBody(map[string]string{"password": "correct horse", "code": enabled.RecoveryCodes[1]})); code != 200 {
+			t.Fatalf("confirm with code = %d %s", code, body)
+		}
+	}
+
+	// Requiring it for admins: only someone who has it can turn it on.
+	cfg := func(c *http.Client, req string) (int, string) {
+		return do(t, c, "PUT", e.hlm.URL+"/api/auth/config", csrf, jsonBody(auth.Config{Required: true, RequireTwoFactor: req}))
+	}
+	if code, body := cfg(c, auth.RequireAll); code != 200 {
+		t.Fatalf("require for all = %d %s", code, body)
+	}
+	// bob has to set it up while signing in.
+	f := browser(t)
+	if code, body := e.localLogin(t, f, "bob", "correct horse"); !strings.Contains(body, `"twoFactorSetup":true`) {
+		t.Fatalf("bob's password = %d %s", code, body)
+	}
+	if code, _ := do(t, f, "POST", login2fa, csrf, `{"code":"123456"}`); code != 401 {
+		t.Errorf("setup half used for a code = %d", code)
+	}
+	code, body = do(t, f, "POST", e.hlm.URL+"/api/auth/login/2fa/setup", csrf, "")
+	var bobSetup auth.Setup
+	json.Unmarshal([]byte(body), &bobSetup)
+	if code != 200 || bobSetup.Secret == "" {
+		t.Fatalf("bob's setup = %d %s", code, body)
+	}
+	code, body = do(t, f, "POST", e.hlm.URL+"/api/auth/login/2fa/enable", csrf, jsonBody(map[string]string{"code": totp(t, bobSetup.Secret, 0)}))
+	if code != 200 || !strings.Contains(body, "recoveryCodes") {
+		t.Fatalf("bob's enable = %d %s", code, body)
+	}
+	if _, body := do(t, f, "GET", e.hlm.URL+"/api/auth/status", nil, ""); !strings.Contains(body, `"username":"bob"`) {
+		t.Errorf("bob not signed in after setting it up: %s", body)
+	}
+	// bob can't turn his own off while it's required; an admin can reset it.
+	e.confirm2(t, f, "correct horse", totp(t, bobSetup.Secret, 1))
+	if code, _ := do(t, f, "DELETE", e.hlm.URL+"/api/auth/accounts/bob/2fa", csrf, ""); code != 400 {
+		t.Errorf("bob turned off required two-factor = %d", code)
+	}
+	if code, body := do(t, c, "DELETE", e.hlm.URL+"/api/auth/accounts/bob/2fa", csrf, ""); code != 204 {
+		t.Errorf("admin reset = %d %s", code, body)
+	}
+	if e.svc.HasTwoFactor("bob") {
+		t.Error("bob still has two-factor")
+	}
+
+	// The host can reset it too.
+	if _, _, err := e.svc.ResetPassword("admin", false, true); err != nil || e.svc.HasTwoFactor("admin") {
+		t.Errorf("reset-password --reset-2fa: %v", err)
+	}
+}
+
+// b2fa is a browser signed in as a member, bob2.
+func b2fa(t *testing.T, e *env) *http.Client {
+	e.svc.CreateAccount("bob2", "correct horse", rbac.Member)
+	c := browser(t)
+	e.localLogin(t, c, "bob2", "correct horse")
+	return c
+}
+
+// confirm2 confirms with a password and a two-factor code.
+func (e *env) confirm2(t *testing.T, c *http.Client, password, code string) {
+	t.Helper()
+	if status, body := do(t, c, "POST", e.hlm.URL+"/api/auth/confirm", csrf,
+		jsonBody(map[string]string{"password": password, "code": code})); status != 200 {
+		t.Fatalf("confirm = %d %s", status, body)
+	}
+}
+
+func TestTwoFactorCodesAreLimited(t *testing.T) {
+	e := setup(t, "")
+	e.svc.CreateAccount("admin", "correct horse", rbac.Admin)
+	setup, _ := e.svc.BeginTwoFactor("admin")
+	if _, err := e.svc.EnableTwoFactor("admin", totp(t, setup.Secret, 0)); err != nil {
+		t.Fatal(err)
+	}
+	// Five wrong codes after the right password lock it, as wrong passwords do.
+	c := browser(t)
+	e.localLogin(t, c, "admin", "correct horse")
+	var last int
+	for i := 0; i < 5; i++ {
+		last, _ = do(t, c, "POST", e.hlm.URL+"/api/auth/login/2fa", csrf, `{"code":"000000"}`)
+	}
+	code, body := do(t, c, "POST", e.hlm.URL+"/api/auth/login/2fa", csrf, jsonBody(map[string]string{"code": totp(t, setup.Secret, 1)}))
+	if last != 401 || code != 401 || !strings.Contains(body, "too many") {
+		t.Errorf("after 5 wrong codes: %d %s", code, body)
+	}
+	// Turning on "require" without having it yourself is refused.
+	e.svc.CreateAccount("other", "correct horse", rbac.Admin)
+	o := browser(t)
+	e.localLogin(t, o, "other", "correct horse")
+	e.confirm(t, o, "correct horse")
+	if code, body := do(t, o, "PUT", e.hlm.URL+"/api/auth/config", csrf, jsonBody(auth.Config{RequireTwoFactor: auth.RequireAdmins})); code != 400 ||
+		!strings.Contains(body, "your own account first") {
+		t.Errorf("require without having it = %d %s", code, body)
 	}
 }

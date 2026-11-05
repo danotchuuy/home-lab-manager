@@ -61,6 +61,9 @@ type Config struct {
 	Required bool `json:"required"`
 	// SessionHours is how long a sign-in lasts.
 	SessionHours int `json:"sessionHours,omitempty"`
+	// RequireTwoFactor makes local accounts use two-factor: RequireAll,
+	// RequireAdmins, or RequireNone.
+	RequireTwoFactor string `json:"requireTwoFactor,omitempty"`
 }
 
 func (c Config) sessionLength() time.Duration {
@@ -179,15 +182,31 @@ func (s *Service) SaveConfig(r *http.Request, in Config) (Config, error) {
 	if in.SessionHours < 0 || in.SessionHours > maxSessionHours {
 		return Config{}, fmt.Errorf("a sign-in can last between 1 and %d hours", maxSessionHours)
 	}
-	if in.Required && !s.config().Required {
+	old := s.config()
+	if in.Required && !old.Required {
 		if _, ok := s.Session(r); !ok {
 			return Config{}, ErrNotSignedIn
+		}
+	}
+	switch in.RequireTwoFactor {
+	case RequireNone, RequireAdmins, RequireAll:
+	default:
+		return Config{}, fmt.Errorf("unknown two-factor setting %q", in.RequireTwoFactor)
+	}
+	// Whoever requires it has to have it, so they aren't locked out by it.
+	if in.RequireTwoFactor != RequireNone && in.RequireTwoFactor != old.RequireTwoFactor {
+		u, ok := s.Session(r)
+		if !ok {
+			return Config{}, errors.New("sign in first, to require two-factor")
+		}
+		if u.Method == MethodLocal && !s.HasTwoFactor(u.Username) {
+			return Config{}, errors.New("set up two-factor for your own account first (My account → Two-factor), so requiring it can't lock you out")
 		}
 	}
 	if err := s.secrets.Set(secretConfig, in); err != nil {
 		return Config{}, err
 	}
-	s.log.Info("saved sign-in settings", "required", in.Required, "sessionHours", in.SessionHours)
+	s.log.Info("saved sign-in settings", "required", in.Required, "sessionHours", in.SessionHours, "requireTwoFactor", in.RequireTwoFactor)
 	return s.Config(), nil
 }
 
@@ -200,6 +219,17 @@ type Status struct {
 	OIDC     bool   `json:"oidc"`
 	OIDCName string `json:"oidcName,omitempty"`
 	User     *User  `json:"user,omitempty"`
+	// TwoFactor is the signed-in local account's two-factor, if it's a
+	// local account.
+	TwoFactor *TwoFactorStatus `json:"twoFactor,omitempty"`
+}
+
+// TwoFactorStatus is whether an account uses two-factor, how many recovery
+// codes it has left, and whether it has to use it.
+type TwoFactorStatus struct {
+	Enabled      bool `json:"enabled"`
+	RecoveryLeft int  `json:"recoveryLeft"`
+	Required     bool `json:"required"`
 }
 
 // Status returns the sign-in options and the request's user.
@@ -210,6 +240,12 @@ func (s *Service) Status(r *http.Request) Status {
 	}
 	if u, ok := s.Session(r); ok {
 		st.User = &u
+		if a, ok := s.account(u.Username); ok && u.Method == MethodLocal {
+			st.TwoFactor = &TwoFactorStatus{Enabled: a.TwoFactor != nil, Required: s.mustUseTwoFactor(a)}
+			if a.TwoFactor != nil {
+				st.TwoFactor.RecoveryLeft = len(a.TwoFactor.Recovery)
+			}
+		}
 	}
 	return st
 }

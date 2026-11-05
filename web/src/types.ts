@@ -1177,11 +1177,25 @@ export interface AuthStatus {
   user?: AuthUser;
   /** The caller's global role, if they're let in at all. */
   role?: Role;
+  /** The signed-in local account's two-factor. */
+  twoFactor?: { enabled: boolean; recoveryLeft: number; required: boolean };
+}
+
+/** Who has to use two-factor: "" (nobody), "admins" or "all". */
+export type RequireTwoFactor = "" | "admins" | "all";
+
+/** A secret being set up for an authenticator app. */
+export interface TwoFactorSetup {
+  secret: string;
+  url: string;
+  /** A QR code of url, as SVG, made by hlm. */
+  qr: string;
 }
 
 /** How sign-in applies to everyone (GET /api/auth/config). */
 export interface AuthConfig {
   required: boolean;
+  requireTwoFactor?: RequireTwoFactor;
   sessionHours: number;
 }
 
@@ -1193,6 +1207,9 @@ export interface Account {
   role: Role;
   /** How many SSH keys can sign in as this account. */
   sshKeys: number;
+  /** It uses an authenticator app; recoveryLeft of its recovery codes are unused. */
+  twoFactor: boolean;
+  recoveryLeft?: number;
 }
 
 /** A public key that can sign in as an account through the API. */

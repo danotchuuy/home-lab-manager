@@ -3,6 +3,7 @@ import { Link, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { AdminContext } from "./access";
 import { api, getToken, setToken, UNAUTHORIZED_EVENT } from "./api";
 import { ConfirmPrompt } from "./components/ConfirmPrompt";
+import { RecoveryCodes, TwoFactorSetupForm } from "./components/TwoFactor";
 import { usePoll } from "./usePoll";
 import { CatalogPage } from "./pages/Catalog";
 import { ConnectionDetailPage } from "./pages/ConnectionDetail";
@@ -15,7 +16,7 @@ import { CloneServerPage } from "./pages/CloneServer";
 import { ServerDetailPage } from "./pages/ServerDetail";
 import { ServersPage } from "./pages/Servers";
 import { SystemPage } from "./pages/System";
-import type { AuthStatus, Status, SystemInfo } from "./types";
+import type { AuthStatus, Status, SystemInfo, TwoFactorSetup } from "./types";
 
 const DISMISSED_KEY = "hlm.dismissedUpdate";
 /** DISMISSED_KEY before the short name changed from gsh to hlm. */
@@ -186,18 +187,97 @@ function SignInPrompt({ auth, onDone }: { auth?: AuthStatus; onDone: () => void 
   // Before the status arrives, or with nothing else to offer, ask for a token straight away.
   const tokenOnly = !local && !oidc;
   const [showToken, setShowToken] = useState(false);
+  // After the password: a code, or setting two-factor up (then its recovery codes).
+  const [step, setStep] = useState<"password" | "code" | "setup">("password");
+  const [code, setCode] = useState("");
+  const [setup, setSetup] = useState<TwoFactorSetup>();
+  const [recovery, setRecovery] = useState<string[]>();
 
-  async function signIn(e: FormEvent) {
-    e.preventDefault();
+  async function attempt(fn: () => Promise<void>) {
     setBusy(true);
     setError(undefined);
     try {
-      await api.login(username.trim(), password);
-      onDone();
+      await fn();
     } catch (err) {
       setError((err as Error).message);
+    } finally {
       setBusy(false);
     }
+  }
+
+  const signIn = (e: FormEvent) => {
+    e.preventDefault();
+    attempt(async () => {
+      const r = await api.login(username.trim(), password);
+      if (r.twoFactor) setStep("code");
+      else if (r.twoFactorSetup) {
+        setSetup(await api.loginSetup());
+        setStep("setup");
+      } else onDone();
+    });
+  };
+
+  const sendCode = (e: FormEvent) => {
+    e.preventDefault();
+    attempt(async () => {
+      await api.loginCode(code);
+      onDone();
+    });
+  };
+
+  const enable = (c: string) =>
+    attempt(async () => {
+      setRecovery((await api.loginEnable(c)).recoveryCodes);
+    });
+
+  if (step === "code" || step === "setup") {
+    return (
+      <div className="modal-backdrop">
+        <div className="card modal">
+          <h2>{step === "code" ? "Two-factor sign-in" : "Set up two-factor sign-in"}</h2>
+          {step === "code" ? (
+            <form className="sign-in-form" onSubmit={sendCode}>
+              <label className="field">
+                <span className="field-label">Code from your authenticator app</span>
+                <input
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  autoFocus
+                  required
+                />
+                <span className="field-help">Lost your phone? Enter one of your recovery codes instead.</span>
+              </label>
+              {error && <div className="alert error">{error}</div>}
+              <button className="btn primary sign-in-button" type="submit" disabled={busy || !code.trim()}>
+                {busy ? "Checking…" : "Sign in"}
+              </button>
+            </form>
+          ) : recovery ? (
+            <RecoveryCodes codes={recovery} onDone={onDone} doneLabel="I've saved them; continue" />
+          ) : (
+            <>
+              <p className="muted small">
+                Your account has to use two-factor sign-in (an admin requires it), so set it up now to finish signing in.
+              </p>
+              {setup && <TwoFactorSetupForm setup={setup} onCode={enable} busy={busy} error={error} />}
+            </>
+          )}
+          <button
+            type="button"
+            className="link-button"
+            onClick={() => {
+              setStep("password");
+              setCode("");
+              setError(undefined);
+            }}
+          >
+            Start over
+          </button>
+        </div>
+      </div>
+    );
   }
 
   function useToken(e: FormEvent) {

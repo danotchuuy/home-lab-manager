@@ -7,6 +7,7 @@ import type {
   HistoryRange,
   MetricHistory,
   MetricsSettings,
+  TwoFactorSetup,
   BackupTarget,
   BackupVerification,
   ServerExport,
@@ -146,7 +147,7 @@ export const UNAUTHORIZED_EVENT = "hlm:unauthorized";
  * Asks the person to confirm it's them, for changes that need it; resolves
  * true once they have, so the request can be sent again. Set by the app.
  */
-let confirmer: ((method: string) => Promise<boolean>) | undefined;
+let confirmer: ((method: string, twoFactor: boolean) => Promise<boolean>) | undefined;
 
 export function setConfirmer(f: typeof confirmer) {
   confirmer = f;
@@ -172,7 +173,7 @@ async function request(path: string, init: RequestInit = {}, confirmed = false):
     }
     if (res.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
     if (res.status === 403 && body?.code === "confirm_required" && confirmer && !confirmed) {
-      if (await confirmer(String(body.method ?? "local"))) return request(path, init, true);
+      if (await confirmer(String(body.method ?? "local"), body.twoFactor === true)) return request(path, init, true);
     }
     throw new ApiError(res.status, message, body);
   }
@@ -409,8 +410,28 @@ export const api = {
 
   authStatus: () => json<AuthStatus>("/api/auth/status"),
   /** Signs in with a local account, starting a session. */
+  /** Signs in, or says a second factor (or setting one up) comes next. */
   login: (username: string, password: string) =>
-    json<AuthUser>("/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),
+    json<AuthUser & { twoFactor?: boolean; twoFactorSetup?: boolean }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
+  loginCode: (code: string) => json<AuthUser>("/api/auth/login/2fa", { method: "POST", body: JSON.stringify({ code }) }),
+  loginSetup: () => json<TwoFactorSetup>("/api/auth/login/2fa/setup", { method: "POST" }),
+  loginEnable: (code: string) =>
+    json<{ recoveryCodes: string[] }>("/api/auth/login/2fa/enable", { method: "POST", body: JSON.stringify({ code }) }),
+  beginTwoFactor: (username: string) =>
+    json<TwoFactorSetup>(`/api/auth/accounts/${encodeURIComponent(username)}/2fa/setup`, { method: "POST" }),
+  enableTwoFactor: (username: string, code: string) =>
+    json<{ recoveryCodes: string[] }>(`/api/auth/accounts/${encodeURIComponent(username)}/2fa/enable`, {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    }),
+  newRecoveryCodes: (username: string) =>
+    json<{ recoveryCodes: string[] }>(`/api/auth/accounts/${encodeURIComponent(username)}/2fa/recovery`, { method: "POST" }),
+  /** Turns off two-factor: your own, or (an admin) resets someone's. */
+  disableTwoFactor: (username: string) =>
+    json<void>(`/api/auth/accounts/${encodeURIComponent(username)}/2fa`, { method: "DELETE" }),
   logout: () => json<void>("/api/auth/logout", { method: "POST" }),
   authConfig: () => json<AuthConfig>("/api/auth/config"),
   saveAuthConfig: (c: AuthConfig) => json<AuthConfig>("/api/auth/config", { method: "PUT", body: JSON.stringify(c) }),
@@ -691,7 +712,8 @@ export const api = {
     json<void>("/api/notifications/test", { method: "POST", body: JSON.stringify(t) }),
 
   /** Confirms it's the signed-in person, for changes that could give lasting access. */
-  confirm: (password: string) => json<{ confirmedUntil: string }>("/api/auth/confirm", { method: "POST", body: JSON.stringify({ password }) }),
+  confirm: (password: string, code?: string) =>
+    json<{ confirmedUntil: string }>("/api/auth/confirm", { method: "POST", body: JSON.stringify({ password, code }) }),
 };
 
 function auditQuery(f: AuditFilter): string {
