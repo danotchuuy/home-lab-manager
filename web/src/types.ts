@@ -1610,6 +1610,8 @@ export interface AuthStatus {
   role?: Role;
   /** The signed-in local account's two-factor. */
   twoFactor?: { enabled: boolean; recoveryLeft: number; required: boolean; passkeys?: number };
+  /** When the session's confirmation (see ConfirmPrompt) runs out, if it's confirmed. */
+  confirmedUntil?: string;
 }
 
 /** Who has to use two-factor: "" (nobody), "admins" or "all". */

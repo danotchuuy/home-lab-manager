@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/danotchuuy/home-lab-manager/internal/audit"
+	"html/template"
 	"net/http"
 	"net/url"
 	"slices"
@@ -411,7 +412,34 @@ type login struct {
 	Confirm bool      `json:"confirm,omitempty"`
 	Subject string    `json:"subject,omitempty"`
 	Started time.Time `json:"started,omitzero"`
+	// Popup is a confirmation in a window of its own, opened by the web UI
+	// so the page being worked on stays as it was: it ends on
+	// confirmedPage rather than going back.
+	Popup bool `json:"popup,omitempty"`
 }
+
+// confirmedPage ends a confirmation in a popup: it tells the web UI (on
+// the same site, so whatever the provider's pages did to window.opener)
+// and closes itself. The web UI then checks the session is confirmed.
+var confirmedPage = template.Must(template.New("confirmed").Parse(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Confirmed · Home Lab Manager</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon.ico" sizes="48x48">
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:#f5f6f8;color:#1c2027;margin:0;padding:48px 16px}
+main{max-width:520px;margin:0 auto;background:#fff;border:1px solid #dde1e6;border-radius:8px;padding:24px 28px}
+h1{font-size:1.25rem;margin:0 0 12px}p{line-height:1.5}
+@media (prefers-color-scheme:dark){body{background:#111317;color:#e4e7ec}main{background:#1a1d23;border-color:#2e333d}}
+</style></head>
+<body><main><h1>Confirmed</h1><p>You can close this window and carry on in Home Lab Manager.</p></main>
+<script>
+try { new BroadcastChannel({{.}}).postMessage("confirmed"); } catch (e) {}
+window.close();
+</script></body></html>
+`))
+
+// ConfirmChannel is the BroadcastChannel a popup confirmation reports on.
+const ConfirmChannel = "hlm-confirm"
 
 func randomString() string {
 	b := make([]byte, 24)
@@ -461,6 +489,7 @@ func (s *Service) Login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		l.Confirm, l.Subject, l.Started = true, cur.Subject, s.now()
+		l.Popup = r.URL.Query().Get("popup") == "1"
 		// Ask the provider to check who it is again, rather than reuse its
 		// own session. Whether it did is checked from auth_time. Don't send
 		// max_age=0 as well: Authelia treats it as never satisfied, so after
@@ -557,6 +586,12 @@ func (s *Service) Callback(w http.ResponseWriter, r *http.Request) {
 	s.record(audit.Entry{Actor: "sso:" + u.Display(), ActorKind: audit.ActorSSO, IP: clientIP(r), Action: action})
 	if l.Confirm {
 		s.log.Info("confirmed sign-in", "user", u.Display(), "method", MethodOIDC, "remote", r.RemoteAddr)
+		if l.Popup {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-store")
+			_ = confirmedPage.Execute(w, ConfirmChannel)
+			return
+		}
 	} else {
 		s.log.Info("signed in", "user", u.Display(), "method", MethodOIDC, "remote", r.RemoteAddr)
 	}
