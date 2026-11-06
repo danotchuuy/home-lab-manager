@@ -60,6 +60,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
 	"github.com/danotchuuy/home-lab-manager/internal/reach"
 	"github.com/danotchuuy/home-lab-manager/internal/registry"
+	"github.com/danotchuuy/home-lab-manager/internal/restoretest"
 	"github.com/danotchuuy/home-lab-manager/internal/schedule"
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
 	"github.com/danotchuuy/home-lab-manager/internal/selfupdate"
@@ -664,6 +665,26 @@ func run(log *slog.Logger) error {
 		Fetcher: &profileshare.Fetcher{UserAgent: "home-lab-manager/" + version + " (game profiles)"},
 	})
 	go profileSharing.Run(ctx, 20*time.Minute)
+	// Restore tests: backups restored into isolated copies and started.
+	restoreTests := restoretest.New(restoretest.Options{
+		Secrets: store, Servers: mgr, Backups: backups, Notifier: notifier, Log: log,
+		Probe: queries.ProbeCopy,
+		QueryOff: func(name string) bool {
+			return queries.Status(name, false).Settings.Protocol == gamequery.ProtoOff
+		},
+		Memory: func(ctx context.Context, name string) (uint64, uint64, bool) {
+			if !host.Available() {
+				return 0, 0, false
+			}
+			free := host.Snapshot().Memory.Available
+			st, err := mgr.Stats(ctx, name)
+			if err != nil || free == 0 {
+				return 0, 0, false
+			}
+			return free, st.MemoryUsage, true
+		},
+	})
+	go restoreTests.Run(ctx, 15*time.Minute)
 	// The proxy server can serve the status page's sites too, through the
 	// WireGuard tunnel to hlm's port on this host.
 	// Cloudflare in front of them, when that's their HTTPS option.
@@ -729,6 +750,7 @@ func run(log *slog.Logger) error {
 		Mods:          modManager,
 		Discord:       discordBot,
 		ProfileShare:  profileSharing,
+		RestoreTests:  restoreTests,
 		// Set when HLM_UPDATE_CHECK overrides the setting.
 		UpdateCheckEnv: updateCheckEnv,
 		Token:          env("HLM_TOKEN", ""),

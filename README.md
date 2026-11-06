@@ -1036,6 +1036,32 @@ afterwards, so the game doesn't overwrite the restored saves when it shuts down.
 - Files are written through Docker's archive API, which works whether the server is running or stopped and writes into
   its data folders. Files that would land in a read-only mount are skipped and listed as warnings.
 
+### Restore tests
+
+**Verify** checks a backup reads back whole, but not that the game can load it: a backup of the wrong folder, a world
+saved mid-write, or a missing file the game needs all pass it. A **restore test** checks that for real. On the
+Backups tab, **Test a restore** (managers) restores a backup into a **throwaway copy** of the server and starts it:
+
+1. The copy, `hlm-restore-test-<server>`, runs the image the server runs now (by ID, so nothing is pulled) with the
+   same settings and limits, but with its own empty volumes in place of the server's data folders, **no published
+   ports**, no restart policy, and a network of its own made with `--internal`, which reaches neither the internet nor
+   your LAN. It doesn't get the server's devices, extra privileges or connections. The server keeps running throughout.
+2. The backup is restored into the copy, the copy is started, and hlm waits for its game to **answer its status
+   query** on that network, the way the server is asked (up to 10 minutes; change it per server, up to 2 hours). For a
+   server whose status query is off, the copy passes by running for a minute.
+3. The result goes in the tab: **✓ Restores and starts**, with how long it took and what the game said, or **✗ Failed**
+   with why (it stopped, or never answered) and the copy's last 50 log lines. A failure sends the
+   `backup.restore_test_failed` [notification](#notifications).
+4. The copy, its volumes and its network are removed whatever happened, and at hlm's start if it stopped mid-test.
+
+Since the copy can't download anything, the backup has to hold everything the server needs to start. For example,
+`itzg/minecraft-server` downloads Minecraft when it's missing, so a backup of only `/data/world` fails the test
+("Failed to install vanilla Minecraft"), while one of `/data` passes.
+
+Tests can run **on a schedule**: once a week, or after every N backups, each time testing the newest backup if it isn't
+tested yet. One test runs at a time. A test is **skipped** (not failed) when the host has less free memory than the
+server uses, and tried again a day later. Tests run only for servers on hlm's own Docker host for now.
+
 ### Backing up hlm's own configuration
 
 Once backup storage is set up, hlm also backs up its own configuration there, **every day by default**, keeping the
@@ -1856,6 +1882,7 @@ Each target chooses its **events** (warnings and errors by default):
 | `hlm.update_failed` | error | hlm couldn't [update itself automatically](#automatic-updates). |
 | `backup.failed`, `backup.succeeded` | error, info | A server's or hlm's configuration backup fails or finishes. |
 | `backup.verify_failed` | error | A backup was stored, but reading it back (after the backup, or **Verify**) showed it's damaged. |
+| `backup.restore_test_failed` | error | A backup restored into a [test copy](#restore-tests) of its server, but the copy didn't start or answer. |
 | `backup.stale` | warning | A server with scheduled backups hasn't had one work for twice its schedule's longest gap (at least a day and a half). |
 | `restore.finished`, `restore.failed` | info, error | A restore finishes or fails. |
 | `tunnel.down` | error | The WireGuard or Cloudflare Tunnel container stops on its own. |
@@ -2341,6 +2368,9 @@ when the `HLM_*` one isn't set.
 | `GET /api/servers/{id}/backups`                | The server's backup plan, a running backup's progress, and its backups in the bucket (newest first). |
 | `PUT /api/servers/{id}/backups/plan`           | `{folders, intervalHours, at?: {time, weekdays}, keep, retention?: {last, daily, weekly, monthly}, stopServer, exclude?, preCommand?, postCommand?, verify?: ""\|"always"\|"off", copyTo?: {target, keep, retention?}}`: what to back up, when, and how long to keep it. |
 | `POST /api/servers/{id}/backups/verify?key=&target=` | Read a backup back and check it: `{ok, files, bytes, checksum, error}`. Operators. |
+| `GET /api/servers/{id}/backups/restore-tests` | The server's [restore tests](#restore-tests): `{settings: {every, backups, timeoutMinutes}, results: [{key, trigger, started, finished, outcome, seconds, answer, note, error, log, files, bytes}]}`, newest first. |
+| `PUT /api/servers/{id}/backups/restore-tests` | `{every: "" \| "week" \| "backups", backups, timeoutMinutes}`: when to test. Managers. |
+| `POST /api/servers/{id}/backups/restore-test` | `{key}` (the newest if empty): test a restore now; streams progress as JSON lines, ending with `done` or `error`. Managers. |
 | `POST /api/servers/{id}/backups`               | Start a backup now (202); progress shows in `GET .../backups`.                     |
 | `POST /api/servers/{id}/backups/restore`       | `{key, target?, backupFirst}`: start restoring a backup (202); progress shows in `GET .../backups`. |
 | `GET /api/servers/{id}/backups/download?key=&target=` | Download one of the server's backups (decrypted).                           |

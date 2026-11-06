@@ -31,6 +31,7 @@ const (
 	KindBackupFailed       = "backup.failed"
 	KindBackupSucceeded    = "backup.succeeded"
 	KindBackupVerifyFailed = "backup.verify_failed"
+	KindRestoreTestFailed  = "backup.restore_test_failed"
 	KindBackupStale        = "backup.stale"
 	KindRestoreFinished    = "restore.finished"
 	KindRestoreFailed      = "restore.failed"
@@ -73,6 +74,7 @@ var Kinds = []Kind{
 	{KindHLMUpdateFailed, "Updates", Error, "hlm couldn't update itself automatically", 0},
 	{KindBackupFailed, "Backups", Error, "A backup (of a server or of hlm's configuration) failed", 6 * time.Hour},
 	{KindBackupVerifyFailed, "Backups", Error, "A backup was stored, but reading it back showed it's damaged", 0},
+	{KindRestoreTestFailed, "Backups", Error, "A backup restored into a test copy of its server, but the copy didn't start or answer", 0},
 	{KindBackupStale, "Backups", Warning, "A server with scheduled backups hasn't had one work for twice its schedule's gap", 24 * time.Hour},
 	{KindBackupSucceeded, "Backups", Info, "A backup finished", 0},
 	{KindRestoreFinished, "Backups", Info, "A restore finished", 0},

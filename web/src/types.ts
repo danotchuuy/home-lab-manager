@@ -388,6 +388,33 @@ export interface DiscordTest {
   error?: string;
 }
 
+export interface RestoreTestSettings {
+  every: "" | "week" | "backups";
+  /** With every "backups": after every Nth backup. */
+  backups?: number;
+  timeoutMinutes?: number;
+}
+
+export interface RestoreTestResult {
+  key: string;
+  trigger: "schedule" | "manual";
+  started: string;
+  finished: string;
+  outcome: "passed" | "failed" | "skipped";
+  seconds?: number;
+  answer?: string;
+  note?: string;
+  error?: string;
+  log?: string;
+  files?: number;
+  bytes?: number;
+}
+
+export interface RestoreTests {
+  settings: RestoreTestSettings;
+  results: RestoreTestResult[];
+}
+
 export interface IdleSettings {
   /** Minutes without players before it's stopped; 0 is off. */
   minutes: number;
@@ -714,6 +741,10 @@ export interface DeployEvent {
     | "template"
     | "settings"
     | "copy"
+    // restore tests:
+    | "restore"
+    | "cleanup"
+    | "skipped"
     // mod changes:
     | "folder"
     | "snapshot"

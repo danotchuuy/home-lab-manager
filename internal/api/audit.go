@@ -63,7 +63,7 @@ var auditNames = map[string]string{
 var actionVerbs = []string{
 	"test", "check", "apply", "run", "restore", "start", "stop", "restart", "update", "renew", "import", "refresh",
 	"sync", "install", "command", "adopt", "dismiss", "forget", "delete", "remove", "key", "secret", "wan-check",
-	"detect", "plan", "fetch", "confirm", "login", "logout", "challenge", "download-ticket", "check-ports", "check-ip", "clone", "verify",
+	"detect", "plan", "fetch", "restore-test", "confirm", "login", "logout", "challenge", "download-ticket", "check-ports", "check-ip", "clone", "verify",
 }
 
 var wildcardRE = regexp.MustCompile(`\{(\w+)\.*\}`)
