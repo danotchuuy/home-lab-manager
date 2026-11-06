@@ -578,6 +578,7 @@ func run(log *slog.Logger) error {
 	}
 	modManager := mods.New(mods.Options{
 		Servers: mgr, Modrinth: mods.NewModrinth("danotchuuy/home-lab-manager/" + version), Dir: modsWork,
+		Steam:    mods.NewSteam("home-lab-manager/" + version),
 		Notifier: notifier, Log: log,
 		Ready: func(ctx context.Context, name string) (bool, bool) {
 			set := queries.Status(name, false).Settings

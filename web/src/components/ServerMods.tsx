@@ -4,6 +4,7 @@ import type { DeployEvent, InstalledMod, ModChange, ModPlan, ModSearchHit, ModsO
 import { formatBytes } from "../util";
 import { Ago, Spinner } from "./common";
 import { DeployProgress } from "./DeployProgress";
+import { WorkshopMods } from "./WorkshopMods";
 
 const SOURCE_NOTE: Record<InstalledMod["source"], string> = {
   hlm: "",
@@ -40,6 +41,9 @@ export function ServerMods({ server, canCheck, canManage }: { server: string; ca
 
   if (!ov)
     return <div className="card">{loadError ? <div className="alert error small">{loadError}</div> : <Spinner />}</div>;
+  if (ov.workshop) {
+    return <WorkshopMods server={server} ov={ov.workshop} canManage={canManage} onChanged={load} />;
+  }
   if (ov.unsupported) {
     return (
       <div className="card">

@@ -3,12 +3,20 @@
 **Priority:** Medium · **Depends on:** [11](11-backup-improvements.md) (backups), [19](19-game-profiles.md)
 (profiles), [05](05-game-query.md) (to know it came back)
 
-> **Status: done, Modrinth only** (branch `feature/22-mods`). See the README's
+> **Status: done** (branches `feature/22-mods` and `feature/22-workshop`). See the README's
 > [Mods and plugins](../README.md#mods-and-plugins). Where the result differs from this plan:
 >
-> - **Steam Workshop isn't done.** It's a different kind of change (editing a variable and recreating the container,
->   with the image doing the downloads), so it's left for its own change, with the ARK, Conan and Project Zomboid
->   profiles. CurseForge and Thunderstore stay "maybe".
+> - **Steam Workshop came second** (branch `feature/22-workshop`), as a list on the Mods tab for images that take
+>   item IDs in a variable: `hermsi/ark-server` (`GAME_MOD_IDS`), `alinmear/docker-conanexiles` (`CONANEXILES_MODS`;
+>   the Conan profile also matches `conanexiles` now) and `renegademaster/zomboid-dedicated-server`
+>   (`MOD_WORKSHOP_IDS` with `MOD_NAMES`), each checked against the image's README. The profile field is
+>   `mods.workshop` with `app_id` and per-image `env`, `separator` and `names_env`. Searching the Workshop needs a Steam
+>   API key, so items are added by link or ID, with a link to the game's Workshop; names, sizes and update times come
+>   from Steam's keyless `GetPublishedFileDetails`. A change recreates the server; the rollback recreates it with the
+>   old list and starts it. ARK: Survival Ascended has no profile yet, so its images aren't covered. CurseForge and
+>   Thunderstore stay "maybe".
+> - **A changed server must keep running after it answers** (10 seconds) to count as up, for Modrinth changes too:
+>   a published TCP port can accept a connection, through Docker's proxy, just before a server crashes.
 > - **A snapshot of the mods folder, not a backup.** It's taken before every change and is what the rollback restores;
 >   a full backup first would make each change take as long as a backup. Changes are refused while a backup or restore
 >   of the server runs.
@@ -125,6 +133,6 @@ mods:
 - [x] `mods.json`, plans, the apply job with rollback
 - [x] Mods tab (installed, search, plan, progress)
 - [x] Update checks and notification
-- [ ] Workshop source (variable editing and Steam details) — not done, see above
-- [x] Built-in profiles: Minecraft (itzg); ARK, Conan, Project Zomboid wait for Workshop
+- [x] Workshop source (variable editing and Steam details)
+- [x] Built-in profiles: Minecraft (itzg), ARK, Conan Exiles, Project Zomboid
 - [x] README section and API table

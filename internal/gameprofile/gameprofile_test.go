@@ -162,6 +162,24 @@ func TestMods(t *testing.T) {
 	if Default().ByID("valheim").Ref().Mods {
 		t.Error("valheim takes mods?")
 	}
+	for image, env := range map[string]string{
+		"hermsi/ark-server:latest":                       "GAME_MOD_IDS",
+		"alinmear/docker-conanexiles":                    "CONANEXILES_MODS",
+		"renegademaster/zomboid-dedicated-server:latest": "MOD_WORKSHOP_IDS",
+	} {
+		p := Match(image)
+		if p == nil || p.Mods == nil {
+			t.Errorf("%s: no mods", image)
+			continue
+		}
+		w, ok := p.Mods.Workshop.For(image)
+		if !ok || w.Env != env || !p.Ref().Mods {
+			t.Errorf("%s: %+v", image, w)
+		}
+	}
+	if _, ok := Default().ByID("ark").Mods.Workshop.For("thmhoag/arkserver"); ok {
+		t.Error("an image hlm doesn't know the variable of")
+	}
 	base := "id: x\nname: X\nmatch: [[x]]\nmods:\n"
 	for body, want := range map[string]string{
 		"  modrinth: { loader_env: TYPE, loaders: { FABRIC: { modrinth: [fabric], dir: /data/mods } } }": "",

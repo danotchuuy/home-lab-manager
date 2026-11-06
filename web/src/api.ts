@@ -859,6 +859,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ changes }),
     }),
+  applyWorkshop: (id: string, items: { id: string; name?: string }[], onEvent: (e: DeployEvent) => void) =>
+    stream(
+      `/api/servers/${encodeURIComponent(id)}/mods/workshop`,
+      { method: "POST", body: JSON.stringify({ items }) },
+      onEvent,
+    ),
   applyMods: (id: string, changes: ModChange[], onEvent: (e: DeployEvent) => void) =>
     stream(
       `/api/servers/${encodeURIComponent(id)}/mods/apply`,

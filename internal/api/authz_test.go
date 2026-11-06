@@ -112,6 +112,7 @@ var expected = map[string]string{
 	"POST /api/servers/{id}/mods/check":                 "operator",
 	"POST /api/servers/{id}/mods/plan":                  "manager",
 	"POST /api/servers/{id}/mods/apply":                 "manager",
+	"POST /api/servers/{id}/mods/workshop":              "manager",
 	"POST /api/servers/{id}/players/{action}":           "operator",
 	"PUT /api/servers/{id}/idle":                        "manager",
 	"GET /api/servers/{id}/export":                      "operator",

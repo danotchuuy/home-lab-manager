@@ -48,8 +48,54 @@ func (s *server) modsOverview(w http.ResponseWriter, r *http.Request, get func(c
 	writeJSON(w, http.StatusOK, ov)
 }
 
+// serverMods is a server's mods: its Steam Workshop list when its image
+// takes one, or else its Modrinth mods.
 func (s *server) serverMods(w http.ResponseWriter, r *http.Request) {
+	name, ok := s.namedServer(w, r)
+	if !ok {
+		return
+	}
+	ws, err := s.Mods.Workshop(r.Context(), name)
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, map[string]any{"workshop": ws})
+		return
+	case !errors.Is(err, mods.ErrNoWorkshop):
+		writeModsError(w, err)
+		return
+	}
 	s.modsOverview(w, r, s.Mods.Overview)
+}
+
+// applyWorkshop replaces a server's Workshop list, streaming progress.
+func (s *server) applyWorkshop(w http.ResponseWriter, r *http.Request) {
+	name, ok := s.namedServer(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Items []mods.WorkshopEntry `json:"items"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	p, _ := r.Context().Value(principalKey{}).(rbac.Principal)
+	ids := make([]string, len(in.Items))
+	for i, it := range in.Items {
+		ids[i] = it.ID
+	}
+	audit.Add(r.Context(), "items", strings.Join(ids, ","))
+	s.stream(w, r, func(ctx context.Context, emit func(manager.Event)) error {
+		res, err := s.Mods.ApplyWorkshop(ctx, name, p.Name, in.Items, emit)
+		if res.RolledBack {
+			audit.Add(ctx, "rolled_back", "yes")
+		}
+		if err == nil {
+			emit(manager.Event{Stage: "done", Message: cmpOr(res.Warning, "Done: the server is up with the new list.")})
+		}
+		return err
+	})
 }
 
 func (s *server) checkModUpdates(w http.ResponseWriter, r *http.Request) {
