@@ -3886,8 +3886,15 @@ textarea.code-input {
   margin-bottom: 0.75rem;
 }
 .list-search {
-  flex: 1 1 16rem;
+  flex: 1 1 12rem;
   min-width: 10rem;
+}
+/* Filters sit beside the search box, as wide as their choices. */
+.list-toolbar select {
+  width: auto;
+  flex: 0 1 auto;
+  max-width: 14rem;
+  align-self: stretch; /* as tall as the search box */
 }
 .bulk-bar {
   padding: 0.4rem 0.6rem;
@@ -4102,6 +4109,7 @@ kbd {
   }
   .list-toolbar select {
     flex: 1 1 45%;
+    max-width: none;
   }
 }
 
