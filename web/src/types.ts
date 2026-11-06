@@ -328,6 +328,66 @@ export interface ModPlan {
   running: boolean;
 }
 
+export type DiscordAction = "players" | "start" | "stop" | "restart" | "say";
+
+export interface DiscordRule {
+  roleId: string;
+  roleName?: string;
+  /** Server group IDs; none means every server the Discord server sees. */
+  groups: string[];
+  actions: DiscordAction[];
+}
+
+/** A Discord server the bot answers in. */
+export interface DiscordGuild {
+  id: string;
+  name?: string;
+  /** Server group IDs whose servers (on the status page) it sees; none means all of them. */
+  groups: string[];
+  /** Show addresses and who's playing. */
+  details: boolean;
+  rules: DiscordRule[];
+}
+
+export interface DiscordSettings {
+  enabled: boolean;
+  guilds: DiscordGuild[];
+}
+
+export interface DiscordGuildState {
+  id: string;
+  name?: string;
+  commands: boolean;
+  error?: string;
+}
+
+export interface DiscordState {
+  status: "off" | "connecting" | "connected" | "error";
+  error?: string;
+  bot?: string;
+  applicationId?: string;
+  since?: string;
+  guilds?: DiscordGuildState[];
+}
+
+export interface DiscordView {
+  settings: DiscordSettings;
+  hasToken: boolean;
+  state: DiscordState;
+  inviteUrl?: string;
+}
+
+export interface DiscordRole {
+  id: string;
+  name: string;
+  position: number;
+}
+
+export interface DiscordTest {
+  result: { bot?: string; inviteUrl?: string; guilds?: DiscordGuildState[] };
+  error?: string;
+}
+
 export interface IdleSettings {
   /** Minutes without players before it's stopped; 0 is off. */
   minutes: number;
@@ -1929,7 +1989,7 @@ export interface ConfigFiles {
 }
 
 export type AuditResult = "ok" | "denied" | "error";
-export type AuditActorKind = "local" | "sso" | "key" | "ssh" | "token" | "anonymous" | "hlm" | "host" | "";
+export type AuditActorKind = "local" | "sso" | "key" | "ssh" | "token" | "anonymous" | "hlm" | "host" | "discord" | "";
 
 /** One thing someone (or hlm) did. */
 export interface AuditEntry {

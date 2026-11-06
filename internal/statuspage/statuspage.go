@@ -647,3 +647,21 @@ func (s *Service) Suggestions(ctx context.Context, servers []string) map[string]
 	}
 	return out
 }
+
+// All is every server on the page as the page shows them (before any
+// password hides details), with the server behind each, whether or not
+// the page is on: Discord shows the page's servers the same way.
+func (s *Service) All(ctx context.Context, now time.Time) ([]Server, []string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	set, err := s.current()
+	if err != nil {
+		return nil, nil, err
+	}
+	if s.page == nil || now.Sub(s.built) >= CacheFor {
+		if err := s.build(ctx, set, now); err != nil {
+			return nil, nil, err
+		}
+	}
+	return slices.Clone(s.page.Servers), slices.Clone(s.names), nil
+}

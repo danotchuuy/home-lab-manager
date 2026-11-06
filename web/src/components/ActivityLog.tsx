@@ -13,6 +13,7 @@ const KIND_LABEL: Record<AuditActorKind, string> = {
   anonymous: "no sign-in",
   hlm: "hlm",
   host: "on the host",
+  discord: "via Discord",
   "": "",
 };
 

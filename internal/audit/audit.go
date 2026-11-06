@@ -45,6 +45,7 @@ const (
 	ActorAnonymous = "anonymous" // anyone, when sign-in isn't required
 	ActorHLM       = "hlm"       // hlm itself: schedules and automation
 	ActorHost      = "host"      // someone at the host, running hlm's commands
+	ActorDiscord   = "discord"   // someone in Discord, through hlm's bot
 )
 
 // Entry is one thing that happened.

@@ -27,7 +27,7 @@ the API and UI it needs, who may use it, how to test it, and a task list. They'r
 | 20 | [Stop idle servers, wake them on demand](20-idle-shutdown.md) | High | 05, 17 (optional) | Done |
 | 21 | [Player management](21-player-management.md) | Medium | 02, 05, 19 | Done |
 | 22 | [Mod management](22-mods.md) | Medium | 11, 19, 05 | Done (Modrinth; Workshop to do) |
-| 23 | [Discord commands](23-discord-commands.md) | Low | 01, 05, 20 (optional) | Planned |
+| 23 | [Discord commands](23-discord-commands.md) | Low | 01, 05, 20 (optional) | Done |
 | 24 | [Sharing game profiles](24-profile-sharing.md) | Low | 19 | Planned |
 | 25 | [Backup restore check](25-restore-check.md) | Medium | 11, 05 | Planned |
 
