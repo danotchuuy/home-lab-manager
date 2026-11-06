@@ -59,6 +59,18 @@ const HostMetricsPath = "/_hlm/host"
 // ErrRevoked is returned when hlm no longer knows the agent.
 var ErrRevoked = errors.New("hlm refused the agent's credential: the host was removed from hlm. To add it again, run the agent with a new enrolment token from hlm's Hosts page")
 
+// firstRetry is how long the agent waits before trying hlm again; it
+// doubles each time, up to a minute.
+var firstRetry = time.Second
+
+// unreachable is an error from not reaching hlm, or hlm not answering
+// properly (down, starting, or behind a proxy that says so): worth trying
+// again, unlike hlm refusing.
+type unreachable struct{ err error }
+
+func (e unreachable) Error() string { return e.err.Error() }
+func (e unreachable) Unwrap() error { return e.err }
+
 // credentials are what the agent keeps.
 type credentials struct {
 	Server     string `json:"server"`
@@ -140,9 +152,25 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	creds, err := cfg.credentials(ctx, client)
-	if err != nil {
-		return err
+	// Enrolling needs hlm: if it's down (both machines starting after a
+	// power cut, say), keep trying, as connecting does.
+	var creds credentials
+	backoff := firstRetry
+	for {
+		creds, err = cfg.credentials(ctx, client)
+		if err == nil {
+			break
+		}
+		if !errors.As(err, new(unreachable)) {
+			return err
+		}
+		cfg.Log.Warn("can't enrol with hlm yet; trying again", "err", err, "in", backoff)
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(backoff):
+		}
+		backoff = min(backoff*2, time.Minute)
 	}
 	if _, err := checkServer(creds.Server, cfg.AllowHTTP); err != nil {
 		return err
@@ -154,7 +182,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	go metrics.Run(ctx)
 	proxy := Handler(DockerProxy(cfg.Socket, cfg.Log), metrics)
-	backoff := time.Second
+	backoff = firstRetry
 	for {
 		started := time.Now()
 		err := connect(ctx, client, creds, cfg.Version, proxy, cfg.Log)
@@ -165,7 +193,7 @@ func Run(ctx context.Context, cfg Config) error {
 			return err
 		}
 		if time.Since(started) > time.Minute {
-			backoff = time.Second
+			backoff = firstRetry
 		}
 		cfg.Log.Warn("not connected to hlm; trying again", "err", err, "in", backoff)
 		select {
@@ -201,6 +229,9 @@ func (c *Config) credentials(ctx context.Context, client *http.Client) (credenti
 		return creds, err
 	}
 	body, _ := json.Marshal(EnrolRequest{Token: strings.TrimSpace(c.Token), Version: c.Version})
+	// A hung hlm counts as a down one.
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server+"/api/agent/enrol", bytes.NewReader(body))
 	if err != nil {
 		return creds, err
@@ -208,7 +239,7 @@ func (c *Config) credentials(ctx context.Context, client *http.Client) (credenti
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return creds, fmt.Errorf("enrol with hlm: %w", err)
+		return creds, unreachable{fmt.Errorf("enrol with hlm: %w", err)}
 	}
 	defer resp.Body.Close()
 	data, _ = io.ReadAll(io.LimitReader(resp.Body, 64<<10))
@@ -220,7 +251,11 @@ func (c *Config) credentials(ctx context.Context, client *http.Client) (credenti
 		if e.Error == "" {
 			e.Error = resp.Status
 		}
-		return creds, fmt.Errorf("enrol with hlm: %s", e.Error)
+		err := fmt.Errorf("enrol with hlm: %s", e.Error)
+		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+			return creds, unreachable{err}
+		}
+		return creds, err
 	}
 	var out EnrolResponse
 	if err := json.Unmarshal(data, &out); err != nil || out.Credential == "" {

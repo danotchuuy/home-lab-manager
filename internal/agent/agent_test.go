@@ -327,3 +327,86 @@ func TestWebSocketFrames(t *testing.T) {
 		t.Errorf("unmasked: %v", err)
 	}
 }
+
+// hlm being down doesn't stop an agent: started before hlm is up (both
+// machines booting after a power cut, say), it keeps trying to enrol,
+// through hlm answering 503 while it starts; once connected, it rides out
+// hlm going away and coming back.
+func TestAgentWhileHLMDown(t *testing.T) {
+	defer func(d time.Duration) { firstRetry = d }(firstRetry)
+	firstRetry = 10 * time.Millisecond
+	log := slog.New(slog.DiscardHandler)
+	sock := (&fakeDocker{}).serve(t)
+
+	hub := NewHub(log)
+	hub.Authenticate = func(host, secret string) bool { return host == "nas" && secret == "s3cret" }
+	var tries, enrolled atomic.Int32
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/agent/connect", hub)
+	mux.HandleFunc("POST /api/agent/enrol", func(w http.ResponseWriter, r *http.Request) {
+		if tries.Add(1) == 1 {
+			http.Error(w, "starting", http.StatusServiceUnavailable)
+			return
+		}
+		enrolled.Add(1)
+		json.NewEncoder(w).Encode(EnrolResponse{Host: "nas", Credential: Credential("nas", "s3cret")})
+	})
+	// An address nothing listens on yet.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	up := func() *httptest.Server {
+		t.Helper()
+		var ln net.Listener
+		waitFor(t, "the address to be free", func() bool {
+			ln, err = net.Listen("tcp", addr)
+			return err == nil
+		})
+		srv := httptest.NewUnstartedServer(mux)
+		srv.Listener = ln
+		srv.Start()
+		return srv
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Config{Server: "http://" + addr, Token: "tok", DataDir: t.TempDir(), Socket: sock, AllowHTTP: true, Log: log})
+	}()
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case err := <-done:
+		t.Fatalf("gave up while hlm was down: %v", err)
+	default:
+	}
+
+	srv := up()
+	waitFor(t, "the agent to connect", func() bool { return hub.Status("nas").Connected })
+	if tries.Load() != 2 || enrolled.Load() != 1 {
+		t.Errorf("enrol tries %d, enrolled %d", tries.Load(), enrolled.Load())
+	}
+
+	// hlm goes away for a while, then comes back.
+	hub.Drop("nas")
+	srv.Close()
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case err := <-done:
+		t.Fatalf("gave up while hlm was down: %v", err)
+	default:
+	}
+	srv = up()
+	defer srv.Close()
+	waitFor(t, "the agent to reconnect", func() bool { return hub.Status("nas").Connected })
+	if enrolled.Load() != 1 {
+		t.Errorf("enrolled again: %d", enrolled.Load())
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Errorf("stopped: %v", err)
+	}
+}
