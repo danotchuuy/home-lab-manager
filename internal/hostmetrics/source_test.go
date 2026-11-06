@@ -41,8 +41,8 @@ func TestDumpOfThisMachine(t *testing.T) {
 	}
 	for i := range got.Disks {
 		g, w := got.Disks[i], want.Disks[i]
-		// df rounds to KiB.
-		if g.Mount != w.Mount || g.Total/1024 != w.Total/1024 {
+		// df counts whole KiB, rounding up.
+		if d := g.Total - w.Total; g.Mount != w.Mount || d < 0 || d >= 1024 {
 			t.Errorf("disk %d: %+v vs %+v", i, g, w)
 		}
 	}
