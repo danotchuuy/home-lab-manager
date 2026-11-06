@@ -265,6 +265,15 @@ func (s *server) routes() []route {
 		{"GET /api/game-profiles", admin, s.gameProfiles},
 		{"POST /api/game-profiles", admin, s.importGameProfile},
 		{"POST /api/game-profiles/reload", admin, s.reloadGameProfiles},
+		// Sharing: hlm fetches links and indexes itself (HTTPS only, not its
+		// own or link-local addresses).
+		{"POST /api/game-profiles/fetch", admin, s.fetchGameProfile},
+		{"POST /api/game-profiles/import", admin, s.importGameProfileLink},
+		{"POST /api/game-profiles/check", admin, s.checkGameProfiles},
+		{"GET /api/game-profiles/export", admin, s.exportGameProfiles},
+		{"GET /api/game-profiles/indexes", admin, s.gameProfileIndexes},
+		{"PUT /api/game-profiles/indexes", admin, s.setGameProfileIndexes},
+		{"GET /api/game-profiles/indexes/browse", admin, s.browseGameProfileIndexes},
 		{"GET /api/game-profiles/{id}/yaml", admin, s.gameProfileYAML},
 		{"DELETE /api/game-profiles/{id}", admin, s.deleteGameProfile},
 		{"GET /api/registries", admin, s.registryList},

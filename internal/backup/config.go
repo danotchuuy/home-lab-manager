@@ -280,6 +280,10 @@ func (s *Service) configArchive(ctx context.Context, includeKey bool, run *Run) 
 
 	// Your own game profiles.
 	profiles, _ := filepath.Glob(filepath.Join(s.config.DataDir, "game-profiles", "*.yaml"))
+	// And where the ones imported from a link came from.
+	if origins := filepath.Join(s.config.DataDir, "game-profiles", ".origins.json"); fileExists(origins) {
+		profiles = append(profiles, origins)
+	}
 	sort.Strings(profiles)
 	for _, p := range profiles {
 		data, err := os.ReadFile(p)
@@ -406,4 +410,9 @@ func (s *Service) DeleteConfigBackup(ctx context.Context, key string) error {
 		return err
 	}
 	return st.remove(ctx, key)
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }

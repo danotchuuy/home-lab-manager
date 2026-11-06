@@ -52,6 +52,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/notify"
 	"github.com/danotchuuy/home-lab-manager/internal/players"
 	"github.com/danotchuuy/home-lab-manager/internal/prefs"
+	"github.com/danotchuuy/home-lab-manager/internal/profileshare"
 	"github.com/danotchuuy/home-lab-manager/internal/proxy"
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
 	"github.com/danotchuuy/home-lab-manager/internal/registry"
@@ -132,6 +133,8 @@ type Options struct {
 	Mods *mods.Service
 	// Discord is the Discord bot.
 	Discord *discord.Service
+	// ProfileShare imports game profiles from links and indexes.
+	ProfileShare *profileshare.Service
 	// UpdateCheckEnv is HLM_UPDATE_CHECK, which overrides the setting for
 	// how often updates are checked for, if set.
 	UpdateCheckEnv string

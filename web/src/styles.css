@@ -4406,3 +4406,47 @@ pre .muted {
 .discord-guild-error {
   color: var(--danger);
 }
+
+.profile-preview,
+.profile-link {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin: 0.75rem 0;
+}
+
+.profile-preview h3 {
+  font-size: 1rem;
+  margin: 0 0 0.3rem;
+}
+
+.profile-diff {
+  max-height: 24rem;
+  overflow: auto;
+}
+
+.profile-diff .diff-add {
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+}
+
+.profile-diff .diff-del {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+}
+
+.profile-indexes {
+  margin-top: 1rem;
+}
+
+.profile-indexes summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.profile-index h4 {
+  font-size: 0.95rem;
+  margin: 1rem 0 0.4rem;
+}
+
+.game-profiles td .badge {
+  margin-left: 0.3rem;
+}

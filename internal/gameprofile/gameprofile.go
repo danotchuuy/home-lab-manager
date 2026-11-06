@@ -45,7 +45,9 @@ type Profile struct {
 	Source   string `yaml:"-" json:"source"`
 	File     string `yaml:"-" json:"file,omitempty"`
 	Replaces bool   `yaml:"-" json:"replaces,omitempty"`
-	raw      []byte
+	// Origin is where your own profile was imported from, if from a link.
+	Origin *OriginInfo `yaml:"-" json:"origin,omitempty"`
+	raw    []byte
 }
 
 // Where profiles come from.

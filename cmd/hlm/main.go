@@ -55,6 +55,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/notify"
 	"github.com/danotchuuy/home-lab-manager/internal/players"
 	"github.com/danotchuuy/home-lab-manager/internal/prefs"
+	"github.com/danotchuuy/home-lab-manager/internal/profileshare"
 	"github.com/danotchuuy/home-lab-manager/internal/proxy"
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
 	"github.com/danotchuuy/home-lab-manager/internal/reach"
@@ -657,6 +658,12 @@ func run(log *slog.Logger) error {
 		Wake:   idleServers.Wake, Audit: auditLog, Log: log,
 	})
 	go discordBot.Run(ctx)
+	// Game profiles shared by link or index, and updates to them.
+	profileSharing := profileshare.New(profileshare.Options{
+		Store: gameProfiles, Secrets: store, Log: log,
+		Fetcher: &profileshare.Fetcher{UserAgent: "home-lab-manager/" + version + " (game profiles)"},
+	})
+	go profileSharing.Run(ctx, 20*time.Minute)
 	// The proxy server can serve the status page's sites too, through the
 	// WireGuard tunnel to hlm's port on this host.
 	// Cloudflare in front of them, when that's their HTTPS option.
@@ -721,6 +728,7 @@ func run(log *slog.Logger) error {
 		Players:       playerManager,
 		Mods:          modManager,
 		Discord:       discordBot,
+		ProfileShare:  profileSharing,
 		// Set when HLM_UPDATE_CHECK overrides the setting.
 		UpdateCheckEnv: updateCheckEnv,
 		Token:          env("HLM_TOKEN", ""),

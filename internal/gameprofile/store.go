@@ -61,7 +61,7 @@ type State struct {
 func (s *Store) State() State {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st := State{Dir: s.dir, Profiles: Current().All(), Errors: slices.Clone(s.errs)}
+	st := State{Dir: s.dir, Profiles: s.withOrigins(Current().All()), Errors: slices.Clone(s.errs)}
 	if st.Errors == nil {
 		st.Errors = []LoadError{}
 	}
@@ -69,8 +69,13 @@ func (s *Store) State() State {
 }
 
 // Import checks a profile and saves it, replacing your own profile with the
-// same id (or taking a built-in one's place).
-func (s *Store) Import(data []byte) (*Profile, error) {
+// same id (or taking a built-in one's place). If the profile came from a
+// link, it keeps its origin, and shows as changed locally.
+func (s *Store) Import(data []byte) (*Profile, error) { return s.ImportFrom(data, nil) }
+
+// ImportFrom is Import for a profile fetched from a link: origin says where
+// from (nil keeps the origin it had, if any).
+func (s *Store) ImportFrom(data []byte, origin *Origin) (*Profile, error) {
 	if len(data) > MaxSize {
 		return nil, fmt.Errorf("a profile can be at most %d KiB", MaxSize>>10)
 	}
@@ -93,11 +98,21 @@ func (s *Store) Import(data []byte) (*Profile, error) {
 	if err := writeFile(filepath.Join(s.dir, name), data); err != nil {
 		return nil, err
 	}
+	if origin != nil {
+		origins, err := s.readOrigins()
+		if err != nil {
+			return nil, err
+		}
+		origins[name] = *origin
+		if err := s.writeOrigins(origins); err != nil {
+			return nil, err
+		}
+	}
 	if err := s.reload(); err != nil {
 		return nil, err
 	}
 	if got := Current().ByID(p.ID); got != nil && got.Source == Custom {
-		return got, nil
+		return s.withOrigins([]*Profile{got})[0], nil
 	}
 	// Another file with the same id, earlier by name, is kept instead.
 	for _, e := range s.errs {
@@ -120,8 +135,17 @@ func (s *Store) Delete(id string) error {
 	if i < 0 {
 		return ErrNotFound
 	}
-	if err := os.Remove(filepath.Join(s.dir, s.custom[i].File)); err != nil {
+	file := s.custom[i].File
+	if err := os.Remove(filepath.Join(s.dir, file)); err != nil {
 		return err
+	}
+	if origins, err := s.readOrigins(); err == nil {
+		if _, ok := origins[file]; ok {
+			delete(origins, file)
+			if err := s.writeOrigins(origins); err != nil {
+				return err
+			}
+		}
 	}
 	return s.reload()
 }
@@ -163,4 +187,22 @@ func writeFile(name string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmp.Name(), name)
+}
+
+// Files are your own profiles' files, by name, for exporting them.
+func (s *Store) Files() (map[string][]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.reload(); err != nil {
+		return nil, err
+	}
+	out := map[string][]byte{}
+	for _, p := range s.custom {
+		data, err := os.ReadFile(filepath.Join(s.dir, p.File))
+		if err != nil {
+			return nil, err
+		}
+		out[p.File] = data
+	}
+	return out, nil
 }
