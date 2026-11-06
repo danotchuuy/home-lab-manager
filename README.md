@@ -1751,16 +1751,19 @@ address is limited to about two requests a second.
 
 ## Discord commands
 
-A Discord bot lets people in your Discord server check on the game servers and, if you allow it, start them, without
-hlm accounts. Set it up on **System → Discord** (admins; saving needs you to [confirm it's you](#sign-in-accounts-and-api-keys)):
+A Discord bot lets people in your Discord servers check on the game servers and, if you allow it, start them, without
+hlm accounts. One bot can answer in several Discord servers, each seeing its own game servers: friends in one, a club
+in another. Set it up on **System → Discord** (admins; saving needs you to
+[confirm it's you](#sign-in-accounts-and-api-keys)):
 
 1. In the [Discord developer portal](https://discord.com/developers/applications), make an application, and under
    **Bot** choose **Reset Token**. Paste the token into hlm. The bot needs no privileged intents and no permissions.
-2. In Discord, turn on **Developer Mode** (Settings → Advanced), right-click your server, **Copy Server ID**, and paste
-   it into hlm. Turn the bot on and save.
-3. Open the **invite link** hlm shows to add the bot to your server, then **Test**: the commands appear when you type
-   `/` in Discord.
-4. Choose what each Discord role may do, and on which [server groups](#roles-and-server-groups).
+2. In Discord, turn on **Developer Mode** (Settings → Advanced), right-click each server the bot should answer in,
+   **Copy Server ID**, and add it in hlm with **Add a Discord server**. Turn the bot on and save.
+3. Open the **invite link** hlm shows to add the bot to each server, then **Test**: each Discord server's line says
+   whether its commands are there, and they appear when you type `/` in Discord.
+4. For each Discord server, choose which game servers it **sees** (every server on the status page, or those in some
+   [server groups](#roles-and-server-groups)), and what each of its roles may do.
 
 | Command | Who | What it does |
 | --- | --- | --- |
@@ -1770,21 +1773,22 @@ hlm accounts. Set it up on **System → Discord** (admins; saving needs you to [
 | `/stop <server>`, `/restart <server>` | roles allowed **Stop**, **Restart** | Stops it, or restarts it and waits as `/start` does. |
 | `/say <server> <message>` | roles allowed **Say something** | Sends the game's [say command](#game-profiles) with `[Discord] name: message`. |
 
-- **Discord sees only the servers on the [status page](#public-status-page), as the page shows them**: their display
-  names, never hlm's names for them, and players and versions only where the page shows them. Addresses and player
-  names are shown only with **Show addresses and who's playing** on (what the page shows behind its details
-  password). The page doesn't have to be turned on.
-- **Nothing is allowed by default** but `/status`. A rule gives a role (or **Everyone**) actions on every server on the
-  page or on some server groups. Server names autocomplete with only the servers you may use; asking for any other
-  gets the same "you can't" as a server that doesn't exist.
-- **Only in your Discord server**: other servers and direct messages are refused. Each person can send 5 commands a
-  minute.
+- **Discord sees only servers on the [status page](#public-status-page), as the page shows them**: their display
+  names, never hlm's names for them, and players and versions only where the page shows them. The page doesn't have
+  to be turned on. **Each Discord server sees only the game servers chosen for it**: `/status` lists those, and no
+  command or rule reaches the others. Addresses and player names are shown only where that Discord server has
+  **Show addresses and who's playing** on (what the page shows behind its details password).
+- **Nothing is allowed by default** but `/status`. A rule gives one of that Discord server's roles (or **Everyone**)
+  actions on every server it sees, or on some server groups. Server names autocomplete with only the servers you may
+  use; asking for any other gets the same "you can't" as a server that doesn't exist.
+- **Only in the Discord servers you added**: others and direct messages are refused. Each person can send 5 commands
+  a minute.
 - **hlm connects out to Discord** (its gateway), so nothing has to reach hlm from the internet. It reconnects by
   itself, and the System page shows whether it's connected. If Discord refuses the token, the bot stops until it's
   changed.
 - **Everything is in the [activity log](#activity-audit-log)** as `discord:<username>` (via Discord): `servers.start`,
   `servers.stop`, `servers.restart` and `servers.say` with the message.
-- The token is kept with hlm's other secrets and never shown again. **Disconnect** takes the commands out of your
+- The token is kept with hlm's other secrets and never shown again. **Disconnect** takes the commands out of every
   Discord server and forgets it.
 
 ## Notifications
@@ -2360,11 +2364,11 @@ when the `HLM_*` one isn't set.
 | `DELETE /api/networks/{name}`                  | Delete a network created in hlm that no container uses.                           |
 | `GET /api/networks/interfaces`                 | The host's interfaces with their subnets and default gateway, for suggestions.    |
 | `GET /api/stats`                               | Usage of every running server, keyed by container ID.                             |
-| `GET /api/integrations/discord`                | The [Discord bot](#discord-commands)'s settings, without the token: `{settings: {enabled, guildId, rules: [{roleId, roleName, groups, actions}], details}, hasToken, state: {status, error, bot, applicationId, since, commands}, inviteUrl, actions}`. |
+| `GET /api/integrations/discord`                | The [Discord bot](#discord-commands)'s settings, without the token: `{settings: {enabled, guilds: [{id, name, groups, details, rules: [{roleId, roleName, groups, actions}]}]}, hasToken, state: {status, error, bot, applicationId, since, guilds: [{id, name, commands, error}]}, inviteUrl, actions}`. |
 | `PUT /api/integrations/discord`                | Save them (confirmed): the same `settings` fields, and `token` to replace the bot's (checked with Discord). |
-| `POST /api/integrations/discord/test`          | Checks the token and the Discord server, and adds the commands again: `{result: {bot, guild, inviteUrl, commands}, error}`. |
-| `GET /api/integrations/discord/roles`          | The Discord server's roles, for rules. |
-| `DELETE /api/integrations/discord`             | Takes the commands out of the Discord server, forgets the token and turns the bot off (confirmed). |
+| `POST /api/integrations/discord/test`          | Checks the token, and adds the commands to each Discord server again: `{result: {bot, inviteUrl, guilds: [{id, name, commands, error}]}, error}`. |
+| `GET /api/integrations/discord/roles?guild=`   | One Discord server's roles, for rules. |
+| `DELETE /api/integrations/discord`             | Takes the commands out of every Discord server, forgets the token and turns the bot off (confirmed). |
 | `GET /api/integrations/unifi`                  | UniFi settings, without credentials.                                              |
 | `PUT /api/integrations/unifi`                  | Save UniFi settings (tested first). Empty `password`/`apiKey` keeps the saved one. |
 | `POST /api/integrations/unifi/test`            | Test settings without saving. An untrusted certificate returns `certFingerprint`. |

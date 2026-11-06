@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import type {
   DiscordAction,
+  DiscordGuild,
+  DiscordGuildState,
   DiscordRole,
   DiscordRule,
   DiscordSettings as Settings,
@@ -27,49 +29,53 @@ const STATUS: Record<DiscordView["state"]["status"], string> = {
   error: "Stopped",
 };
 
+const NEW_GUILD: DiscordGuild = { id: "", groups: [], details: false, rules: [] };
+
+/** A Discord server's roles, or why they couldn't be read. */
+type Roles = { roles?: DiscordRole[]; error?: string };
+
 /**
- * Connects a Discord bot, and says what each Discord role may do. The bot
- * token never comes back from the server.
+ * Connects a Discord bot to one or more Discord servers, each with the game
+ * servers it sees and what each of its roles may do. The bot token never
+ * comes back from the server.
  */
 export function DiscordSettings() {
   const [view, setView] = useState<DiscordView>();
   const [form, setForm] = useState<Settings>();
   const [token, setToken] = useState("");
   const [editingToken, setEditingToken] = useState(false);
-  const [roles, setRoles] = useState<DiscordRole[]>();
-  const [rolesError, setRolesError] = useState<string>();
+  // Roles by Discord server ID.
+  const [roles, setRoles] = useState<Record<string, Roles>>({});
   const [groups, setGroups] = useState<ServerGroup[]>([]);
   const [test, setTest] = useState<DiscordTest>();
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
 
-  const show = useCallback((v: DiscordView) => {
-    setView(v);
-    setForm(v.settings);
+  const loadRoles = useCallback((v: DiscordView) => {
+    if (!v.hasToken) return;
+    for (const g of v.settings.guilds) {
+      api.discordRoles(g.id).then(
+        (r) => setRoles((cur) => ({ ...cur, [g.id]: { roles: r } })),
+        (e) => setRoles((cur) => ({ ...cur, [g.id]: { error: (e as Error).message } })),
+      );
+    }
   }, []);
-  const loadRoles = useCallback(() => {
-    api.discordRoles().then(
-      (r) => {
-        setRoles(r);
-        setRolesError(undefined);
-      },
-      (e) => setRolesError((e as Error).message),
-    );
-  }, []);
+  const show = useCallback(
+    (v: DiscordView) => {
+      setView(v);
+      setForm(v.settings);
+      loadRoles(v);
+    },
+    [loadRoles],
+  );
 
   useEffect(() => {
-    api.discord().then(
-      (v) => {
-        show(v);
-        if (v.hasToken && v.settings.guildId) loadRoles();
-      },
-      (e) => setError((e as Error).message),
-    );
+    api.discord().then(show, (e) => setError((e as Error).message));
     api.groups().then(setGroups, () => {});
-  }, [show, loadRoles]);
+  }, [show]);
 
-  // The connection's state changes on its own: follow it while it's open.
+  // The connection's state changes on its own: follow it while it's on.
   useEffect(() => {
     if (!view?.settings.enabled) return;
     const t = setInterval(() => {
@@ -84,11 +90,10 @@ export function DiscordSettings() {
   if (!view || !form) return error ? <div className="alert error small">{error}</div> : <Spinner />;
 
   const needsToken = !view.hasToken || editingToken;
-  const set = (patch: Partial<Settings>) => setForm({ ...form, ...patch });
-  const setRule = (i: number, patch: Partial<DiscordRule>) =>
-    set({ rules: form.rules.map((r, j) => (j === i ? { ...r, ...patch } : r)) });
-  const roleName = (id: string) =>
-    roles?.find((r) => r.id === id)?.name ?? form.rules.find((r) => r.roleId === id)?.roleName ?? id;
+  const setGuild = (i: number, patch: Partial<DiscordGuild>) =>
+    setForm({ ...form, guilds: form.guilds.map((g, j) => (j === i ? { ...g, ...patch } : g)) });
+  const guildState = (id: string): DiscordGuildState | undefined =>
+    test?.result.guilds?.find((g) => g.id === id) ?? view.state.guilds?.find((g) => g.id === id);
 
   async function save() {
     if (!form) return;
@@ -96,13 +101,20 @@ export function DiscordSettings() {
     setError(undefined);
     setNotice(undefined);
     try {
-      const rules = form.rules.map((r) => ({ ...r, roleName: roleName(r.roleId) }));
-      const v = await api.saveDiscord({ ...form, rules }, needsToken && token.trim() ? token.trim() : undefined);
+      const guilds = form.guilds.map((g) => ({
+        ...g,
+        id: g.id.trim(),
+        rules: g.rules.map((r) => ({
+          ...r,
+          roleName: roles[g.id]?.roles?.find((x) => x.id === r.roleId)?.name ?? r.roleName,
+        })),
+      }));
+      const v = await api.saveDiscord({ ...form, guilds }, needsToken && token.trim() ? token.trim() : undefined);
       show(v);
       setToken("");
       setEditingToken(false);
+      setTest(undefined);
       setNotice("Saved.");
-      if (v.hasToken && v.settings.guildId) loadRoles();
     } catch (e) {
       setError((e as Error).message);
     }
@@ -116,7 +128,7 @@ export function DiscordSettings() {
     try {
       const t = await api.testDiscord();
       setTest(t);
-      if (!t.error) loadRoles();
+      if (!t.error) loadRoles(view!);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -124,13 +136,13 @@ export function DiscordSettings() {
   }
 
   async function disconnect() {
-    if (!confirm("Turn the bot off, take its commands out of the Discord server and forget its token?")) return;
+    if (!confirm("Turn the bot off, take its commands out of every Discord server and forget its token?")) return;
     setBusy("disconnect");
     setError(undefined);
     try {
       show(await api.disconnectDiscord());
       setTest(undefined);
-      setRoles(undefined);
+      setRoles({});
       setNotice("The bot is off and its token forgotten.");
     } catch (e) {
       setError((e as Error).message);
@@ -141,15 +153,14 @@ export function DiscordSettings() {
 
   const st = view.state;
   const invite = test?.result.inviteUrl || view.inviteUrl;
-  const unusedRoles = (roles ?? []).filter((r) => !form.rules.some((x) => x.roleId === r.id));
 
   return (
     <div className="discord-settings">
       <p className="muted small">
-        People in your Discord server can use <code>/status</code>, <code>/players</code>, <code>/start</code>,{" "}
+        People in your Discord servers can use <code>/status</code>, <code>/players</code>, <code>/start</code>,{" "}
         <code>/stop</code>, <code>/restart</code> and <code>/say</code>. hlm connects out to Discord, so nothing has to
-        reach hlm from the internet. Discord sees only the servers on the{" "}
-        <Link to="/system#status-page">status page</Link>, as the page shows them.
+        reach hlm from the internet. Discord sees only servers on the <Link to="/system#status-page">status page</Link>,
+        as the page shows them, and each Discord server only the ones you choose.
       </p>
 
       {view.hasToken && (
@@ -165,7 +176,6 @@ export function DiscordSettings() {
                   since <Ago iso={st.since} />
                 </>
               )}
-              {st.commands ? " · commands added" : ""}
             </>
           )}
           {st.error && <span className="muted"> · {st.error}</span>}
@@ -187,13 +197,13 @@ export function DiscordSettings() {
             privileged intents.
           </li>
           <li>
-            In Discord, turn on <strong>Developer Mode</strong> (Settings → Advanced), then right-click your server and
-            choose <strong>Copy Server ID</strong>.
+            In Discord, turn on <strong>Developer Mode</strong> (Settings → Advanced), then right-click each server the
+            bot should answer in and choose <strong>Copy Server ID</strong>.
           </li>
           <li>
-            Save, then open the invite link that appears here to add the bot to your server. It asks for no permissions.
+            Save, then open the invite link that appears here to add the bot to each server. It asks for no permissions.
           </li>
-          <li>Choose which roles may do what. Everyone in the server can use /status.</li>
+          <li>For each Discord server, choose the game servers it sees and what its roles may do.</li>
         </ol>
       </details>
 
@@ -217,32 +227,156 @@ export function DiscordSettings() {
             </span>
           )}
         </label>
+      </div>
+      <label className="checkbox">
+        <input
+          type="checkbox"
+          checked={form.enabled}
+          onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
+        />{" "}
+        Turn the bot on
+      </label>
+
+      <h3>Discord servers</h3>
+      {form.guilds.length === 0 && <p className="muted small">None yet: add the Discord servers the bot answers in.</p>}
+      {form.guilds.map((g, i) => (
+        <GuildEditor
+          key={i}
+          guild={g}
+          state={guildState(g.id)}
+          roles={roles[g.id]}
+          saved={view.hasToken && view.settings.guilds.some((x) => x.id === g.id)}
+          groups={groups}
+          onChange={(patch) => setGuild(i, patch)}
+          onRemove={() => setForm({ ...form, guilds: form.guilds.filter((_, j) => j !== i) })}
+        />
+      ))}
+      <button className="btn small" onClick={() => setForm({ ...form, guilds: [...form.guilds, { ...NEW_GUILD }] })}>
+        Add a Discord server
+      </button>
+
+      {error && <div className="alert error small">{error}</div>}
+      {notice && <div className="alert info small">{notice}</div>}
+      {test?.error && <div className="alert error small">{test.error}</div>}
+      {test && !test.error && (
+        <div className="alert info small">
+          {test.result.bot} is connected. Each Discord server&apos;s line above says whether its commands are there.
+        </div>
+      )}
+      {invite && (
+        <p className="small">
+          Invite link:{" "}
+          <a href={invite} target="_blank" rel="noreferrer noopener">
+            add the bot to a Discord server
+          </a>
+        </p>
+      )}
+      <div className="btn-row">
+        <button className="btn primary small" onClick={save} disabled={!!busy}>
+          {busy === "save" ? "Saving…" : "Save"}
+        </button>
+        {view.hasToken && (
+          <>
+            <button className="btn small" onClick={runTest} disabled={!!busy}>
+              {busy === "test" ? "Testing…" : "Test"}
+            </button>
+            <button className="btn small danger" onClick={disconnect} disabled={!!busy}>
+              Disconnect
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** One Discord server: which game servers it sees, and its rules. */
+function GuildEditor({
+  guild,
+  state,
+  roles,
+  saved,
+  groups,
+  onChange,
+  onRemove,
+}: {
+  guild: DiscordGuild;
+  state?: DiscordGuildState;
+  roles?: Roles;
+  saved: boolean;
+  groups: ServerGroup[];
+  onChange: (patch: Partial<DiscordGuild>) => void;
+  onRemove: () => void;
+}) {
+  const setRule = (i: number, patch: Partial<DiscordRule>) =>
+    onChange({ rules: guild.rules.map((r, j) => (j === i ? { ...r, ...patch } : r)) });
+  const roleName = (id: string) => {
+    const name = roles?.roles?.find((r) => r.id === id)?.name ?? guild.rules.find((r) => r.roleId === id)?.roleName;
+    return !name || name === "@everyone" || id === guild.id ? (id === guild.id ? "Everyone" : id) : name;
+  };
+  // A rule can narrow to the groups this Discord server sees.
+  const ruleGroups = guild.groups.length ? groups.filter((g) => guild.groups.includes(g.id)) : groups;
+  const unusedRoles = (roles?.roles ?? []).filter((r) => !guild.rules.some((x) => x.roleId === r.id));
+  const toggle = (list: string[], id: string, on: boolean) => (on ? [...list, id] : list.filter((x) => x !== id));
+
+  return (
+    <div className="discord-guild">
+      <div className="discord-rule-head">
+        <strong>{guild.name || state?.name || (guild.id ? `Discord server ${guild.id}` : "New Discord server")}</strong>
+        <button className="btn small" onClick={onRemove}>
+          Remove
+        </button>
+      </div>
+      {state && (
+        <p className={`small ${state.error ? "discord-guild-error" : "muted"}`}>
+          {state.error ?? (state.commands ? `Commands added${state.name ? ` in ${state.name}` : ""}.` : "")}
+        </p>
+      )}
+      <div className="field-grid">
         <label className="field">
           <span className="field-label">Discord server ID</span>
           <input
-            value={form.guildId}
-            onChange={(e) => set({ guildId: e.target.value })}
+            value={guild.id}
+            onChange={(e) => onChange({ id: e.target.value })}
             inputMode="numeric"
             placeholder="123456789012345678"
           />
         </label>
+        <label className="field">
+          <span className="field-label">Name here (optional)</span>
+          <input value={guild.name ?? ""} onChange={(e) => onChange({ name: e.target.value })} maxLength={100} />
+        </label>
       </div>
-      <label className="checkbox">
-        <input type="checkbox" checked={form.enabled} onChange={(e) => set({ enabled: e.target.checked })} /> Turn the
-        bot on
-      </label>
-      <label className="checkbox">
-        <input type="checkbox" checked={form.details} onChange={(e) => set({ details: e.target.checked })} /> Show
+
+      <div className="discord-checks small">
+        <span className="muted">Sees:</span>
+        <label className="checkbox">
+          <input type="checkbox" checked={guild.groups.length === 0} onChange={() => onChange({ groups: [] })} /> every
+          server on the status page
+        </label>
+        {groups.map((g) => (
+          <label key={g.id} className="checkbox">
+            <input
+              type="checkbox"
+              checked={guild.groups.includes(g.id)}
+              onChange={(e) => onChange({ groups: toggle(guild.groups, g.id, e.target.checked) })}
+            />{" "}
+            {g.name}
+          </label>
+        ))}
+      </div>
+      <label className="checkbox small">
+        <input type="checkbox" checked={guild.details} onChange={(e) => onChange({ details: e.target.checked })} /> Show
         addresses and who&apos;s playing (what the status page shows behind its details password)
       </label>
 
-      <h3>Who may do what</h3>
-      {form.rules.length === 0 && <p className="muted small">No rules: everyone can use /status, and nothing else.</p>}
-      {form.rules.map((r, i) => (
+      <h4>Who may do what</h4>
+      {guild.rules.length === 0 && <p className="muted small">No rules: everyone can use /status, and nothing else.</p>}
+      {guild.rules.map((r, i) => (
         <div key={r.roleId} className="discord-rule">
           <div className="discord-rule-head">
-            <strong>{roleName(r.roleId) === "@everyone" ? "Everyone" : roleName(r.roleId)}</strong>
-            <button className="btn small" onClick={() => set({ rules: form.rules.filter((_, j) => j !== i) })}>
+            <strong>{roleName(r.roleId)}</strong>
+            <button className="btn small" onClick={() => onChange({ rules: guild.rules.filter((_, j) => j !== i) })}>
               Remove
             </button>
           </div>
@@ -266,18 +400,14 @@ export function DiscordSettings() {
             <span className="muted">On:</span>
             <label className="checkbox">
               <input type="checkbox" checked={r.groups.length === 0} onChange={() => setRule(i, { groups: [] })} />{" "}
-              every server on the status page
+              every server it sees
             </label>
-            {groups.map((g) => (
+            {ruleGroups.map((g) => (
               <label key={g.id} className="checkbox">
                 <input
                   type="checkbox"
                   checked={r.groups.includes(g.id)}
-                  onChange={(e) =>
-                    setRule(i, {
-                      groups: e.target.checked ? [...r.groups, g.id] : r.groups.filter((x) => x !== g.id),
-                    })
-                  }
+                  onChange={(e) => setRule(i, { groups: toggle(r.groups, g.id, e.target.checked) })}
                 />{" "}
                 {g.name}
               </label>
@@ -285,17 +415,17 @@ export function DiscordSettings() {
           </div>
         </div>
       ))}
-      {roles ? (
+      {roles?.roles ? (
         unusedRoles.length > 0 && (
           <label className="field add-role">
             <span className="field-label">Add a role</span>
             <select
               value=""
               onChange={(e) => {
-                const role = roles.find((x) => x.id === e.target.value);
+                const role = roles.roles?.find((x) => x.id === e.target.value);
                 if (role)
-                  set({
-                    rules: [...form.rules, { roleId: role.id, roleName: role.name, groups: [], actions: ["players"] }],
+                  onChange({
+                    rules: [...guild.rules, { roleId: role.id, roleName: role.name, groups: [], actions: ["players"] }],
                   });
               }}
             >
@@ -310,41 +440,11 @@ export function DiscordSettings() {
         )
       ) : (
         <p className="muted small">
-          {rolesError ?? "Save the token and server ID, and add the bot to your server, to choose roles."}
+          {saved
+            ? (roles?.error ?? "Reading its roles…")
+            : "Save the bot's token and this Discord server, and add the bot to it, to choose roles."}
         </p>
       )}
-
-      {error && <div className="alert error small">{error}</div>}
-      {notice && <div className="alert info small">{notice}</div>}
-      {test && (
-        <div className={`alert small ${test.error ? "error" : "info"}`}>
-          {test.error ??
-            `${test.result.bot} is in ${test.result.guild}, and its commands are there. Type / in Discord to see them.`}
-        </div>
-      )}
-      {invite && (
-        <p className="small">
-          Invite link:{" "}
-          <a href={invite} target="_blank" rel="noreferrer noopener">
-            add the bot to your Discord server
-          </a>
-        </p>
-      )}
-      <div className="btn-row">
-        <button className="btn primary small" onClick={save} disabled={!!busy}>
-          {busy === "save" ? "Saving…" : "Save"}
-        </button>
-        {view.hasToken && (
-          <>
-            <button className="btn small" onClick={runTest} disabled={!!busy}>
-              {busy === "test" ? "Testing…" : "Test"}
-            </button>
-            <button className="btn small danger" onClick={disconnect} disabled={!!busy}>
-              Disconnect
-            </button>
-          </>
-        )}
-      </div>
     </div>
   );
 }

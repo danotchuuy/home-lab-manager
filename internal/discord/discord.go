@@ -44,26 +44,49 @@ var Actions = []string{ActionPlayers, ActionStart, ActionStop, ActionRestart, Ac
 // Settings are the bot's settings.
 type Settings struct {
 	Enabled bool `json:"enabled"`
-	// GuildID is the Discord server the bot answers in.
-	GuildID string `json:"guildId"`
-	// Rules say what each Discord role may do.
-	Rules []Rule `json:"rules"`
-	// Details shows addresses and who's playing, as the status page does
-	// behind its details password.
-	Details bool `json:"details"`
+	// Guilds are the Discord servers the bot answers in, each with the
+	// game servers it sees.
+	Guilds []Guild `json:"guilds"`
 	// Token is the bot's token; the API never sends it.
 	Token string `json:"token,omitempty"`
 }
 
+// Guild is a Discord server the bot answers in.
+type Guild struct {
+	ID string `json:"id"`
+	// Name is what it's called here.
+	Name string `json:"name,omitempty"`
+	// Groups are the hlm server groups whose servers (of those on the
+	// status page) it sees; none means every server on the page.
+	Groups []string `json:"groups"`
+	// Details shows addresses and who's playing, as the status page does
+	// behind its details password.
+	Details bool `json:"details"`
+	// Rules say what each of its roles may do.
+	Rules []Rule `json:"rules"`
+}
+
 // Rule lets a Discord role do things to some servers.
 type Rule struct {
-	// RoleID is the Discord role; the server's own ID is @everyone.
+	// RoleID is the Discord role; the Discord server's own ID is
+	// @everyone.
 	RoleID string `json:"roleId"`
 	// RoleName is the role's name when the rule was saved, for showing.
 	RoleName string `json:"roleName,omitempty"`
-	// Groups are hlm server groups; none means every server on the page.
+	// Groups narrow it to some hlm server groups; none means every server
+	// the Discord server sees.
 	Groups  []string `json:"groups"`
 	Actions []string `json:"actions"`
+}
+
+// guild finds one of the Discord servers by ID.
+func (set Settings) guild(id string) (Guild, bool) {
+	for _, g := range set.Guilds {
+		if g.ID == id {
+			return g, true
+		}
+	}
+	return Guild{}, false
 }
 
 // State is how the connection is.
@@ -74,8 +97,17 @@ type State struct {
 	Bot           string    `json:"bot,omitempty"`
 	ApplicationID string    `json:"applicationId,omitempty"`
 	Since         time.Time `json:"since,omitzero"`
-	// Commands says the slash commands are in the Discord server.
-	Commands bool `json:"commands"`
+	// Guilds say whether each Discord server has the slash commands.
+	Guilds []GuildState `json:"guilds,omitempty"`
+}
+
+// GuildState is how one Discord server is.
+type GuildState struct {
+	ID string `json:"id"`
+	// Name is its name in Discord, when the bot can see it.
+	Name     string `json:"name,omitempty"`
+	Commands bool   `json:"commands"`
+	Error    string `json:"error,omitempty"`
 }
 
 // Servers is what the bot needs from the server manager.
@@ -161,8 +193,8 @@ func (s *Service) client(token string) *Client {
 func (s *Service) settings() (Settings, error) {
 	var set Settings
 	_, err := s.opts.Secrets.Get(secretName, &set)
-	if set.Rules == nil {
-		set.Rules = []Rule{}
+	if set.Guilds == nil {
+		set.Guilds = []Guild{}
 	}
 	return set, err
 }
@@ -191,6 +223,7 @@ func (s *Service) setState(f func(*State)) {
 
 // Limits on the settings.
 const (
+	maxGuilds   = 20
 	maxRules    = 50
 	maxTokenLen = 200
 )
@@ -217,47 +250,87 @@ func (s *Service) Save(ctx context.Context, in Settings, token *string) (Setting
 		}
 		in.Token = t
 	}
-	in.GuildID = strings.TrimSpace(in.GuildID)
-	if in.GuildID != "" && !ValidID(in.GuildID) {
-		return Settings{}, errors.New("the Discord server ID is a number: in Discord, turn on Developer Mode, then right-click the server and Copy Server ID")
+	if len(in.Guilds) > maxGuilds {
+		return Settings{}, fmt.Errorf("at most %d Discord servers", maxGuilds)
 	}
-	if in.Enabled && (in.Token == "" || in.GuildID == "") {
-		return Settings{}, errors.New("the bot needs its token and the Discord server's ID")
+	if in.Guilds == nil {
+		in.Guilds = []Guild{}
 	}
-	if len(in.Rules) > maxRules {
-		return Settings{}, fmt.Errorf("at most %d rules", maxRules)
+	if in.Enabled && (in.Token == "" || len(in.Guilds) == 0) {
+		return Settings{}, errors.New("the bot needs its token and at least one Discord server")
 	}
-	if in.Rules == nil {
-		in.Rules = []Rule{}
-	}
-	for i := range in.Rules {
-		r := &in.Rules[i]
-		if !ValidID(r.RoleID) {
-			return Settings{}, fmt.Errorf("rule %d: %q isn't a Discord role ID", i+1, r.RoleID)
+	var groups map[string][]string
+	checkGroups := func(where string, ids []string) error {
+		if len(ids) == 0 || s.opts.Groups == nil {
+			return nil
 		}
-		r.RoleName = strings.TrimSpace(r.RoleName)
-		if len(r.RoleName) > 100 {
-			r.RoleName = r.RoleName[:100]
-		}
-		for _, a := range r.Actions {
-			if !slices.Contains(Actions, a) {
-				return Settings{}, fmt.Errorf("rule %d: unknown action %q", i+1, a)
+		if groups == nil {
+			var err error
+			if groups, err = s.opts.Groups(); err != nil {
+				return err
 			}
 		}
-		slices.Sort(r.Actions)
-		r.Actions = slices.Compact(r.Actions)
-		if r.Groups == nil {
-			r.Groups = []string{}
-		}
-		if len(r.Groups) > 0 && s.opts.Groups != nil {
-			all, err := s.opts.Groups()
-			if err != nil {
-				return Settings{}, err
+		for _, g := range ids {
+			if _, ok := groups[g]; !ok {
+				return fmt.Errorf("%s: there's no server group %q", where, g)
 			}
-			for _, g := range r.Groups {
-				if _, ok := all[g]; !ok {
-					return Settings{}, fmt.Errorf("rule %d: there's no server group %q", i+1, g)
+		}
+		return nil
+	}
+	seen := map[string]bool{}
+	for gi := range in.Guilds {
+		g := &in.Guilds[gi]
+		g.ID = strings.TrimSpace(g.ID)
+		if !ValidID(g.ID) {
+			return Settings{}, errors.New("a Discord server ID is a number: in Discord, turn on Developer Mode, then right-click the server and Copy Server ID")
+		}
+		if seen[g.ID] {
+			return Settings{}, fmt.Errorf("Discord server %s is there twice", g.ID)
+		}
+		seen[g.ID] = true
+		g.Name = strings.TrimSpace(g.Name)
+		if len(g.Name) > 100 {
+			g.Name = g.Name[:100]
+		}
+		where := cmpOr(g.Name, g.ID)
+		if g.Groups == nil {
+			g.Groups = []string{}
+		}
+		if err := checkGroups(where, g.Groups); err != nil {
+			return Settings{}, err
+		}
+		if len(g.Rules) > maxRules {
+			return Settings{}, fmt.Errorf("%s: at most %d rules", where, maxRules)
+		}
+		if g.Rules == nil {
+			g.Rules = []Rule{}
+		}
+		roles := map[string]bool{}
+		for i := range g.Rules {
+			r := &g.Rules[i]
+			if !ValidID(r.RoleID) {
+				return Settings{}, fmt.Errorf("%s, rule %d: %q isn't a Discord role ID", where, i+1, r.RoleID)
+			}
+			if roles[r.RoleID] {
+				return Settings{}, fmt.Errorf("%s: two rules for the same role", where)
+			}
+			roles[r.RoleID] = true
+			r.RoleName = strings.TrimSpace(r.RoleName)
+			if len(r.RoleName) > 100 {
+				r.RoleName = r.RoleName[:100]
+			}
+			for _, a := range r.Actions {
+				if !slices.Contains(Actions, a) {
+					return Settings{}, fmt.Errorf("%s, rule %d: unknown action %q", where, i+1, a)
 				}
+			}
+			slices.Sort(r.Actions)
+			r.Actions = slices.Compact(r.Actions)
+			if r.Groups == nil {
+				r.Groups = []string{}
+			}
+			if err := checkGroups(fmt.Sprintf("%s, rule %d", where, i+1), r.Groups); err != nil {
+				return Settings{}, err
 			}
 		}
 	}
@@ -277,13 +350,27 @@ func (s *Service) Disconnect(ctx context.Context) error {
 		return err
 	}
 	var cleanup error
-	if set.Token != "" && set.GuildID != "" {
-		if app := s.State().ApplicationID; app != "" {
-			cleanup = s.client(set.Token).SetCommands(ctx, app, set.GuildID, nil)
-		} else if a, err := s.client(set.Token).App(ctx); err == nil {
-			cleanup = s.client(set.Token).SetCommands(ctx, a.ID, set.GuildID, nil)
-		} else {
-			cleanup = err
+	if set.Token != "" && len(set.Guilds) > 0 {
+		c := s.client(set.Token)
+		app := s.State().ApplicationID
+		if app == "" {
+			if a, err := c.App(ctx); err == nil {
+				app = a.ID
+			} else {
+				cleanup = err
+			}
+		}
+		if app != "" {
+			var failed []string
+			for _, g := range set.Guilds {
+				if err := c.SetCommands(ctx, app, g.ID, nil); err != nil {
+					failed = append(failed, cmpOr(g.Name, g.ID))
+					cleanup = err
+				}
+			}
+			if cleanup != nil {
+				cleanup = fmt.Errorf("%s: %w", strings.Join(failed, ", "), cleanup)
+			}
 		}
 	}
 	set.Token, set.Enabled = "", false
@@ -292,21 +379,24 @@ func (s *Service) Disconnect(ctx context.Context) error {
 	}
 	s.poke()
 	if cleanup != nil {
-		return fmt.Errorf("the bot is off and its token forgotten, but its commands couldn't be removed from the Discord server: %w", cleanup)
+		return fmt.Errorf("the bot is off and its token forgotten, but its commands couldn't be removed from every Discord server: %w", cleanup)
 	}
 	return nil
 }
 
-// Roles lists the Discord server's roles, for choosing rules.
-func (s *Service) Roles(ctx context.Context) ([]Role, error) {
+// Roles lists one of the Discord servers' roles, for choosing rules.
+func (s *Service) Roles(ctx context.Context, guild string) ([]Role, error) {
 	set, err := s.settings()
 	if err != nil {
 		return nil, err
 	}
-	if set.Token == "" || set.GuildID == "" {
-		return nil, errors.New("save the bot's token and the Discord server's ID first")
+	if set.Token == "" {
+		return nil, errors.New("save the bot's token first")
 	}
-	rs, err := s.client(set.Token).Roles(ctx, set.GuildID)
+	if _, ok := set.guild(guild); !ok {
+		return nil, errors.New("save that Discord server first")
+	}
+	rs, err := s.client(set.Token).Roles(ctx, guild)
 	if err != nil {
 		var ae *APIError
 		if errors.As(err, &ae) && (ae.Status == http.StatusForbidden || ae.Status == http.StatusNotFound) {
@@ -332,7 +422,7 @@ func (s *Service) poke() {
 func (s *Service) Run(ctx context.Context) {
 	for {
 		set, err := s.settings()
-		if err != nil || !set.Enabled || set.Token == "" || set.GuildID == "" {
+		if err != nil || !set.Enabled || set.Token == "" || len(set.Guilds) == 0 {
 			s.setState(func(st *State) { *st = State{Status: "off"} })
 			select {
 			case <-ctx.Done():
@@ -369,7 +459,7 @@ func (s *Service) connectLoop(ctx context.Context, set Settings) {
 			*st = State{Status: "connected", Bot: r.User.Display(), ApplicationID: r.Application.ID, Since: s.opts.Now()}
 		})
 		s.opts.Log.Info("discord: connected", "bot", r.User.Username)
-		go s.register(ctx, c, r.Application.ID, set.GuildID)
+		go s.register(ctx, c, r.Application.ID, set.Guilds)
 	}
 	g.onInteraction = func(in Interaction) { s.handle(ctx, c, in) }
 	backoff := time.Second
@@ -407,41 +497,51 @@ func (s *Service) connectLoop(ctx context.Context, set Settings) {
 	}
 }
 
-// register puts the slash commands in the Discord server.
-func (s *Service) register(ctx context.Context, c *Client, app, guild string) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+// register puts the slash commands in each Discord server.
+func (s *Service) register(ctx context.Context, c *Client, app string, guilds []Guild) {
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	err := c.SetCommands(ctx, app, guild, slashCommands())
-	s.setState(func(st *State) {
-		st.Commands = err == nil
-		st.Error = ""
-		if err != nil {
-			st.Error = "couldn't add the commands to the Discord server (has the bot been invited to it?): " + err.Error()
-		}
-	})
-	if err != nil {
-		s.opts.Log.Warn("discord: register commands", "err", err)
+	states := make([]GuildState, len(guilds))
+	for i, g := range guilds {
+		states[i] = s.registerOne(ctx, c, app, g.ID)
 	}
+	s.setState(func(st *State) {
+		st.Guilds, st.Error = states, ""
+	})
+}
+
+// registerOne puts the commands in one Discord server.
+func (s *Service) registerOne(ctx context.Context, c *Client, app, guild string) GuildState {
+	gs := GuildState{ID: guild}
+	if g, err := c.Guild(ctx, guild); err == nil {
+		gs.Name = g.Name
+	}
+	if err := c.SetCommands(ctx, app, guild, slashCommands()); err != nil {
+		s.opts.Log.Warn("discord: register commands", "guild", guild, "err", err)
+		gs.Error = "couldn't add the commands (has the bot been invited to it?): " + err.Error()
+		return gs
+	}
+	gs.Commands = true
+	return gs
 }
 
 // TestResult is what Test found.
 type TestResult struct {
 	Bot       string `json:"bot"`
-	Guild     string `json:"guild"`
 	InviteURL string `json:"inviteUrl"`
-	// Commands says the slash commands were put in the Discord server.
-	Commands bool `json:"commands"`
+	// Guilds say how each Discord server went.
+	Guilds []GuildState `json:"guilds"`
 }
 
-// Test checks the token and the Discord server, and puts the commands in
-// it again.
+// Test checks the token, and puts the commands in each Discord server
+// again.
 func (s *Service) Test(ctx context.Context) (TestResult, error) {
 	set, err := s.settings()
 	if err != nil {
 		return TestResult{}, err
 	}
-	if set.Token == "" || set.GuildID == "" {
-		return TestResult{}, errors.New("save the bot's token and the Discord server's ID first")
+	if set.Token == "" || len(set.Guilds) == 0 {
+		return TestResult{}, errors.New("save the bot's token and a Discord server first")
 	}
 	c := s.client(set.Token)
 	me, err := c.Me(ctx)
@@ -452,19 +552,17 @@ func (s *Service) Test(ctx context.Context) (TestResult, error) {
 	if err != nil {
 		return TestResult{}, err
 	}
-	res := TestResult{Bot: me.Display(), InviteURL: InviteURL(app.ID)}
-	g, err := c.Guild(ctx, set.GuildID)
-	if err != nil {
-		return res, errors.New("the bot isn't in that Discord server yet: open its invite link, add it, then test again")
+	res := TestResult{Bot: me.Display(), InviteURL: InviteURL(app.ID), Guilds: []GuildState{}}
+	for _, g := range set.Guilds {
+		gs := s.registerOne(ctx, c, app.ID, g.ID)
+		if gs.Name == "" && !gs.Commands {
+			gs.Error = "the bot isn't in this Discord server yet: open its invite link, add it, then test again"
+		}
+		res.Guilds = append(res.Guilds, gs)
 	}
-	res.Guild = g.Name
-	if err := c.SetCommands(ctx, app.ID, set.GuildID, slashCommands()); err != nil {
-		return res, fmt.Errorf("couldn't add the commands to %s: %w", g.Name, err)
-	}
-	res.Commands = true
 	s.setState(func(st *State) {
 		if st.Status == "connected" {
-			st.Commands, st.Error = true, ""
+			st.Guilds, st.Error = res.Guilds, ""
 		}
 	})
 	return res, nil

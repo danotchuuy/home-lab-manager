@@ -182,18 +182,18 @@ type Role struct {
 	Position int    `json:"position"`
 }
 
-// Guild is a Discord server.
-type Guild struct {
+// GuildInfo is a Discord server as Discord describes it.
+type GuildInfo struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
 
 // Guild looks up a guild the bot is in.
-func (c *Client) Guild(ctx context.Context, id string) (Guild, error) {
+func (c *Client) Guild(ctx context.Context, id string) (GuildInfo, error) {
 	if !ValidID(id) {
-		return Guild{}, fmt.Errorf("%q isn't a Discord server ID", id)
+		return GuildInfo{}, fmt.Errorf("%q isn't a Discord server ID", id)
 	}
-	var g Guild
+	var g GuildInfo
 	err := c.do(ctx, http.MethodGet, "/guilds/"+id, nil, &g)
 	return g, err
 }

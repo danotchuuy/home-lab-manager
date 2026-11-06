@@ -11,10 +11,13 @@
 > - **Rules are the bot's own, not rbac grants**: each is a Discord role (or Everyone), actions, and server groups (or
 >   every server on the page), checked with the same group membership (by name and by whole host). Audit entries are
 >   `discord:<username>` with the new actor kind `discord`.
-> - **Discord sees the status page's servers**, whether or not the page is on, through a new `statuspage.All`. Which
->   ones it may act on comes from the rules. Addresses and player names need the new **Show addresses and who's
->   playing** setting, the Discord version of the page's details password.
-> - **Commands are registered in the one Discord server**, not globally, so they appear at once; `/stop` replies when
+> - **Discord sees the status page's servers**, whether or not the page is on, through a new `statuspage.All`, narrowed
+>   per Discord server; which ones it may act on comes from the rules. Addresses and player names need the new **Show
+>   addresses and who's playing** setting, the Discord version of the page's details password.
+> - **Several Discord servers, not one.** One bot answers in up to 20 Discord servers, each with the server groups
+>   whose game servers it sees (or all on the page), its own details setting and its own role rules; a Discord server
+>   can't see or act on another's game servers.
+> - **Commands are registered in each Discord server**, not globally, so they appear at once; `/stop` replies when
 >   the server has stopped; refusals are private (ephemeral) and the same for unknown servers and forbidden ones.
 > - **The token is checked with Discord when saved.** `GET …/discord/roles` lists the server's roles for the rule
 >   editor.

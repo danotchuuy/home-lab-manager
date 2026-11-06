@@ -333,17 +333,32 @@ export type DiscordAction = "players" | "start" | "stop" | "restart" | "say";
 export interface DiscordRule {
   roleId: string;
   roleName?: string;
-  /** Server group IDs; none means every server on the status page. */
+  /** Server group IDs; none means every server the Discord server sees. */
   groups: string[];
   actions: DiscordAction[];
 }
 
-export interface DiscordSettings {
-  enabled: boolean;
-  guildId: string;
-  rules: DiscordRule[];
+/** A Discord server the bot answers in. */
+export interface DiscordGuild {
+  id: string;
+  name?: string;
+  /** Server group IDs whose servers (on the status page) it sees; none means all of them. */
+  groups: string[];
   /** Show addresses and who's playing. */
   details: boolean;
+  rules: DiscordRule[];
+}
+
+export interface DiscordSettings {
+  enabled: boolean;
+  guilds: DiscordGuild[];
+}
+
+export interface DiscordGuildState {
+  id: string;
+  name?: string;
+  commands: boolean;
+  error?: string;
 }
 
 export interface DiscordState {
@@ -352,7 +367,7 @@ export interface DiscordState {
   bot?: string;
   applicationId?: string;
   since?: string;
-  commands: boolean;
+  guilds?: DiscordGuildState[];
 }
 
 export interface DiscordView {
@@ -369,7 +384,7 @@ export interface DiscordRole {
 }
 
 export interface DiscordTest {
-  result: { bot?: string; guild?: string; inviteUrl?: string; commands: boolean };
+  result: { bot?: string; inviteUrl?: string; guilds?: DiscordGuildState[] };
   error?: string;
 }
 

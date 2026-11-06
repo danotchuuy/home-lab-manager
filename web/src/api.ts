@@ -829,7 +829,8 @@ export const api = {
       body: JSON.stringify({ ...settings, ...(token !== undefined ? { token } : {}) }),
     }),
   testDiscord: () => json<DiscordTest>("/api/integrations/discord/test", { method: "POST" }),
-  discordRoles: () => json<DiscordRole[]>("/api/integrations/discord/roles"),
+  discordRoles: (guild: string) =>
+    json<DiscordRole[]>(`/api/integrations/discord/roles?guild=${encodeURIComponent(guild)}`),
   disconnectDiscord: () => json<DiscordView>("/api/integrations/discord", { method: "DELETE" }),
   serverMods: (id: string) => json<ModsOverview>(`/api/servers/${encodeURIComponent(id)}/mods`),
   checkModUpdates: (id: string) =>

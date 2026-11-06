@@ -64,21 +64,56 @@ type server struct {
 	pub  statuspage.Server
 }
 
-// servers are the status page's servers, as Discord may see them.
-func (s *Service) servers(ctx context.Context, details bool) ([]server, error) {
+// servers are the status page's servers that a Discord server sees, as
+// it may see them.
+func (s *Service) servers(ctx context.Context, g Guild) ([]server, error) {
 	pub, names, err := s.opts.Page.All(ctx, s.opts.Now())
 	if err != nil {
 		return nil, err
 	}
-	out := make([]server, len(pub))
+	in, err := s.inGroups(g.Groups)
+	if err != nil {
+		return nil, err
+	}
+	out := []server{}
 	for i := range pub {
+		if !in(names[i]) {
+			continue
+		}
 		p := pub[i]
-		if !details {
+		if !g.Details {
 			p.Address, p.Hint, p.PlayerNames = "", "", nil
 		}
-		out[i] = server{name: names[i], pub: p}
+		out = append(out, server{name: names[i], pub: p})
 	}
 	return out, nil
+}
+
+// inGroups says whether a server is in any of the server groups (by name,
+// or by its Docker host); no groups means every server.
+func (s *Service) inGroups(ids []string) (func(server string) bool, error) {
+	if len(ids) == 0 {
+		return func(string) bool { return true }, nil
+	}
+	if s.opts.Groups == nil {
+		return func(string) bool { return false }, nil
+	}
+	all, err := s.opts.Groups()
+	if err != nil {
+		return nil, err // when in doubt, nothing
+	}
+	return func(server string) bool {
+		host := "local"
+		if i := strings.LastIndexByte(server, '@'); i >= 0 {
+			host = server[i+1:]
+		}
+		for _, g := range ids {
+			if slices.Contains(all[g], server) || slices.Contains(all[g], "@"+host) {
+				return true
+			}
+		}
+		return false
+	}, nil
 }
 
 // caller is who sent an interaction.
@@ -87,39 +122,22 @@ type caller struct {
 	roles []string
 }
 
-// may says whether the caller may do an action to a server.
-func (s *Service) may(set Settings, c caller, action, server string) bool {
+// may says whether the caller may do an action to a server the Discord
+// server sees.
+func (s *Service) may(g Guild, c caller, action, server string) bool {
 	if action == "" {
 		return true
 	}
-	var groups map[string][]string
-	for _, r := range set.Rules {
+	for _, r := range g.Rules {
 		if !slices.Contains(r.Actions, action) {
 			continue
 		}
-		if r.RoleID != set.GuildID && !slices.Contains(c.roles, r.RoleID) {
-			continue // the server's ID is its @everyone role
+		if r.RoleID != g.ID && !slices.Contains(c.roles, r.RoleID) {
+			continue // the Discord server's ID is its @everyone role
 		}
-		if len(r.Groups) == 0 {
+		in, err := s.inGroups(r.Groups)
+		if err == nil && in(server) {
 			return true
-		}
-		if groups == nil {
-			if s.opts.Groups == nil {
-				return false
-			}
-			var err error
-			if groups, err = s.opts.Groups(); err != nil {
-				return false // when in doubt, no
-			}
-		}
-		host := "local"
-		if i := strings.LastIndexByte(server, '@'); i >= 0 {
-			host = server[i+1:]
-		}
-		for _, g := range r.Groups {
-			if slices.Contains(groups[g], server) || slices.Contains(groups[g], "@"+host) {
-				return true
-			}
 		}
 	}
 	return false
@@ -162,9 +180,10 @@ func (s *Service) handle(ctx context.Context, c *Client, in Interaction) {
 	}
 	private := func(text string) { reply(Message{Content: text, Flags: FlagEphemeral}) }
 
-	if in.GuildID == "" || in.GuildID != set.GuildID || in.Member == nil {
+	g, ok := set.guild(in.GuildID)
+	if in.GuildID == "" || !ok || in.Member == nil {
 		if in.Type == InteractionCommand {
-			private("hlm only answers in its own Discord server.")
+			private("hlm isn't set up to answer here.")
 		}
 		return
 	}
@@ -178,7 +197,7 @@ func (s *Service) handle(ctx context.Context, c *Client, in Interaction) {
 	}
 
 	if in.Type == InteractionAutocomplete {
-		s.autocomplete(ctx, c, in, set, who, action)
+		s.autocomplete(ctx, c, in, g, who, action)
 		return
 	}
 	if in.Type != InteractionCommand {
@@ -188,7 +207,7 @@ func (s *Service) handle(ctx context.Context, c *Client, in Interaction) {
 		private(fmt.Sprintf("Slow down: at most %d commands a minute.", ratePerMinute))
 		return
 	}
-	list, err := s.servers(ctx, set.Details)
+	list, err := s.servers(ctx, g)
 	if err != nil {
 		private("hlm couldn't look at its servers: " + err.Error())
 		return
@@ -200,7 +219,7 @@ func (s *Service) handle(ctx context.Context, c *Client, in Interaction) {
 
 	arg, _ := in.Option("server")
 	srv, ok := find(list, arg)
-	if !ok || !s.may(set, who, action, srv.name) {
+	if !ok || !s.may(g, who, action, srv.name) {
 		// The same answer for servers that don't exist and ones they may
 		// not use, so names can't be probed.
 		private(fmt.Sprintf("You can't %s that server here. Pick one from the list as you type.", action))
@@ -217,7 +236,7 @@ func (s *Service) handle(ctx context.Context, c *Client, in Interaction) {
 			s.opts.Log.Warn("discord: defer", "err", err)
 			return
 		}
-		m := s.control(ctx, set, srv, who, action)
+		m := s.control(ctx, g, srv, who, action)
 		if err := c.EditReply(ctx, cmpOr(in.ApplicationID, s.State().ApplicationID), in.Token, m); err != nil {
 			s.opts.Log.Warn("discord: edit reply", "err", err)
 		}
@@ -242,7 +261,7 @@ func find(list []server, arg string) (server, bool) {
 }
 
 // autocomplete offers the servers the caller may use the command on.
-func (s *Service) autocomplete(ctx context.Context, c *Client, in Interaction, set Settings, who caller, action string) {
+func (s *Service) autocomplete(ctx context.Context, c *Client, in Interaction, g Guild, who caller, action string) {
 	typed := ""
 	for _, o := range in.Data.Options {
 		if o.Focused {
@@ -254,12 +273,12 @@ func (s *Service) autocomplete(ctx context.Context, c *Client, in Interaction, s
 		}
 	}
 	choices := []Choice{}
-	if list, err := s.servers(ctx, false); err == nil {
+	if list, err := s.servers(ctx, g); err == nil {
 		for _, srv := range list {
 			if len(choices) == maxChoices {
 				break
 			}
-			if !s.may(set, who, action, srv.name) {
+			if !s.may(g, who, action, srv.name) {
 				continue
 			}
 			if typed != "" && !strings.Contains(strings.ToLower(srv.pub.Name), strings.ToLower(typed)) {
@@ -316,7 +335,7 @@ func line(p statuspage.Server) string {
 func statusMessage(list []server) Message {
 	e := Embed{Title: "Game servers", Color: colorUp}
 	if len(list) == 0 {
-		e.Description = "There are no servers on hlm's status page."
+		e.Description = "No servers are shown here."
 		e.Color = colorDown
 	}
 	for i, srv := range list {
@@ -387,7 +406,7 @@ func (s *Service) say(ctx context.Context, srv server, who caller, msg string) M
 
 // control starts, stops or restarts a server, waiting for a started one
 // to answer.
-func (s *Service) control(ctx context.Context, set Settings, srv server, who caller, action string) Message {
+func (s *Service) control(ctx context.Context, g Guild, srv server, who caller, action string) Message {
 	name := escape(srv.pub.Name)
 	msg := func(color int, format string, a ...any) Message {
 		return Message{Embeds: []Embed{{Description: fmt.Sprintf(format, a...), Color: color}}}
@@ -432,11 +451,11 @@ func (s *Service) control(ctx context.Context, set Settings, srv server, who cal
 		}
 		return msg(colorDown, "Stopped **%s**%s.", name, was)
 	}
-	return s.waitUp(ctx, set, srv, msg)
+	return s.waitUp(ctx, g, srv, msg)
 }
 
 // waitUp waits for a started server to answer its status query.
-func (s *Service) waitUp(ctx context.Context, set Settings, srv server, msg func(int, string, ...any) Message) Message {
+func (s *Service) waitUp(ctx context.Context, g Guild, srv server, msg func(int, string, ...any) Message) Message {
 	name := escape(srv.pub.Name)
 	begin := time.Now()
 	for {
@@ -446,7 +465,7 @@ func (s *Service) waitUp(ctx context.Context, set Settings, srv server, msg func
 		case <-time.After(s.opts.Poll):
 		}
 		s.opts.Page.Invalidate()
-		list, err := s.servers(ctx, set.Details)
+		list, err := s.servers(ctx, g)
 		if err != nil {
 			continue
 		}

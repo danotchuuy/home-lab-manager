@@ -22,6 +22,8 @@ const (
 	AppID   = "100000000000000001"
 	BotID   = "100000000000000002"
 	GuildID = "200000000000000001"
+	// GuildID2 is a second Discord server the bot is in.
+	GuildID2 = "200000000000000002"
 )
 
 // Call is a REST call the fake received.
@@ -117,8 +119,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		reply(discord.Application{ID: AppID, Name: "hlm"})
 	case p == "/guilds/"+GuildID+"/roles":
 		reply(s.Roles)
+	case p == "/guilds/"+GuildID2+"/roles":
+		reply([]discord.Role{{ID: GuildID2, Name: "@everyone"}})
 	case p == "/guilds/"+GuildID:
-		reply(discord.Guild{ID: GuildID, Name: "Friends"})
+		reply(discord.GuildInfo{ID: GuildID, Name: "Friends"})
+	case p == "/guilds/"+GuildID2:
+		reply(discord.GuildInfo{ID: GuildID2, Name: "Work"})
 	case strings.HasPrefix(p, "/applications/"+AppID+"/guilds/") && r.Method == http.MethodPut:
 		reply(c.List)
 	case strings.HasPrefix(p, "/interactions/") && strings.HasSuffix(p, "/callback"):

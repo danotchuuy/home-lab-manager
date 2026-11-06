@@ -4382,9 +4382,27 @@ pre .muted {
 
 .discord-checks .checkbox {
   display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
   margin: 0;
 }
 
 .discord-settings .add-role {
   max-width: 20rem;
+}
+
+.discord-guild {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.discord-guild h4 {
+  font-size: 0.95rem;
+  margin: 0.9rem 0 0.4rem;
+}
+
+.discord-guild-error {
+  color: var(--danger);
 }

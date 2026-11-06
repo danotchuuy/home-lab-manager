@@ -157,7 +157,18 @@ func save(t *testing.T, s *discord.Service, set discord.Settings) {
 }
 
 func connected(t *testing.T, s *discord.Service) {
-	waitFor(t, "connected with commands", func() bool { st := s.State(); return st.Status == "connected" && st.Commands })
+	waitFor(t, "connected with commands", func() bool {
+		st := s.State()
+		if st.Status != "connected" || len(st.Guilds) == 0 {
+			return false
+		}
+		for _, g := range st.Guilds {
+			if !g.Commands {
+				return false
+			}
+		}
+		return true
+	})
 }
 
 var nextID = 400000000000000000
@@ -222,8 +233,11 @@ func TestConnectAndRegister(t *testing.T) {
 	if st := s.State(); st.Status != "off" {
 		t.Fatalf("before settings: %+v", st)
 	}
-	save(t, s, discord.Settings{Enabled: true, GuildID: discordtest.GuildID})
+	save(t, s, discord.Settings{Enabled: true, Guilds: []discord.Guild{{ID: discordtest.GuildID}}})
 	connected(t, s)
+	if st := s.State(); st.Guilds[0].Name != "Friends" {
+		t.Errorf("guild state: %+v", st.Guilds)
+	}
 	if st := s.State(); st.Bot != "hlm" || st.ApplicationID != discordtest.AppID {
 		t.Errorf("state: %+v", st)
 	}
@@ -258,7 +272,7 @@ func TestConnectAndRegister(t *testing.T) {
 	}
 
 	// Roles for the settings page, without bots' own.
-	roles, err := s.Roles(context.Background())
+	roles, err := s.Roles(context.Background(), discordtest.GuildID)
 	if err != nil || len(roles) != 2 || roles[0].Name != "Friends" {
 		t.Errorf("roles: %+v, %v", roles, err)
 	}
@@ -280,16 +294,20 @@ func TestConnectAndRegister(t *testing.T) {
 func TestBadToken(t *testing.T) {
 	s, _, _ := setup(t)
 	bad := "nope"
-	if _, err := s.Save(context.Background(), discord.Settings{Enabled: true, GuildID: discordtest.GuildID}, &bad); err == nil ||
+	if _, err := s.Save(context.Background(), discord.Settings{Enabled: true, Guilds: []discord.Guild{{ID: discordtest.GuildID}}}, &bad); err == nil ||
 		!strings.Contains(err.Error(), "doesn't accept the bot token") {
 		t.Errorf("bad token saved: %v", err)
 	}
+	g := discordtest.GuildID
 	for _, set := range []discord.Settings{
-		{GuildID: "abc"},
+		{Guilds: []discord.Guild{{ID: "abc"}}},
 		{Enabled: true},
-		{GuildID: discordtest.GuildID, Rules: []discord.Rule{{RoleID: "x"}}},
-		{GuildID: discordtest.GuildID, Rules: []discord.Rule{{RoleID: friends, Actions: []string{"delete"}}}},
-		{GuildID: discordtest.GuildID, Rules: []discord.Rule{{RoleID: friends, Groups: []string{"nope"}}}},
+		{Guilds: []discord.Guild{{ID: g}, {ID: g}}},
+		{Guilds: []discord.Guild{{ID: g, Groups: []string{"nope"}}}},
+		{Guilds: []discord.Guild{{ID: g, Rules: []discord.Rule{{RoleID: "x"}}}}},
+		{Guilds: []discord.Guild{{ID: g, Rules: []discord.Rule{{RoleID: friends}, {RoleID: friends}}}}},
+		{Guilds: []discord.Guild{{ID: g, Rules: []discord.Rule{{RoleID: friends, Actions: []string{"delete"}}}}}},
+		{Guilds: []discord.Guild{{ID: g, Rules: []discord.Rule{{RoleID: friends, Groups: []string{"nope"}}}}}},
 	} {
 		if _, err := s.Save(context.Background(), set, nil); err == nil {
 			t.Errorf("saved %+v", set)
@@ -300,10 +318,10 @@ func TestBadToken(t *testing.T) {
 func TestCommands(t *testing.T) {
 	s, fake, w := setup(t)
 	run(t, s)
-	save(t, s, discord.Settings{Enabled: true, GuildID: discordtest.GuildID, Rules: []discord.Rule{
+	save(t, s, discord.Settings{Enabled: true, Guilds: []discord.Guild{{ID: discordtest.GuildID, Rules: []discord.Rule{
 		{RoleID: friends, Groups: []string{"survival"}, Actions: []string{"players", "start", "say"}},
 		{RoleID: discordtest.GuildID, Actions: []string{"players"}}, // @everyone
-	}})
+	}}}})
 	connected(t, s)
 	g := discordtest.GuildID
 
@@ -388,11 +406,11 @@ func TestCommands(t *testing.T) {
 
 	// Only in the configured server; never in direct messages.
 	got = command(t, fake, "sue", []string{friends}, "", "status", nil, 1)
-	if !strings.Contains(text(got[0]), "only answers in its own Discord server") {
+	if !strings.Contains(text(got[0]), "isn't set up to answer here") {
 		t.Errorf("DM: %s", text(got[0]))
 	}
 	got = command(t, fake, "sue", []string{friends}, "200000000000000999", "status", nil, 1)
-	if !strings.Contains(text(got[0]), "only answers in its own Discord server") {
+	if !strings.Contains(text(got[0]), "isn't set up to answer here") {
 		t.Errorf("other server: %s", text(got[0]))
 	}
 }
@@ -400,8 +418,8 @@ func TestCommands(t *testing.T) {
 func TestDetailsAndRateLimit(t *testing.T) {
 	s, fake, _ := setup(t)
 	run(t, s)
-	save(t, s, discord.Settings{Enabled: true, GuildID: discordtest.GuildID, Details: true,
-		Rules: []discord.Rule{{RoleID: discordtest.GuildID, Actions: []string{"players"}}}})
+	save(t, s, discord.Settings{Enabled: true, Guilds: []discord.Guild{{ID: discordtest.GuildID, Details: true,
+		Rules: []discord.Rule{{RoleID: discordtest.GuildID, Actions: []string{"players"}}}}}})
 	connected(t, s)
 	g := discordtest.GuildID
 	got := command(t, fake, "dan", nil, g, "players", map[string]string{"server": "minecraft"}, 1)
@@ -425,9 +443,9 @@ func TestDetailsAndRateLimit(t *testing.T) {
 func TestAutocomplete(t *testing.T) {
 	s, fake, _ := setup(t)
 	run(t, s)
-	save(t, s, discord.Settings{Enabled: true, GuildID: discordtest.GuildID, Rules: []discord.Rule{
+	save(t, s, discord.Settings{Enabled: true, Guilds: []discord.Guild{{ID: discordtest.GuildID, Rules: []discord.Rule{
 		{RoleID: friends, Groups: []string{"survival"}, Actions: []string{"start"}},
-	}})
+	}}}})
 	connected(t, s)
 	ask := func(roles []string, typed string) string {
 		nextID++
@@ -458,5 +476,90 @@ func TestAutocomplete(t *testing.T) {
 	}
 	if got := ask(nil, ""); got != `{"choices":[]}` {
 		t.Errorf("no role: %s", got)
+	}
+}
+
+// Each Discord server sees only its own servers: commands, rules and
+// autocomplete can't reach the others.
+func TestSeveralDiscordServers(t *testing.T) {
+	s, fake, w := setup(t)
+	run(t, s)
+	everything := []string{"players", "start", "stop", "restart", "say"}
+	save(t, s, discord.Settings{Enabled: true, Guilds: []discord.Guild{
+		{ID: discordtest.GuildID, Name: "Friends", Groups: []string{"survival"},
+			Rules: []discord.Rule{{RoleID: discordtest.GuildID, Actions: everything}}},
+		{ID: discordtest.GuildID2, Name: "Work", Groups: []string{"private"},
+			Rules: []discord.Rule{{RoleID: discordtest.GuildID2, Actions: everything}}},
+	}})
+	connected(t, s)
+	if st := s.State(); len(st.Guilds) != 2 || st.Guilds[1].Name != "Work" {
+		t.Errorf("guilds: %+v", st.Guilds)
+	}
+	registered := map[string]bool{}
+	for _, c := range fake.Calls() {
+		if c.Method == "PUT" && len(c.List) == 6 {
+			registered[c.Path] = true
+		}
+	}
+	if len(registered) != 2 {
+		t.Errorf("registered in: %v", registered)
+	}
+
+	out := text(command(t, fake, "dan", nil, discordtest.GuildID, "status", nil, 1)[0])
+	if !strings.Contains(out, "Minecraft") || !strings.Contains(out, "Valheim") || strings.Contains(out, "Creative") {
+		t.Errorf("Friends' status: %s", out)
+	}
+	out = text(command(t, fake, "eve", nil, discordtest.GuildID2, "status", nil, 1)[0])
+	if !strings.Contains(out, "Creative") || strings.Contains(out, "Minecraft") || strings.Contains(out, "Valheim") {
+		t.Errorf("Work's status: %s", out)
+	}
+
+	// Everyone may do everything, but only to their own Discord server's.
+	got := command(t, fake, "dan", nil, discordtest.GuildID, "start", map[string]string{"server": "creative"}, 1)
+	if !strings.Contains(text(got[0]), "can't start that server") {
+		t.Errorf("Friends starting Work's server: %s", text(got[0]))
+	}
+	got = command(t, fake, "eve", nil, discordtest.GuildID2, "start", map[string]string{"server": "creative"}, 2)
+	if !strings.Contains(text(got[1]), "**Creative** is up") {
+		t.Errorf("Work starting its own: %s", text(got[1]))
+	}
+	w.mu.Lock()
+	if len(w.started) != 1 || w.started[0] != "secret-mc" {
+		t.Errorf("started: %v", w.started)
+	}
+	w.mu.Unlock()
+
+	nextID++
+	id := itoa(nextID)
+	fake.Interaction(map[string]any{"id": id, "application_id": discordtest.AppID, "type": 4, "token": "ac-" + id,
+		"guild_id": discordtest.GuildID2,
+		"member":   map[string]any{"user": map[string]any{"id": userID("eve"), "username": "eve"}, "roles": []string{}},
+		"data": map[string]any{"name": "stop", "options": []map[string]any{
+			{"name": "server", "type": 3, "value": "", "focused": true}}}})
+	waitFor(t, "autocomplete", func() bool {
+		for _, c := range fake.Calls() {
+			if strings.Contains(c.Path, "ac-"+id) {
+				b, _ := json.Marshal(c.Body["data"])
+				if string(b) != `{"choices":[{"name":"Creative","value":"creative"}]}` {
+					t.Errorf("Work's choices: %s", b)
+				}
+				return true
+			}
+		}
+		return false
+	})
+
+	// Taking the bot away takes the commands out of both.
+	if err := s.Disconnect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	cleared := map[string]bool{}
+	for _, c := range fake.Calls() {
+		if c.Method == "PUT" && len(c.List) == 0 {
+			cleared[c.Path] = true
+		}
+	}
+	if len(cleared) != 2 {
+		t.Errorf("cleared: %v", cleared)
 	}
 }

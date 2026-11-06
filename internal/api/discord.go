@@ -63,7 +63,7 @@ func (s *server) testDiscord(w http.ResponseWriter, r *http.Request) {
 func (s *server) discordRoles(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	roles, err := s.Discord.Roles(ctx)
+	roles, err := s.Discord.Roles(ctx, r.URL.Query().Get("guild"))
 	if err != nil {
 		writeDiscordError(w, err)
 		return
