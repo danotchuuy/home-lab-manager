@@ -3,6 +3,21 @@
 **Priority:** Medium · **Depends on:** [02](02-interactive-console.md) (console), [05](05-game-query.md) (player
 list), [19](19-game-profiles.md) (profiles)
 
+> **Status: done** (branch `feature/21-player-management`). See the README's
+> [Managing players](../README.md#managing-players). Where the result differs from this plan:
+>
+> - **Where things are in the profile:** `console.actions` (not under `players`, since Valheim has lists but no
+>   console), top-level `player_lists`, and `console.players.id_column` for csv (or an `id` group in a `lines`
+>   pattern) instead of `id_field`. A command uses `{player}`, `{id}` or both.
+> - **List files are written only for `lines` files while the server is stopped** (Valheim). `minecraft-json` lists
+>   are read, and changed through the console while the server runs: their entries need UUIDs only the game knows.
+> - **Built-in actions only where the commands are certain:** Minecraft (Java, Bedrock), Palworld, ARK, Factorio, and
+>   Valheim's lists. Rust, CS2, 7 Days to Die and Terraria were left out: their commands differ between versions and
+>   mods, or need arguments (durations, quoting) that don't fit; a profile of your own can add them.
+> - **Names are checked where they go into a command**, so a Palworld name with a space doesn't stop a kick by ID.
+> - **Records:** each action is in the API's activity log entry (`servers.players.<action>`, with player and reason),
+>   and the last 100 per server in `"players"` for the tab.
+
 ## Why
 
 Kicking a griefer, banning them, adding a friend to the allow list and making someone an admin are the commonest
@@ -93,10 +108,10 @@ Viewers keep seeing only the count, as today.
 
 ## Tasks
 
-- [ ] Profile `actions`, `lists`, `id_field`; validation
-- [ ] Built-in profiles' actions and lists, checked per game
-- [ ] Name and reason checks; sending through the console
-- [ ] List readers and writers (`minecraft-json`, `lines`)
-- [ ] Action log, audit names, notification
-- [ ] Players tab
-- [ ] README section and API table
+- [x] Profile `actions`, `lists`, `id_field`; validation
+- [x] Built-in profiles' actions and lists, checked per game
+- [x] Name and reason checks; sending through the console
+- [x] List readers and writers (`minecraft-json`, `lines`)
+- [x] Action log, audit names, notification
+- [x] Players tab
+- [x] README section and API table

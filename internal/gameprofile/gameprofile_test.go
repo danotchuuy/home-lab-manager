@@ -76,6 +76,21 @@ func TestPlayers(t *testing.T) {
 			t.Errorf("%s %q: %+v %v", tt.game, tt.out, got, err)
 		}
 	}
+	// IDs, for actions that take them.
+	for _, tt := range []struct {
+		game, out string
+		ids       []string
+	}{
+		{"palworld", "name,playeruid,steamid\nAlice,123,steam_7656\nBob,456\n", []string{"steam_7656", ""}},
+		{"ark", "0. Alice, 0002abc\n1. Mr. Smith, 76561198", []string{"0002abc", "76561198"}},
+		{"minecraft", "There are 1 of a max of 10 players online: alex", nil},
+	} {
+		p := s.ByID(tt.game).Console.Players
+		got, err := p.Parse(tt.out)
+		if err != nil || !slices.Equal(got.IDs, tt.ids) || p.HasIDs() != (tt.ids != nil) {
+			t.Errorf("%s ids: %+v %v", tt.game, got, err)
+		}
+	}
 	for game, garbage := range map[string]string{"palworld": "Unknown command", "minecraft": "xxxxxxxxxx"} {
 		if _, err := s.ByID(game).Console.Players.Parse(garbage); err == nil {
 			t.Errorf("%s: garbage accepted", game)
@@ -111,6 +126,15 @@ func TestValidation(t *testing.T) {
 		"missing group":    good + "console: {players: {command: list, format: summary, pattern: '(?P<online>\\d+)'}}\n",
 		"file name":        good + "settings_files: [{names: [a/b.ini]}]\n",
 		"no file names":    good + "settings_files: [{prefer: /x/}]\n",
+		"unknown action":   good + "console: {actions: {smite: 'smite {player}'}}\n",
+		"no player":        good + "console: {actions: {kick: kick}}\n",
+		"placeholder":      good + "console: {actions: {kick: 'kick {player} {when}'}}\n",
+		"two lines":        good + "console: {actions: {kick: \"kick {player}\\nstop\"}}\n",
+		"id column 1":      good + "console: {players: {command: l, format: csv, header: n, id_column: 1}}\n",
+		"id column lines":  good + "console: {players: {command: l, format: lines, pattern: '(?P<name>.*)', id_column: 2}}\n",
+		"unknown list":     good + "player_lists: {friends: {file: f.txt, format: lines}}\n",
+		"list format":      good + "player_lists: {ban: {file: f.txt, format: xml}}\n",
+		"list path":        good + "player_lists: {ban: {file: a/f.txt, format: lines}}\n",
 	} {
 		if _, err := Parse([]byte(y)); err == nil {
 			t.Errorf("%s: accepted", name)

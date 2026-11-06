@@ -48,6 +48,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/metrics"
 	"github.com/danotchuuy/home-lab-manager/internal/metricstore"
 	"github.com/danotchuuy/home-lab-manager/internal/notify"
+	"github.com/danotchuuy/home-lab-manager/internal/players"
 	"github.com/danotchuuy/home-lab-manager/internal/prefs"
 	"github.com/danotchuuy/home-lab-manager/internal/proxy"
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
@@ -123,6 +124,8 @@ type Options struct {
 	GameProfiles *gameprofile.Store
 	// Idle stops servers nobody plays on and wakes them.
 	Idle *idle.Service
+	// Players kicks, bans and keeps servers' player lists.
+	Players *players.Service
 	// UpdateCheckEnv is HLM_UPDATE_CHECK, which overrides the setting for
 	// how often updates are checked for, if set.
 	UpdateCheckEnv string
@@ -532,6 +535,11 @@ func (s *server) removeServer(w http.ResponseWriter, r *http.Request) {
 	if s.Notify != nil {
 		if err := s.Notify.ForgetServer(srv.Name); err != nil {
 			s.Log.Warn("take deleted server out of notification targets", "server", srv.Name, "err", err)
+		}
+	}
+	if s.Players != nil {
+		if err := s.Players.ForgetServer(srv.Name); err != nil {
+			s.Log.Warn("forget deleted server's player records", "server", srv.Name, "err", err)
 		}
 	}
 	if s.Idle != nil {

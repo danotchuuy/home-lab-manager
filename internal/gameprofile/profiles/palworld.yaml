@@ -26,6 +26,12 @@ console:
     # name,playeruid,steamid, then one line per player
     format: csv
     header: "name,"
+    # Kicks and bans take the player's user ID (steam_…), not the name.
+    id_column: 3
+  actions:
+    kick: "KickPlayer {id}"
+    ban: "BanPlayer {id}"
+    unban: "UnBanPlayer {id}"
 settings_files:
   - names: [PalWorldSettings.ini]
     prefer: /Saved/Config/

@@ -3,3 +3,9 @@ name: Valheim
 match: [[valheim]]
 query:
   a2s_ports: [2457]
+# Valheim has no remote console: its lists are files of platform IDs
+# (Steam_7656…), read when it starts; hlm changes them while it's stopped.
+player_lists:
+  allow: { file: permittedlist.txt, format: lines }
+  ban: { file: bannedlist.txt, format: lines }
+  admin: { file: adminlist.txt, format: lines }

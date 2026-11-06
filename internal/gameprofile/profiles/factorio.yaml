@@ -4,5 +4,13 @@ match: [[factorio]]
 console:
   rcon_port: 27015
   commands: [/players online, /server-save, "/kick ", "/ban ", /time]
+  actions:
+    kick: "/kick {player} {reason}"
+    ban: "/ban {player} {reason}"
+    unban: "/unban {player}"
+    allow: "/whitelist add {player}"
+    disallow: "/whitelist remove {player}"
+    admin: "/promote {player}"
+    unadmin: "/demote {player}"
 settings_files:
   - names: [server-settings.json]

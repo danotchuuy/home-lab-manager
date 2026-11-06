@@ -12,8 +12,15 @@ console:
     command: ListPlayers
     # "0. Name, 0002…" per line, or "No Players Connected"
     format: lines
-    pattern: '^.*?\. (?P<name>[^,]*)'
+    pattern: '^.*?\. (?P<name>[^,]*)(?:, *(?P<id>\S+))?'
     ignore: [No Players Connected]
+  # They take the player's ID from ListPlayers (Steam or EOS).
+  actions:
+    kick: "KickPlayer {id}"
+    ban: "BanPlayer {id}"
+    unban: "UnbanPlayer {id}"
+    allow: "AllowPlayerToJoinNoCheck {id}"
+    disallow: "DisallowPlayerToJoinNoCheck {id}"
 settings_files:
   - names: [GameUserSettings.ini, Game.ini]
     prefer: /Saved/Config/

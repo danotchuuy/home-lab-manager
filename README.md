@@ -604,10 +604,15 @@ console:
     format: lines           # csv (header), summary (pattern with online, max, names) or lines (pattern with name)
     pattern: '^\d+\. (?P<name>.+)$'
     ignore: [No players online]
+  actions:                  # managing players (see Managing players)
+    kick: "kick {player} {reason}"
+    ban: "ban {player} {reason}"
 settings_files:
   - names: [server.cfg]
     prefer: /cfg/           # among several files of that name, the one whose path contains this
     words: [mygame]         # only for images with these words too
+player_lists:               # where the game keeps its lists: allow, ban, admin
+  ban: { file: banned.txt, format: lines }   # lines or minecraft-json
 ```
 
 Every field but `id`, `name` and `match` is optional. The built-in profiles are good examples: **View** shows each
@@ -733,6 +738,43 @@ server's name and version), looks for the command in the container, or checks th
 
 Console commands can do whatever the game's admins can, and some games can run scripts or change files through them,
 so giving someone the **operator** role on a server lets them administer the game.
+
+## Managing players
+
+A server's **Players** tab (operators and up; shown when its game has a [profile](#game-profiles)) lists who's on and
+its allow, ban and admin lists, with buttons for what its game can do:
+
+- **Online now**: each player, through the console's player list when it can (with their ID for games that act on IDs),
+  or from the last [status check](#is-the-game-up-players-and-status). **Kick**, **Ban** and **Make admin** ask for
+  an optional reason (kick and ban) and send the game's command through its [console](#sending-commands-to-a-server),
+  as if typed there.
+- **Bans**, **Allow list** and **Admins**: read from the game's own files, so changes made in the game show too, with
+  **Unban**, **Take off the allow list** and **Remove admin**. **Add a player** adds someone who isn't online.
+- **Operators can kick; banning and the lists take a manager.**
+- **While a server is stopped**, games that keep their lists as plain files (Valheim's `adminlist.txt`,
+  `bannedlist.txt`, `permittedlist.txt`) have the file changed directly, keeping its comments; the game reads it when
+  it starts. Changes to Valheim's lists while it runs are refused, since it reads them only at start. Games with
+  commands (Minecraft) need to be running for changes.
+- **Names and IDs are checked before they go into a command:** a name is one word of up to 64 characters without `;`,
+  quotes or backslashes, an ID only letters, digits, `_ . : -`, and a reason one line of up to 200 characters with the
+  same limits. Anything else is refused, not cleaned up, so a crafted name can't add a second command.
+
+| Game | Kick | Ban | Allow list | Admins | Lists read from |
+| --- | --- | --- | --- | --- | --- |
+| Minecraft (Java) | ✓ | ✓ | ✓ | ✓ (op) | `whitelist.json`, `banned-players.json`, `ops.json` |
+| Minecraft (Bedrock) | ✓ | (none) | ✓ | ✓ (op) | `allowlist.json` |
+| Palworld | ✓ (by ID) | ✓ (by ID) | | | |
+| ARK | ✓ (by ID) | ✓ (by ID) | ✓ (by ID) | | |
+| Factorio | ✓ | ✓ | ✓ | ✓ (promote) | |
+| Valheim | | while stopped | while stopped | while stopped | `bannedlist.txt`, `permittedlist.txt`, `adminlist.txt` |
+
+Other games can get them in their profile: `console.actions` (`kick`, `ban`, `unban`, `allow`, `disallow`, `admin`,
+`unadmin`, each a command with `{player}`, `{id}` and `{reason}`), `console.players.id_column` (or an `id` group in a
+`lines` pattern) for games that act on IDs, and `player_lists` (`allow`, `ban`, `admin`: `{file, format}` with format
+`minecraft-json` or `lines`).
+
+Each action is in the [activity log](#activity-audit-log) as `servers.players.<action>` with the player and reason, and
+in the tab's **Done through hlm**. A ban sends the `server.player_banned` [notification](#notifications).
 
 ## Stopping idle servers
 
@@ -1703,6 +1745,7 @@ Each target chooses its **events** (warnings and errors by default):
 | `auth.locked_out` | warning | Sign-in for a local account is locked after repeated wrong passwords. |
 | `server.asleep` | info | Nobody played on a server for a while, so hlm [stopped it](#stopping-idle-servers) until someone wants to play. |
 | `server.wake_failed` | error | Someone wanted to play on a [sleeping server](#stopping-idle-servers), but starting it failed. |
+| `server.player_banned` | info | Someone [banned a player](#managing-players) on a server through hlm. |
 | `task.failed` | error | A [scheduled task](#scheduled-tasks) failed, or was missed because hlm wasn't running. |
 
 - **Which servers:** a target can be limited to some servers and [server groups](#roles-and-server-groups). Alerts that
@@ -2299,6 +2342,8 @@ when the `HLM_*` one isn't set.
 | `GET /api/updates`                             | When updates were last checked and how many are available.                        |
 | `GET/PUT /api/servers/{id}/update-policy`      | A server's [automatic updates](#automatic-updates): `{mode, windowStart?, windowEnd?, warn?, warnMinutes?, backup}` (`mode` is `auto`, `manual`, or empty to follow the default), plus what it follows, the update's state and the last result. `PUT` takes a manager; the warning is only shown to operators. |
 | `GET/PUT /api/servers/{id}/health`             | A server's [health settings](#health-checks-and-crash-loops): `{crashLoop: {off?, exits?, minutes?}, check: {kind, port?, path?, command?, interval?, timeout?, retries?, startPeriod?}, restartAfter?, signal?}` (`kind` is empty for the image's check, `none`, `tcp`, `http` or `command`; `signal` is empty for Docker's health or `query`), plus Docker's health, the crash loop it was stopped for, recent exits and whether the container has the check yet. `PUT` takes a manager; commands are only shown to operators. |
+| `GET /api/servers/{id}/players`                | A server's [players](#managing-players) (operators): `{game, running, actions, needsId, online: [{name, id}], onlineFrom, onlineError, lists: {allow, ban, admin: {file, path, format, players: [{name, id, reason}], error, editable}}, log}`, or `{unsupported}` for a game without player actions or lists. |
+| `POST /api/servers/{id}/players/{action}`      | `{name, id, reason}`: `kick` (operators), `ban`, `unban`, `allow`, `disallow`, `admin`, `unadmin` (managers). `{output}` is the console's answer. |
 | `GET/PUT /api/servers/{id}/idle`               | A server's [idle settings](#stopping-idle-servers) `{minutes, wakeOnConnect, wakeFromStatusPage}`, plus `idleSince`, `asleep` (`since`, `minutes`, `listener`, `listenerError`), `canStop`/`why` and `canListen`/`listenWhy`. `PUT` takes a manager. |
 | `POST /api/servers/{id}/health/test`           | Run a health check `{check}` (or the container's own, without one) in the running server once: `{healthy, exitCode, output}`. Managers only. |
 | `GET /api/query`                               | Each running server you can see: its [game status](#is-the-game-up-players-and-status) and player count. |

@@ -217,6 +217,49 @@ export interface Server {
   asleep?: { since: string; minutes: number };
 }
 
+export type PlayerAction = "kick" | "ban" | "unban" | "allow" | "disallow" | "admin" | "unadmin";
+export type PlayerListName = "allow" | "ban" | "admin";
+
+export interface PlayerEntry {
+  name?: string;
+  id?: string;
+  reason?: string;
+}
+
+export interface PlayerList {
+  file: string;
+  path?: string;
+  format: string;
+  players: PlayerEntry[];
+  error?: string;
+  /** hlm can change the file itself now (a lines file, while stopped). */
+  editable: boolean;
+}
+
+export interface PlayerRecord {
+  time: string;
+  by: string;
+  action: PlayerAction;
+  player: string;
+  reason?: string;
+  error?: string;
+}
+
+export interface PlayersOverview {
+  /** Set when hlm can't manage this game's players. */
+  unsupported?: string;
+  game?: string;
+  running: boolean;
+  actions: PlayerAction[];
+  /** Actions that take the player's ID, not their name. */
+  needsId?: PlayerAction[];
+  online: PlayerEntry[];
+  onlineFrom?: "console" | "query";
+  onlineError?: string;
+  lists?: Partial<Record<PlayerListName, PlayerList>>;
+  log: PlayerRecord[];
+}
+
 export interface IdleSettings {
   /** Minutes without players before it's stopped; 0 is off. */
   minutes: number;
