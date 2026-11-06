@@ -791,6 +791,22 @@ func TestConfirmWithSingleSignOn(t *testing.T) {
 	if code, _ := do(t, browser(t), "GET", e.hlm.URL+"/auth/login?confirm=1", nil, ""); code != 400 {
 		t.Errorf("confirm without a session = %d", code)
 	}
+
+	// In a popup (so the page being worked on stays as it was), it ends on
+	// a page that tells the web UI and closes, rather than going back.
+	p := browser(t)
+	do(t, p, "GET", e.hlm.URL+"/auth/login", nil, "")
+	code, body := do(t, p, "GET", e.hlm.URL+"/auth/login?confirm=1&popup=1&return=/servers", nil, "")
+	if code != 200 || !strings.Contains(body, `new BroadcastChannel("hlm-confirm")`) || !strings.Contains(body, "window.close()") {
+		t.Errorf("popup confirm = %d %s", code, body)
+	}
+	if code, body := do(t, p, "POST", e.hlm.URL+"/api/auth/keys", csrf, `{"name":"p"}`); code != 201 {
+		t.Errorf("after confirming in a popup = %d %s", code, body)
+	}
+	// popup only changes how a confirmation ends.
+	if code, body := do(t, browser(t), "GET", e.hlm.URL+"/auth/login?popup=1", nil, ""); strings.Contains(body, "BroadcastChannel") {
+		t.Errorf("sign-in with popup=1 = %d %s", code, body)
+	}
 }
 
 func TestConfirmWithPassword(t *testing.T) {

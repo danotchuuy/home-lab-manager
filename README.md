@@ -2092,9 +2092,11 @@ someone can't see answer 404, as if they didn't exist.
 Changes that could give someone lasting access take a person at a browser who has confirmed it's them in the last 10
 minutes: making API keys and changing where they work from, adding SSH keys, adding accounts and setting their
 passwords and roles, changing server groups, and changing sign-in and single sign-on settings. hlm asks for your
-password (and, with [two-factor](#two-factor-sign-in), a code), or, if you signed in with single sign-on, sends you to sign in there again. hlm checks the provider's
-`auth_time` to make sure it really asked, so a provider that ignores `prompt=login` can't confirm; use a local account
-then.
+password (and, with [two-factor](#two-factor-sign-in), a code), or, if you signed in with single sign-on, has you
+sign in there again, in a window of its own. Either way the page you were on stays as it was, with whatever you'd
+entered, and the change goes ahead once you've confirmed. (If the browser blocks the window, allow popups for hlm's
+address, or sign in on the page itself, which loses what you'd entered.) hlm checks the provider's `auth_time` to make
+sure it really asked, so a provider that ignores `prompt=login` can't confirm; use a local account then.
 
 API keys, SSH tokens and `HLM_TOKEN` can't make these changes, even with the admin role, so a stolen key can't make
 itself permanent. They can still revoke: delete keys, SSH keys, accounts and groups. `HLM_TOKEN` can also add the
@@ -2359,7 +2361,7 @@ when the `HLM_*` one isn't set.
 | `PUT /api/auth/accounts/{username}/role`       | `{role}`: `admin` or `member`.                                                    |
 | `DELETE /api/auth/accounts/{username}`         | Removes an account.                                                               |
 | `GET/POST /api/auth/accounts/{username}/ssh-keys`, `PUT/DELETE …/ssh-keys/{id}` | [SSH keys](#ssh-keys) of an account, for an admin or the account itself. `POST {publicKey, name?, allowFrom?}` and `PUT {allowFrom}` need a [confirmed](#confirming-its-you) session. |
-| `POST /api/auth/confirm`                       | Confirm a password session for 10 minutes: `{password, code?}` (the code for accounts with two-factor). Single sign-on confirms at `/auth/login?confirm=1`. |
+| `POST /api/auth/confirm`                       | Confirm a password session for 10 minutes: `{password, code?}` (the code for accounts with two-factor). Single sign-on confirms at `/auth/login?confirm=1` (with `&popup=1`, it ends on a page that tells the web UI and closes, rather than going back). |
 | `POST /api/auth/confirm/passkey/begin`, `POST /api/auth/confirm/passkey` | Confirm with a passkey instead (it has to verify you). |
 | `GET/PUT /api/system/https`, `POST /api/system/https/renew` | [HTTPS](#https) settings and certificate status; `PUT {enabled, domain, email?, staging?}` needs a [confirmed](#confirming-its-you) session. |
 | `POST /api/auth/download-ticket`               | `{url}` of a backup download returns a URL that works once, for a minute, from the same address: for downloads when signed in with a token. |
