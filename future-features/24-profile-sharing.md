@@ -2,6 +2,23 @@
 
 **Priority:** Low · **Depends on:** [19](19-game-profiles.md) (phase 2)
 
+> **Status: done** (branch `feature/24-profile-sharing`). See the README's
+> [Sharing profiles](../README.md#sharing-profiles). Where the result differs from this plan:
+>
+> - **`internal/profileshare`** does the fetching, indexes, update checks, diff and export; the store only keeps
+>   origins (`.origins.json`, also in the configuration backups).
+> - **Saving from a link is `POST /api/game-profiles/import`** (`{url}` or `{index, id}`, with the `sha256` that was
+>   looked at) rather than an `origin` on the existing upload, so what's saved is always fetched by hlm and matches
+>   what was shown; it's refused (409) if the link changed in between. A hand edit keeps the origin and shows
+>   "changed here since".
+> - **Index profiles' updates come from the index**: a profile imported from an index has an update when the index
+>   lists a new SHA-256, and is fetched (and checked against it) only when reviewed. Index links are kept as a
+>   setting; `GET …/indexes/browse` lists their profiles.
+> - **Gist links** (`gist.github.com/user/id`) are turned into their raw form too.
+> - **Addresses refused:** loopback, unspecified, link-local, multicast, and the AWS and Alibaba metadata addresses;
+>   LAN addresses are allowed (a Gitea at home is a fine place for profiles). Environment proxies aren't used, so the
+>   check sees where hlm really connects.
+
 ## Why
 
 Someone who writes a good profile for a game hlm doesn't know should be able to give it to others, and someone who
@@ -63,9 +80,9 @@ On **System → Game profiles**:
 
 ## Tasks
 
-- [ ] Fetching with the limits above
-- [ ] Origins file, update checks (on demand and daily), diff
-- [ ] Download and export
-- [ ] Index support
-- [ ] UI: import from a link, update badges and diff, download buttons, index browser
-- [ ] README and API table
+- [x] Fetching with the limits above
+- [x] Origins file, update checks (on demand and daily), diff
+- [x] Download and export
+- [x] Index support
+- [x] UI: import from a link, update badges and diff, download buttons, index browser
+- [x] README and API table

@@ -420,6 +420,61 @@ export interface GameProfile extends GameProfileRef {
   file?: string;
   /** A custom profile that takes a built-in one's place. */
   replaces?: boolean;
+  /** Where your own profile was imported from, if from a link or index. */
+  origin?: GameProfileOrigin;
+}
+
+export interface GameProfileOrigin {
+  url: string;
+  sha256: string;
+  fetched: string;
+  /** The index it was listed in. */
+  index?: string;
+  checked?: string;
+  /** The SHA-256 the link (or index) has now, when it's different. */
+  update?: string;
+  updateError?: string;
+  /** The file was changed here since it was fetched. */
+  changedLocally?: boolean;
+}
+
+/** A diff line: " " the same, "-" only in the old text, "+" only in the new. */
+export interface DiffLine {
+  op: " " | "-" | "+";
+  text: string;
+}
+
+/** A profile fetched from a link or index, before it's saved. */
+export interface GameProfilePreview {
+  url: string;
+  sha256: string;
+  id: string;
+  name: string;
+  yaml: string;
+  index?: string;
+  /** What saving it replaces: "built-in", "custom", or nothing (a new game). */
+  replaces?: "built-in" | "custom";
+  diff?: DiffLine[];
+  same?: boolean;
+}
+
+/** Where a profile is fetched from: a link, or an index and an id. */
+export type GameProfileLink = { url: string } | { index: string; id: string };
+
+export interface ProfileIndexListing {
+  url: string;
+  name?: string;
+  error?: string;
+  profiles: {
+    id: string;
+    name: string;
+    url: string;
+    sha256: string;
+    description?: string;
+    inUse?: "built-in" | "custom";
+    installed?: boolean;
+    current?: boolean;
+  }[];
 }
 
 export interface GameProfiles {

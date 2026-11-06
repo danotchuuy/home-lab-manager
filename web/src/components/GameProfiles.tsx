@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { GameProfile, GameProfiles as State } from "../types";
-import { Spinner } from "./common";
+import type { GameProfile, GameProfileLink, GameProfilePreview, GameProfiles as State } from "../types";
+import { Ago, Spinner } from "./common";
+import { hostOf, ImportFromLink, ProfileIndexes, ProfilePreview, saveBlob } from "./ProfileSharing";
 
 /** A starting point for a game hlm doesn't know yet. */
 const NEW_PROFILE = `id: mygame
@@ -33,6 +34,15 @@ export function GameProfiles() {
   const [shown, setShown] = useState<{ id: string; yaml: string }>();
   const [draft, setDraft] = useState<string>();
   const [saving, setSaving] = useState(false);
+  // Importing from a link: asking for it, then the fetched profile.
+  const [asking, setAsking] = useState(false);
+  const [preview, setPreview] = useState<{
+    preview: GameProfilePreview;
+    link: GameProfileLink;
+    update?: boolean;
+    changedLocally?: boolean;
+  }>();
+  const [checking, setChecking] = useState(false);
 
   const load = () => api.gameProfiles().then(setState, (e) => setError((e as Error).message));
   useEffect(() => {
@@ -68,6 +78,45 @@ export function GameProfiles() {
       setState(await api.deleteGameProfile(p.id));
       setShown(undefined);
     });
+
+  const showPreview = (p: GameProfilePreview, link: GameProfileLink, update?: GameProfile) => {
+    setAsking(false);
+    setDraft(undefined);
+    setPreview({ preview: p, link, update: !!update, changedLocally: update?.origin?.changedLocally });
+  };
+
+  // An update to a profile imported before: fetched again from where it came.
+  const reviewUpdate = (p: GameProfile) =>
+    run(async () => {
+      const o = p.origin!;
+      const link = o.index ? { index: o.index, id: p.id } : { url: o.url };
+      showPreview(await api.fetchGameProfile(link), link, p);
+    });
+
+  const downloadOne = (p: GameProfile) =>
+    run(async () => {
+      const yaml = await api.gameProfileYAML(p.id);
+      saveBlob(new Blob([yaml], { type: "text/yaml" }), p.file || `${p.id}.yaml`);
+    });
+
+  const downloadAll = () =>
+    run(async () => {
+      saveBlob(await api.exportGameProfiles(), "game-profiles.zip");
+    });
+
+  async function checkUpdates() {
+    setChecking(true);
+    await run(async () => {
+      const st = await api.checkGameProfiles();
+      setState(st);
+      const n = st.profiles.filter((p) => p.origin?.update).length;
+      setNotice(n ? `${n} profile${n === 1 ? " has" : "s have"} an update.` : "No updates.");
+    });
+    setChecking(false);
+  }
+
+  const linked = state?.profiles.filter((p) => p.origin) ?? [];
+  const yours = state?.profiles.filter((p) => p.source === "custom") ?? [];
 
   const reload = () =>
     run(async () => {
@@ -146,17 +195,44 @@ export function GameProfiles() {
                           ({p.file}
                           {p.replaces ? ", replaces the built-in one" : ""})
                         </span>
+                        {p.origin && (
+                          <div className="small muted">
+                            From{" "}
+                            <a href={p.origin.url} target="_blank" rel="noreferrer noopener">
+                              {hostOf(p.origin.index || p.origin.url)}
+                            </a>
+                            {p.origin.changedLocally && " · changed here since"}
+                            {p.origin.checked && (
+                              <>
+                                {" "}
+                                · checked <Ago iso={p.origin.checked} />
+                              </>
+                            )}
+                            {p.origin.updateError && (
+                              <span className="run-failed"> · couldn&apos;t check: {p.origin.updateError}</span>
+                            )}
+                          </div>
+                        )}
+                        {p.origin?.update && <span className="badge update-available">Update available</span>}
                       </>
                     ) : (
                       <span className="muted">Built-in</span>
                     )}
                   </td>
                   <td className="actions">
+                    {p.origin?.update && (
+                      <button className="btn small primary" onClick={() => reviewUpdate(p)}>
+                        Review update
+                      </button>
+                    )}
                     <button className="btn small" onClick={() => view(p.id)}>
                       {shown?.id === p.id ? "Hide" : "View"}
                     </button>
                     <button className="btn small" onClick={() => editCopy(p.id)}>
                       {p.source === "custom" ? "Edit" : "Edit a copy"}
+                    </button>
+                    <button className="btn small" onClick={() => downloadOne(p)}>
+                      Download
                     </button>
                     {p.source === "custom" && (
                       <button className="btn small danger" onClick={() => remove(p)}>
@@ -178,6 +254,21 @@ export function GameProfiles() {
           <pre className="op-output game-profile-yaml">{shown.yaml}</pre>
         </div>
       )}
+      {preview && (
+        <ProfilePreview
+          preview={preview.preview}
+          link={preview.link}
+          update={preview.update}
+          changedLocally={preview.changedLocally}
+          onCancel={() => setPreview(undefined)}
+          onSaved={(msg) => {
+            setPreview(undefined);
+            setNotice(msg);
+            load();
+          }}
+        />
+      )}
+      {asking && <ImportFromLink onPreview={(p, link) => showPreview(p, link)} onCancel={() => setAsking(false)} />}
       {draft === undefined ? (
         <div className="btn-row">
           <button className="btn small" onClick={() => setDraft(NEW_PROFILE)}>
@@ -195,6 +286,25 @@ export function GameProfiles() {
               }}
             />
           </label>
+          <button
+            className="btn small"
+            onClick={() => {
+              setPreview(undefined);
+              setAsking(true);
+            }}
+          >
+            Import from a link…
+          </button>
+          {linked.length > 0 && (
+            <button className="btn small" onClick={checkUpdates} disabled={checking}>
+              {checking ? "Checking…" : "Check for updates"}
+            </button>
+          )}
+          {yours.length > 0 && (
+            <button className="btn small" onClick={downloadAll}>
+              Download all of yours
+            </button>
+          )}
           <button className="btn small" onClick={reload} title={state?.dir}>
             Read the folder again
           </button>
@@ -223,6 +333,7 @@ export function GameProfiles() {
           </div>
         </div>
       )}
+      <ProfileIndexes onPreview={(p, link) => showPreview(p, link)} />
       {state && (
         <p className="muted small">
           Your profiles are kept in <code>{state.dir}</code>. You can also put <code>.yaml</code> files there and read

@@ -7,6 +7,9 @@ import type {
   RegistryForm,
   GameProfile,
   GameProfiles,
+  GameProfileLink,
+  GameProfilePreview,
+  ProfileIndexListing,
   IdleSettings,
   IdleStatus,
   PlayerAction,
@@ -865,6 +868,16 @@ export const api = {
   deleteGameProfile: (id: string) =>
     json<GameProfiles>(`/api/game-profiles/${encodeURIComponent(id)}`, { method: "DELETE" }),
   reloadGameProfiles: () => json<GameProfiles>("/api/game-profiles/reload", { method: "POST" }),
+  fetchGameProfile: (link: GameProfileLink) =>
+    json<GameProfilePreview>("/api/game-profiles/fetch", { method: "POST", body: JSON.stringify(link) }),
+  importGameProfileLink: (link: GameProfileLink, sha256: string) =>
+    json<GameProfile>("/api/game-profiles/import", { method: "POST", body: JSON.stringify({ ...link, sha256 }) }),
+  checkGameProfiles: () => json<GameProfiles>("/api/game-profiles/check", { method: "POST" }),
+  exportGameProfiles: async () => (await request("/api/game-profiles/export")).blob(),
+  gameProfileIndexes: () => json<{ indexes: string[] }>("/api/game-profiles/indexes"),
+  setGameProfileIndexes: (indexes: string[]) =>
+    json<{ indexes: string[] }>("/api/game-profiles/indexes", { method: "PUT", body: JSON.stringify({ indexes }) }),
+  browseGameProfileIndexes: () => json<ProfileIndexListing[]>("/api/game-profiles/indexes/browse"),
   registries: () => json<RegistryLogin[]>("/api/registries"),
   addRegistry: (f: RegistryForm) => json<RegistryLogin>("/api/registries", { method: "POST", body: JSON.stringify(f) }),
   updateRegistry: (host: string, f: RegistryForm) =>

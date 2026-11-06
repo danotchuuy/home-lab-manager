@@ -628,6 +628,39 @@ mods:                       # installing mods from Modrinth (see Mods and plugin
 Every field but `id`, `name` and `match` is optional. The built-in profiles are good examples: **View** shows each
 one.
 
+#### Sharing profiles
+
+- **Download** saves any profile as a `.yaml` file, and **Download all of yours** saves your own as a `.zip`, to give
+  to someone or publish (a GitHub repository or gist works well).
+- **Import from a link…** takes an HTTPS link to a profile: a GitHub file (its page link works too), a gist, or any
+  web page serving the YAML. hlm fetches it and shows it before anything is saved: whether it adds a game, replaces a
+  built-in profile or replaces one of yours, and the lines that change. **Save it** keeps it, only if the link still
+  serves exactly what you looked at.
+- **Updates.** hlm remembers where a profile came from and fetches the link again every day (and with **Check for
+  updates**). A changed profile shows **Update available**; nothing changes until you **Review update** and accept it,
+  since a profile decides which commands hlm sends. If you edited the profile here since importing it, it says so, and
+  the update's lines marked "-" include your changes.
+- **Profile indexes** are lists of profiles someone publishes, such as a community repository: an `index.yaml` with
+  each profile's `id`, `name`, `url` (absolute, or relative to the index) and `sha256`, and optionally a
+  `description`. Add an index's link under **Profile indexes** to browse it and import from it with **Look at it**.
+  hlm uses a profile from an index only if its SHA-256 matches what the index lists, and offers an update when the
+  index lists a new one. None is set up by default.
+
+  ```yaml
+  name: Our game profiles
+  profiles:
+    - id: mygame
+      name: My Game
+      url: profiles/mygame.yaml
+      sha256: 3b1f…          # sha256sum profiles/mygame.yaml
+      description: The dedicated server from someone/mygame-server.
+  ```
+
+hlm fetches links itself, not your browser: HTTPS only (redirects too, at most 3), 10 seconds, at most 64 KiB for a
+profile (256 KiB for an index), no credentials, and never from hlm's own machine or link-local addresses (where cloud
+metadata services are), checked on the address actually connected to. Where each profile came from is kept in
+`game-profiles/.origins.json`, which is in the configuration backups too.
+
 ## Health checks and crash loops
 
 **Crash loops.** With **Start on boot**, Docker restarts a server every time it exits, so a server that can't start (a
@@ -1016,7 +1049,7 @@ Each backup holds, named as they are in the data directory (`HLM_DATA_DIR`):
 - `secrets/secrets.enc`: every integration's settings and credentials (UniFi, proxy and its SSH key, Linode, Cloudflare,
   backup storage), servers' port options and backup plans. Encrypted with AES-256-GCM.
 - `templates.json` (templates made from images) and `deleted-servers.json`, when they exist.
-- `game-profiles/`: your own [game profiles](#game-profiles).
+- `game-profiles/`: your own [game profiles](#game-profiles), and where those imported from a link came from.
 - `audit/`: the [activity log](#activity-audit-log), a file a month.
 - `servers.json`: every server's name, template, image, start on boot and settings. Servers live in Docker rather than
   the data directory, so this is what it takes to install them again on a new host. Their game data is in their own
@@ -2364,6 +2397,17 @@ when the `HLM_*` one isn't set.
 | `DELETE /api/networks/{name}`                  | Delete a network created in hlm that no container uses.                           |
 | `GET /api/networks/interfaces`                 | The host's interfaces with their subnets and default gateway, for suggestions.    |
 | `GET /api/stats`                               | Usage of every running server, keyed by container ID.                             |
+| `GET /api/game-profiles`                       | Every [game profile](#game-profiles) in use, with your own profiles' `origin` (`url`, `sha256`, `fetched`, `index`, `checked`, `update`, `updateError`, `changedLocally`), and files that couldn't be used (admins). |
+| `GET /api/game-profiles/{id}/yaml`             | A profile as written (`?builtin=1`: the built-in one). |
+| `POST /api/game-profiles`                      | Save a profile sent as YAML; one imported from a link keeps its origin. |
+| `DELETE /api/game-profiles/{id}`               | Delete your own profile. |
+| `POST /api/game-profiles/reload`               | Read the profiles folder again. |
+| `POST /api/game-profiles/fetch`                | `{url}`, or `{index, id}`: fetch a profile without saving it: `{url, sha256, id, name, yaml, index, replaces, diff: [{op, text}], same}`. |
+| `POST /api/game-profiles/import`               | The same, with the `sha256` that was looked at: save it, remembering where it came from (409 if it changed since). |
+| `POST /api/game-profiles/check`                | Fetch every linked profile again and note updates; answers like `GET /api/game-profiles`. |
+| `GET /api/game-profiles/export`                | Your own profiles, as a `.zip`. |
+| `GET`, `PUT /api/game-profiles/indexes`        | `{indexes: [link]}`: the profile indexes. |
+| `GET /api/game-profiles/indexes/browse`        | Each index's profiles: `[{url, name, error, profiles: [{id, name, url, sha256, description, inUse, installed, current}]}]`. |
 | `GET /api/integrations/discord`                | The [Discord bot](#discord-commands)'s settings, without the token: `{settings: {enabled, guilds: [{id, name, groups, details, rules: [{roleId, roleName, groups, actions}]}]}, hasToken, state: {status, error, bot, applicationId, since, guilds: [{id, name, commands, error}]}, inviteUrl, actions}`. |
 | `PUT /api/integrations/discord`                | Save them (confirmed): the same `settings` fields, and `token` to replace the bot's (checked with Discord). |
 | `POST /api/integrations/discord/test`          | Checks the token, and adds the commands to each Discord server again: `{result: {bot, inviteUrl, guilds: [{id, name, commands, error}]}, error}`. |
