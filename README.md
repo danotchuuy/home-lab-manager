@@ -294,6 +294,11 @@ alerts as usual.
     [Cloudflare Tunnel](#web-addresses-with-cloudflare-tunnel), carrying many streams at once (yamux); hlm's Docker
     calls, log and event streams and console input all go over it. The agent pings every 25 seconds and reconnects by
     itself (backing off up to a minute) when it drops or hlm restarts.
+  - **While hlm is down.** The agent keeps running and keeps trying, however long hlm is away, and so does an agent
+    that hasn't enrolled yet (both machines starting after a power cut, say): it enrols once hlm answers, and stops
+    only when hlm refuses it (a token that has expired meanwhile, or a removed host). The host's servers keep running
+    without either: Docker restarts them by their restart policy. What hlm does for them (schedules, backups, alerts,
+    waking idle servers) waits until it's back.
   - **Only hlm's Docker calls.** The agent passes on only the Docker API calls hlm makes (containers, images, networks,
     volumes, exec and archives for files and backups, events) and refuses the rest (swarm, plugins, secrets, image
     builds, exports, commits…), so even something that got hold of the connection couldn't use those. Starting
