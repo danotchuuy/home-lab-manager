@@ -9,6 +9,8 @@ import type {
   GameProfiles,
   IdleSettings,
   IdleStatus,
+  PlayerAction,
+  PlayersOverview,
   HistoryRange,
   MetricHistory,
   MetricsSettings,
@@ -812,6 +814,12 @@ export const api = {
     json<MetricHistory>(`/api/servers/${encodeURIComponent(id)}/history?range=${range}`),
   metricsSettings: () => json<MetricsSettings>("/api/system/metrics"),
   setMetricsSettings: (s: MetricsSettings) => json<MetricsSettings>("/api/system/metrics", { method: "PUT", body: JSON.stringify(s) }),
+  serverPlayers: (id: string) => json<PlayersOverview>(`/api/servers/${encodeURIComponent(id)}/players`),
+  playerAction: (id: string, action: PlayerAction, player: { name?: string; id?: string; reason?: string }) =>
+    json<{ output: string }>(`/api/servers/${encodeURIComponent(id)}/players/${action}`, {
+      method: "POST",
+      body: JSON.stringify(player),
+    }),
   serverIdle: (id: string) => json<IdleStatus>(`/api/servers/${encodeURIComponent(id)}/idle`),
   setServerIdle: (id: string, set: IdleSettings) =>
     json<IdleStatus>(`/api/servers/${encodeURIComponent(id)}/idle`, { method: "PUT", body: JSON.stringify(set) }),

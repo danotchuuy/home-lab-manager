@@ -24,6 +24,9 @@ type Players struct {
 	// Ignore are lines to skip in lines output (any case), such as "No
 	// Players Connected".
 	Ignore []string `yaml:"ignore" json:"ignore,omitempty"`
+	// IDColumn is csv's column (from 1) with each player's ID, for actions
+	// that take it; lines' pattern can have an id group instead.
+	IDColumn int `yaml:"id_column" json:"idColumn,omitempty"`
 
 	re *regexp.Regexp
 }
@@ -34,6 +37,22 @@ type PlayerList struct {
 	// Max is the player limit, if it says; 0 otherwise.
 	Max   int
 	Names []string
+	// IDs are the players' IDs, beside Names, when the list has them.
+	IDs []string
+}
+
+// HasIDs says whether the list gives players' IDs.
+func (p *Players) HasIDs() bool {
+	switch p.Format {
+	case "csv":
+		return p.IDColumn > 1
+	case "lines":
+		if p.re == nil {
+			p.compile()
+		}
+		return p.re != nil && p.re.SubexpIndex("id") >= 0
+	}
+	return false
 }
 
 func (p *Players) compile() error {
@@ -45,8 +64,14 @@ func (p *Players) compile() error {
 		if p.Header == "" {
 			return errors.New("csv needs the header its first line starts with")
 		}
+		if p.IDColumn == 1 || p.IDColumn < 0 || p.IDColumn > 50 {
+			return errors.New("id_column is the column with the ID, from 2 (the name is the first)")
+		}
 		return nil
 	case "summary", "lines":
+		if p.IDColumn != 0 {
+			return errors.New("id_column is for csv; give the pattern an id group instead")
+		}
 	default:
 		return fmt.Errorf("unknown format %q (csv, summary or lines)", p.Format)
 	}
@@ -88,8 +113,16 @@ func (p *Players) Parse(out string) (PlayerList, error) {
 				continue
 			}
 			res.Online++
-			if name, _, _ := strings.Cut(l, ","); name != "" {
-				res.Names = append(res.Names, name)
+			cols := strings.Split(l, ",")
+			if cols[0] != "" {
+				res.Names = append(res.Names, cols[0])
+				if p.IDColumn > 1 {
+					id := ""
+					if len(cols) >= p.IDColumn {
+						id = strings.TrimSpace(cols[p.IDColumn-1])
+					}
+					res.IDs = append(res.IDs, id)
+				}
 			}
 		}
 	case "summary":
@@ -117,6 +150,9 @@ func (p *Players) Parse(out string) (PlayerList, error) {
 			if m := p.re.FindStringSubmatch(l); m != nil {
 				res.Online++
 				res.Names = append(res.Names, strings.TrimSpace(m[p.re.SubexpIndex("name")]))
+				if i := p.re.SubexpIndex("id"); i >= 0 {
+					res.IDs = append(res.IDs, strings.TrimSpace(m[i]))
+				}
 			}
 		}
 	}

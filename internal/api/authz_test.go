@@ -101,6 +101,8 @@ var expected = map[string]string{
 	"GET /api/servers/{id}/update-policy":               "viewer",
 	"GET /api/servers/{id}/health":                      "viewer",
 	"GET /api/servers/{id}/idle":                        "viewer",
+	"GET /api/servers/{id}/players":                     "operator",
+	"POST /api/servers/{id}/players/{action}":           "operator",
 	"PUT /api/servers/{id}/idle":                        "manager",
 	"GET /api/servers/{id}/export":                      "operator",
 	"GET /api/stacks":                                   "signedIn",

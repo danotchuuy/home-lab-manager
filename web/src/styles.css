@@ -4280,3 +4280,16 @@ pre .muted {
 .card.idle-settings {
   margin-top: 1rem;
 }
+
+.players section {
+  margin-top: 1.25rem;
+}
+
+.players h3 {
+  font-size: 1rem;
+  margin: 0 0 0.4rem;
+}
+
+.players .add-player {
+  margin-top: 1.25rem;
+}

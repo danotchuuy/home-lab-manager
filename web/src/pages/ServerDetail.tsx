@@ -19,6 +19,7 @@ import { ServerGroupPicker } from "../components/ServerGroups";
 import { ServerHostnames } from "../components/ServerHostnames";
 import { ServerSchedule } from "../components/ServerSchedule";
 import { IdleSettings } from "../components/IdleSettings";
+import { ServerPlayers } from "../components/ServerPlayers";
 import { ServerUpdatePolicyCard } from "../components/UpdatePolicy";
 import { ServerHealthCard } from "../components/HealthSettings";
 import { StatTiles } from "../components/Resources";
@@ -30,7 +31,7 @@ import { HostBadge, useHosts } from "../components/HostPicker";
 import { ConnectCard } from "../components/ConnectInfo";
 import { TagEditor } from "../components/TagEditor";
 
-type Tab = "logs" | "files" | "backups" | "schedule" | "ports" | "settings";
+type Tab = "logs" | "files" | "players" | "backups" | "schedule" | "ports" | "settings";
 
 export function ServerDetailPage() {
   const { name = "" } = useParams();
@@ -52,7 +53,9 @@ export function ServerDetailPage() {
   const manager = !!server && can(server, "manager");
   // Viewers don't get the tabs that show logs, files or settings.
   const tabs: Tab[] =
-    operator || !server ? ["logs", "files", "backups", "schedule", "ports", "settings"] : ["backups", "schedule", "ports"];
+    operator || !server
+      ? ["logs", "files", "players", "backups", "schedule", "ports", "settings"]
+      : ["backups", "schedule", "ports"];
   const tab = (tabs.includes(params.get("tab") as Tab) ? params.get("tab") : tabs[0]) as Tab;
   const setTab = (t: Tab) => setParams(t === "logs" ? {} : { tab: t });
   const [busy, setBusy] = useState(false);
@@ -245,6 +248,11 @@ export function ServerDetailPage() {
             <button className={tab === "files" ? "active" : ""} onClick={() => setTab("files")}>
               Files
             </button>
+            {server.gameProfile && (
+              <button className={tab === "players" ? "active" : ""} onClick={() => setTab("players")}>
+                Players
+              </button>
+            )}
           </>
         )}
         <button className={tab === "backups" ? "active" : ""} onClick={() => setTab("backups")}>
@@ -281,6 +289,7 @@ export function ServerDetailPage() {
 
       {tab === "files" && <FileBrowser server={server.name} running={running} canEdit={manager} />}
 
+      {tab === "players" && <ServerPlayers server={server.name} running={running} canManage={manager} />}
       {tab === "backups" && <ServerBackups server={server.name} running={running} canRun={operator} canManage={manager} />}
 
       {tab === "schedule" && (

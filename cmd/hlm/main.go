@@ -51,6 +51,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/metrics"
 	"github.com/danotchuuy/home-lab-manager/internal/metricstore"
 	"github.com/danotchuuy/home-lab-manager/internal/notify"
+	"github.com/danotchuuy/home-lab-manager/internal/players"
 	"github.com/danotchuuy/home-lab-manager/internal/prefs"
 	"github.com/danotchuuy/home-lab-manager/internal/proxy"
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
@@ -554,6 +555,16 @@ func run(log *slog.Logger) error {
 		Executable: self,
 	})
 	mgr.UseBeforeStart(idleServers.BeforeStart)
+	// Kicks, bans and the allow, ban and admin lists.
+	playerManager := players.New(players.Options{
+		Secrets: store, Servers: mgr, Console: consoles, Notifier: notifier, Log: log,
+		Names: func(name string) []string {
+			if st := queries.Status(name, true); st.Result != nil {
+				return st.Result.PlayerNames
+			}
+			return nil
+		},
+	})
 	go idleServers.Run(ctx)
 	// Servers whose health keeps failing are restarted, if they want that.
 	healthMonitor := health.NewMonitor(health.Options{
@@ -663,6 +674,7 @@ func run(log *slog.Logger) error {
 		StatusPage:    statusPage,
 		GameProfiles:  gameProfiles,
 		Idle:          idleServers,
+		Players:       playerManager,
 		// Set when HLM_UPDATE_CHECK overrides the setting.
 		UpdateCheckEnv: updateCheckEnv,
 		Token:          env("HLM_TOKEN", ""),

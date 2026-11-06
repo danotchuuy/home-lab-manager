@@ -34,6 +34,9 @@ type Profile struct {
 	Query         Query          `yaml:"query" json:"query"`
 	Console       Console        `yaml:"console" json:"console"`
 	SettingsFiles []SettingsFile `yaml:"settings_files" json:"settingsFiles,omitempty"`
+	// PlayerLists are the files the game keeps its allow, ban and admin
+	// lists in, by list.
+	PlayerLists map[string]ListFile `yaml:"player_lists" json:"playerLists,omitempty"`
 
 	// Source is where it came from (BuiltIn or Custom), File its file, and
 	// Replaces whether a custom profile takes a built-in one's place.
@@ -103,7 +106,65 @@ type Console struct {
 	REST *REST `yaml:"rest" json:"rest,omitempty"`
 	// Players reads the player list through the console.
 	Players *Players `yaml:"players" json:"players,omitempty"`
+	// Actions are the commands that manage players, by action (Actions
+	// lists them): {player} is the player's name, {id} their ID, {reason}
+	// an optional reason.
+	Actions map[string]string `yaml:"actions" json:"actions,omitempty"`
 }
+
+// Player actions, and the list each one changes.
+const (
+	ActionKick     = "kick"
+	ActionBan      = "ban"
+	ActionUnban    = "unban"
+	ActionAllow    = "allow"
+	ActionDisallow = "disallow"
+	ActionAdmin    = "admin"
+	ActionUnadmin  = "unadmin"
+)
+
+// Actions are the player actions, in the order they're shown.
+var Actions = []string{ActionKick, ActionBan, ActionUnban, ActionAllow, ActionDisallow, ActionAdmin, ActionUnadmin}
+
+// Player lists.
+const (
+	ListAllow = "allow"
+	ListBan   = "ban"
+	ListAdmin = "admin"
+)
+
+// ActionList is the list an action adds to (or, with remove, takes off).
+func ActionList(action string) (list string, remove bool) {
+	switch action {
+	case ActionBan, ActionUnban:
+		return ListBan, action == ActionUnban
+	case ActionAllow, ActionDisallow:
+		return ListAllow, action == ActionDisallow
+	case ActionAdmin, ActionUnadmin:
+		return ListAdmin, action == ActionUnadmin
+	}
+	return "", false
+}
+
+// List formats.
+const (
+	// FormatMinecraftJSON is Minecraft's whitelist.json, ops.json and
+	// banned-players.json: an array of objects with name (and reason).
+	FormatMinecraftJSON = "minecraft-json"
+	// FormatLines is one name or ID per line; // starts a comment.
+	FormatLines = "lines"
+)
+
+// ListFile is a file a game keeps a player list in.
+type ListFile struct {
+	File   string `yaml:"file" json:"file"`
+	Format string `yaml:"format" json:"format"`
+	// Prefer picks among several files of that name, as for settings
+	// files.
+	Prefer string `yaml:"prefer" json:"prefer,omitempty"`
+}
+
+var placeholderRE = regexp.MustCompile(`\{[a-z]+\}`)
 
 // Exec is an image's own command sender.
 type Exec struct {
@@ -232,6 +293,33 @@ func (p *Profile) Validate() error {
 	if c.Players != nil {
 		if err := c.Players.compile(); err != nil {
 			return fmt.Errorf("console: players: %w", err)
+		}
+	}
+	for a, cmd := range c.Actions {
+		if !slices.Contains(Actions, a) {
+			return fmt.Errorf("console: unknown action %q (%s)", a, strings.Join(Actions, ", "))
+		}
+		if !strings.Contains(cmd, "{player}") && !strings.Contains(cmd, "{id}") {
+			return fmt.Errorf("console: action %s needs {player} or {id} in it", a)
+		}
+		for _, ph := range placeholderRE.FindAllString(cmd, -1) {
+			if ph != "{player}" && ph != "{id}" && ph != "{reason}" {
+				return fmt.Errorf("console: action %s: unknown %s ({player}, {id} or {reason})", a, ph)
+			}
+		}
+		if strings.ContainsAny(cmd, "\r\n") {
+			return fmt.Errorf("console: action %s is more than one line", a)
+		}
+	}
+	for l, f := range p.PlayerLists {
+		if l != ListAllow && l != ListBan && l != ListAdmin {
+			return fmt.Errorf("player_lists: unknown list %q (allow, ban or admin)", l)
+		}
+		if f.File == "" || strings.ContainsAny(f.File, "/\\") {
+			return fmt.Errorf("player_lists: %s: %q isn't a file name", l, f.File)
+		}
+		if f.Format != FormatMinecraftJSON && f.Format != FormatLines {
+			return fmt.Errorf("player_lists: %s: unknown format %q (minecraft-json or lines)", l, f.Format)
 		}
 	}
 	for _, f := range p.SettingsFiles {

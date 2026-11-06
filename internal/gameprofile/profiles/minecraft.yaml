@@ -20,5 +20,17 @@ console:
     format: summary
     # There are 2 of a max of 20 players online: alex, sam
     pattern: '(?s)^\s*There are (?P<online>\d+) of a max of (?P<max>\d+) players online:?(?P<names>.*)$'
+  actions:
+    kick: "kick {player} {reason}"
+    ban: "ban {player} {reason}"
+    unban: "pardon {player}"
+    allow: "whitelist add {player}"
+    disallow: "whitelist remove {player}"
+    admin: "op {player}"
+    unadmin: "deop {player}"
 settings_files:
   - names: [server.properties]
+player_lists:
+  allow: { file: whitelist.json, format: minecraft-json }
+  ban: { file: banned-players.json, format: minecraft-json }
+  admin: { file: ops.json, format: minecraft-json }

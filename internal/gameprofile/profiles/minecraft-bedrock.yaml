@@ -17,5 +17,14 @@ console:
     command: list
     format: summary
     pattern: '(?s)^\s*There are (?P<online>\d+) of a max of (?P<max>\d+) players online:?(?P<names>.*)$'
+  # Bedrock has no ban command: its allow list is how players are kept out.
+  actions:
+    kick: "kick {player} {reason}"
+    allow: "allowlist add {player}"
+    disallow: "allowlist remove {player}"
+    admin: "op {player}"
+    unadmin: "deop {player}"
 settings_files:
   - names: [server.properties]
+player_lists:
+  allow: { file: allowlist.json, format: minecraft-json }

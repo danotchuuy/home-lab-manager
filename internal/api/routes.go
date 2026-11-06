@@ -228,6 +228,8 @@ func (s *server) routes() []route {
 		{"GET /api/servers/{id}/query", serverRole(rbac.Viewer), s.gameStatus},
 		{"PUT /api/servers/{id}/query/settings", serverRole(rbac.Manager), s.setQuerySettings},
 		{"POST /api/servers/{id}/query/test", serverRole(rbac.Manager), s.testQuery},
+		{"GET /api/servers/{id}/players", serverRole(rbac.Operator), s.serverPlayers},
+		{"POST /api/servers/{id}/players/{action}", serverRole(rbac.Operator), s.playerAction},
 		{"GET /api/servers/{id}/idle", serverRole(rbac.Viewer), s.serverIdle},
 		{"PUT /api/servers/{id}/idle", serverRole(rbac.Manager), s.setServerIdle},
 		{"GET /api/servers/{id}/health", serverRole(rbac.Viewer), s.serverHealth},
