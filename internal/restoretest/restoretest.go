@@ -6,6 +6,7 @@ package restoretest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -103,6 +104,8 @@ type Servers interface {
 	TestCopyLogs(ctx context.Context, tc *manager.TestCopy, lines int) string
 	RemoveTestCopy(ctx context.Context, tc *manager.TestCopy) error
 	RemoveTestCopies(ctx context.Context, server string) error
+	StartTestProbe(ctx context.Context, tc *manager.TestCopy, probeCommand string, args []string) error
+	TestProbe(ctx context.Context, tc *manager.TestCopy) (output string, exitCode int, done bool, err error)
 	StartJob(job manager.Job, emit func(manager.Event)) (func(manager.Event), func(error), error)
 	List(ctx context.Context) ([]manager.Server, error)
 }
@@ -122,8 +125,12 @@ type Options struct {
 	Secrets *secrets.Store
 	Servers Servers
 	Backups Backups
-	// Probe asks a copy's game whether it's up, as the server is asked.
+	// Probe asks a copy's game whether it's up, as the server is asked,
+	// for copies on hlm's own host.
 	Probe func(ctx context.Context, server string, copy docker.ContainerJSON) (gamequery.Result, error)
+	// Methods are the ways to ask a copy, for the probe helper that asks
+	// copies on other hosts.
+	Methods func(ctx context.Context, server string, copy docker.ContainerJSON) ([]gamequery.Settings, error)
 	// QueryOff says the server's status query is turned off.
 	QueryOff func(server string) bool
 	// Memory says how much memory the host has free, and how much the
@@ -272,9 +279,6 @@ func (s *Service) Test(ctx context.Context, server, key, trigger string, emit fu
 		return Result{}, err
 	}
 	server = strings.TrimPrefix(info.Name, "/")
-	if h, _ := manager.SplitID(info.ID); h != manager.LocalHost {
-		return Result{}, manager.ErrTestRemote
-	}
 	if key == "" {
 		ov, err := s.opts.Backups.Overview(ctx, server)
 		if err != nil {
@@ -377,6 +381,45 @@ func (s *Service) run(ctx context.Context, server, key string, timeout time.Dura
 		return notify.Redact(s.opts.Servers.TestCopyLogs(context.WithoutCancel(ctx), tc, logLines))
 	}
 	var lastErr error
+	// On another host, hlm can't reach the copy's network: a helper next
+	// to it asks, and says when the game answered or it gave up.
+	probe := s.opts.Probe
+	if tc.Remote() && !queryOff {
+		info, err := s.opts.Servers.InspectTestCopy(ctx, tc)
+		if err != nil {
+			return fail("couldn't look at the copy: %v", err)
+		}
+		if s.opts.Methods == nil {
+			return fail("hlm can't ask copies on other hosts")
+		}
+		methods, err := s.opts.Methods(ctx, server, info)
+		if err != nil {
+			return fail("hlm doesn't know how to ask the copy whether it's up: %v", err)
+		}
+		args := []string{"--host", tc.Name, "--methods", gamequery.FormatMethods(methods),
+			"--timeout", timeout.String(), "--interval", max(s.opts.Poll, time.Second).String()}
+		say("wait", "Asking from a probe next to the copy, on its host")
+		if err := s.opts.Servers.StartTestProbe(ctx, tc, gamequery.ProbeCommand, args); err != nil {
+			return fail("couldn't start the probe next to the copy: %v", err)
+		}
+		probe = func(ctx context.Context, _ string, _ docker.ContainerJSON) (gamequery.Result, error) {
+			out, code, done, err := s.opts.Servers.TestProbe(ctx, tc)
+			if err != nil {
+				return gamequery.Result{}, err
+			}
+			if !done {
+				return gamequery.Result{}, errNotYet
+			}
+			var po gamequery.ProbeOutput
+			if jerr := json.Unmarshal([]byte(lastLine(out)), &po); jerr != nil {
+				return gamequery.Result{}, &probeGaveUp{fmt.Sprintf("the probe ended (exit code %d) without an answer: %s", code, strings.TrimSpace(out))}
+			}
+			if code == 0 && po.Result != nil {
+				return *po.Result, nil
+			}
+			return gamequery.Result{}, &probeGaveUp{po.Error}
+		}
+	}
 	for {
 		info, err := s.opts.Servers.InspectTestCopy(ctx, tc)
 		if err != nil {
@@ -396,15 +439,22 @@ func (s *Service) run(ctx context.Context, server, key string, timeout time.Dura
 			}
 		default:
 			pctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-			ans, err := s.opts.Probe(pctx, server, info)
+			ans, err := probe(pctx, server, info)
 			cancel()
+			var gaveUp *probeGaveUp
+			if errors.As(err, &gaveUp) {
+				res.Log = logs()
+				return fail("the copy didn't answer its status query within %s (last: %s)", timeout, gaveUp.msg)
+			}
 			if err == nil {
 				res.Outcome, res.Seconds = Passed, int(time.Since(began).Seconds())
 				res.Answer = answer(ans)
 				say("done", "Passed: the copy answered after %s (%s)", round(time.Since(began)), res.Answer)
 				return res
 			}
-			lastErr = err
+			if !errors.Is(err, errNotYet) {
+				lastErr = err
+			}
 		}
 		if time.Since(began) >= timeout {
 			res.Log = logs()
@@ -539,4 +589,18 @@ func (s *Service) runDue(ctx context.Context) {
 			s.opts.Log.Info("restore test didn't run", "server", server, "err", err)
 		}
 	}
+}
+
+// errNotYet is a probe helper still asking.
+var errNotYet = errors.New("still asking")
+
+// probeGaveUp is a probe helper that stopped without an answer.
+type probeGaveUp struct{ msg string }
+
+func (e *probeGaveUp) Error() string { return e.msg }
+
+// lastLine is the last non-empty line of a log.
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	return strings.TrimSpace(lines[len(lines)-1])
 }

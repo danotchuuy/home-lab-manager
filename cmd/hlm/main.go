@@ -106,6 +106,10 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case gamequery.ProbeCommand:
+			// In a restore test's probe helper, on another host's test
+			// network: one JSON line, and the exit code.
+			os.Exit(gamequery.ProbeMain(os.Args[2:], os.Stdout))
 		case idle.ListenerCommand:
 			// In a sleeping server's wake listener container: no logging,
 			// just what woke it.
@@ -546,6 +550,8 @@ func run(log *slog.Logger) error {
 	// Servers nobody plays on are stopped, and started again when someone
 	// wants to play.
 	self, _ := os.Executable()
+	// Helpers on other hosts (restore tests' probes) run hlm's binary.
+	mgr.UseExecutable(self)
 	idleServers := idle.New(idle.Options{
 		Secrets: store, Servers: mgr, Console: consoles, Tasks: sched, Notifier: notifier, Audit: auditLog, Log: log,
 		DockerFor: func(host string) (idle.Docker, error) { return mgr.DockerFor(host) },
@@ -669,7 +675,7 @@ func run(log *slog.Logger) error {
 	// Restore tests: backups restored into isolated copies and started.
 	restoreTests := restoretest.New(restoretest.Options{
 		Secrets: store, Servers: mgr, Backups: backups, Notifier: notifier, Log: log,
-		Probe: queries.ProbeCopy,
+		Probe: queries.ProbeCopy, Methods: queries.CopyMethods,
 		QueryOff: func(name string) bool {
 			return queries.Status(name, false).Settings.Protocol == gamequery.ProtoOff
 		},

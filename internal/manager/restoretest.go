@@ -24,9 +24,11 @@ const maxTestVolumes = 32
 // in place of the server's data folders, no published ports, and its own
 // internal network, which reaches neither the internet nor the LAN.
 type TestCopy struct {
-	Server  string
+	Server string
+	// Host is the Docker host it's on: the server's.
+	Host    string
 	Name    string
-	ID      string
+	ID      string // as the host knows it
 	Network string
 	Volumes []string
 	// joined says hlm's own container was connected to the network, to
@@ -41,8 +43,12 @@ func testNames(server string) (container, network string, volume func(int) strin
 	return base, base, func(i int) string { return fmt.Sprintf("%s-%d", base, i) }
 }
 
-// ErrTestRemote is a restore test asked for on another Docker host.
-var ErrTestRemote = errors.New("restore tests run only for servers on hlm's own Docker host for now")
+// Remote says the copy is on another Docker host, where hlm can't reach
+// its network: a probe helper asks its game there.
+func (tc *TestCopy) Remote() bool { return tc.Host != LocalHost }
+
+// probeName is the probe helper's container name.
+func (tc *TestCopy) probeName() string { return tc.Name + "-probe" }
 
 // CreateTestCopy makes a test copy of a server (stopped, with empty data
 // folders). Leftovers of an earlier test of it are removed first.
@@ -51,8 +57,10 @@ func (m *Manager) CreateTestCopy(ctx context.Context, server string) (*TestCopy,
 	if err != nil {
 		return nil, err
 	}
-	if host, _ := SplitID(info.ID); host != LocalHost {
-		return nil, ErrTestRemote
+	host, bareID := SplitID(info.ID)
+	c, err := m.docker.client(host)
+	if err != nil {
+		return nil, err
 	}
 	if info.HostConfig.NetworkMode == "host" {
 		return nil, errors.New("the server uses the host's network, so a copy would clash with it; restore tests need a server on a bridge network")
@@ -63,13 +71,13 @@ func (m *Manager) CreateTestCopy(ctx context.Context, server string) (*TestCopy,
 	}
 	cname, nname, vname := testNames(name)
 	labels := map[string]string{LabelRestoreTest: name}
-	tc := &TestCopy{Server: name, Name: cname, Network: nname}
+	tc := &TestCopy{Server: name, Host: host, Name: cname, Network: nname}
 	fail := func(err error) (*TestCopy, error) {
 		m.RemoveTestCopy(context.WithoutCancel(ctx), tc)
 		return nil, err
 	}
 
-	if _, err := m.docker.local.CreateNetwork(ctx, docker.CreateNetworkRequest{
+	if _, err := c.CreateNetwork(ctx, docker.CreateNetworkRequest{
 		Name: nname, Driver: "bridge", Internal: true, Labels: labels,
 	}); err != nil {
 		return fail(fmt.Errorf("create the test network: %w", err))
@@ -86,14 +94,14 @@ func (m *Manager) CreateTestCopy(ctx context.Context, server string) (*TestCopy,
 			return fail(fmt.Errorf("the server has more than %d data folders", maxTestVolumes))
 		}
 		v := vname(len(tc.Volumes))
-		if err := m.docker.local.CreateVolume(ctx, v, labels); err != nil {
+		if err := c.CreateVolume(ctx, v, labels); err != nil {
 			return fail(fmt.Errorf("create a test volume: %w", err))
 		}
 		tc.Volumes = append(tc.Volumes, v)
 		binds = append(binds, v+":"+mnt.Destination)
 	}
 
-	raw, err := m.docker.local.InspectContainerRaw(ctx, info.ID)
+	raw, err := c.InspectContainerRaw(ctx, bareID)
 	if err != nil {
 		return fail(err)
 	}
@@ -101,10 +109,10 @@ func (m *Manager) CreateTestCopy(ctx context.Context, server string) (*TestCopy,
 	if err != nil {
 		return fail(err)
 	}
-	if tc.ID, err = m.docker.local.CreateContainerRaw(ctx, cname, body); err != nil {
+	if tc.ID, err = c.CreateContainerRaw(ctx, cname, body); err != nil {
 		return fail(fmt.Errorf("create the test copy: %w", err))
 	}
-	m.log.Info("made a restore test copy", "server", name, "copy", cname)
+	m.log.Info("made a restore test copy", "server", name, "copy", cname, "host", host)
 	return tc, nil
 }
 
@@ -155,7 +163,11 @@ func testCopyBody(raw map[string]any, labels map[string]string, network string, 
 
 // inspectTestCopy inspects a test copy, checking it is one.
 func (m *Manager) inspectTestCopy(ctx context.Context, tc *TestCopy) (docker.ContainerJSON, error) {
-	info, err := m.docker.local.InspectContainer(ctx, tc.ID)
+	c, err := m.docker.client(tc.Host)
+	if err != nil {
+		return docker.ContainerJSON{}, err
+	}
+	info, err := c.InspectContainer(ctx, tc.ID)
 	if err != nil {
 		return info, err
 	}
@@ -177,8 +189,12 @@ func (m *Manager) RestoreTestCopy(ctx context.Context, tc *TestCopy, r io.Reader
 	if err != nil {
 		return files.ArchiveStats{}, err
 	}
+	c, err := m.docker.client(tc.Host)
+	if err != nil {
+		return files.ArchiveStats{}, err
+	}
 	// Docker's archive API only: the volumes are the copy's own.
-	return files.New(m.docker.local, nil).Restore(ctx, info, r, progress)
+	return files.New(c, nil).Restore(ctx, info, r, progress)
 }
 
 // StartTestCopy starts a copy, and connects hlm's own container (when it
@@ -187,18 +203,26 @@ func (m *Manager) StartTestCopy(ctx context.Context, tc *TestCopy) error {
 	if _, err := m.inspectTestCopy(ctx, tc); err != nil {
 		return err
 	}
-	if m.selfID != "" && !tc.joined {
-		if err := m.docker.local.ConnectNetwork(ctx, tc.Network, m.selfID, nil); err != nil {
+	c, err := m.docker.client(tc.Host)
+	if err != nil {
+		return err
+	}
+	if m.selfID != "" && !tc.joined && !tc.Remote() {
+		if err := c.ConnectNetwork(ctx, tc.Network, m.selfID, nil); err != nil {
 			return fmt.Errorf("connect hlm to the test network: %w", err)
 		}
 		tc.joined = true
 	}
-	return m.docker.local.StartContainer(ctx, tc.ID)
+	return c.StartContainer(ctx, tc.ID)
 }
 
 // TestCopyLogs is the end of a copy's log.
 func (m *Manager) TestCopyLogs(ctx context.Context, tc *TestCopy, lines int) string {
-	r, err := m.docker.local.Logs(ctx, tc.ID, docker.LogsOptions{Tail: fmt.Sprint(lines)})
+	c, err := m.docker.client(tc.Host)
+	if err != nil {
+		return ""
+	}
+	r, err := c.Logs(ctx, tc.ID, docker.LogsOptions{Tail: fmt.Sprint(lines)})
 	if err != nil {
 		return ""
 	}
@@ -209,37 +233,64 @@ func (m *Manager) TestCopyLogs(ctx context.Context, tc *TestCopy, lines int) str
 
 // RemoveTestCopy removes a copy, its volumes and its network.
 func (m *Manager) RemoveTestCopy(ctx context.Context, tc *TestCopy) error {
+	c, err := m.docker.client(tc.Host)
+	if err != nil {
+		return err
+	}
 	var errs []error
+	if err := c.RemoveContainer(ctx, tc.probeName(), true); err != nil && !docker.IsNotFound(err) {
+		errs = append(errs, err)
+	}
 	if tc.ID != "" {
-		if err := m.docker.local.RemoveContainer(ctx, tc.ID, true); err != nil && !docker.IsNotFound(err) {
+		if err := c.RemoveContainer(ctx, tc.ID, true); err != nil && !docker.IsNotFound(err) {
 			errs = append(errs, err)
 		}
 	}
 	if tc.joined {
 		// It may not be connected (a leftover from before it was); removing
 		// the network below says if it still is.
-		_ = m.docker.local.DisconnectNetwork(ctx, tc.Network, m.selfID, true)
+		_ = c.DisconnectNetwork(ctx, tc.Network, m.selfID, true)
 		tc.joined = false
 	}
 	for _, v := range tc.Volumes {
-		if err := m.docker.local.RemoveVolume(ctx, v); err != nil && !docker.IsNotFound(err) {
+		if err := c.RemoveVolume(ctx, v); err != nil && !docker.IsNotFound(err) {
 			errs = append(errs, err)
 		}
 	}
-	if err := m.docker.local.RemoveNetwork(ctx, tc.Network); err != nil && !docker.IsNotFound(err) {
+	if err := c.RemoveNetwork(ctx, tc.Network); err != nil && !docker.IsNotFound(err) {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
 }
 
 // RemoveTestCopies removes whatever a server's earlier tests left behind
-// (hlm stopped mid-test, say); with server "", every server's.
+// (hlm stopped mid-test, say); with server "", every server's on every
+// host.
 func (m *Manager) RemoveTestCopies(ctx context.Context, server string) error {
+	hosts := m.docker.hosts()
+	if server != "" {
+		h, _ := SplitID(server)
+		hosts = []string{h}
+	}
+	var errs []error
+	for _, host := range hosts {
+		if err := m.removeTestCopiesOn(ctx, host, server); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", m.HostName(host), err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (m *Manager) removeTestCopiesOn(ctx context.Context, host, server string) error {
+	c, err := m.docker.client(host)
+	if err != nil {
+		return err
+	}
 	filter := LabelRestoreTest
 	if server != "" {
 		filter += "=" + server
 	}
-	list, err := m.docker.local.ListContainers(ctx, filter)
+	list, err := c.ListContainers(ctx, filter)
 	if err != nil {
 		return err
 	}
@@ -247,12 +298,12 @@ func (m *Manager) RemoveTestCopies(ctx context.Context, server string) error {
 	if server != "" {
 		servers[server] = true
 	}
-	for _, c := range list {
-		servers[c.Labels[LabelRestoreTest]] = true
+	for _, ct := range list {
+		servers[ct.Labels[LabelRestoreTest]] = true
 	}
 	if server == "" {
 		// Networks without a container left, too.
-		if nets, err := m.docker.local.ListNetworks(ctx); err == nil {
+		if nets, err := c.ListNetworks(ctx); err == nil {
 			for _, n := range nets {
 				if s := n.Labels[LabelRestoreTest]; s != "" {
 					servers[s] = true
@@ -263,16 +314,8 @@ func (m *Manager) RemoveTestCopies(ctx context.Context, server string) error {
 	var errs []error
 	for s := range servers {
 		cname, nname, vname := testNames(s)
-		tc := &TestCopy{Server: s, Name: cname, Network: nname}
-		for _, c := range list {
-			if c.Labels[LabelRestoreTest] == s {
-				tc.ID = c.ID
-			}
-		}
-		if tc.ID == "" {
-			tc.ID = cname
-		}
-		if m.selfID != "" {
+		tc := &TestCopy{Server: s, Host: host, Name: cname, Network: nname, ID: cname}
+		if m.selfID != "" && host == LocalHost {
 			tc.joined = true
 		}
 		for i := range maxTestVolumes {

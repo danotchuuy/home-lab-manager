@@ -13,9 +13,14 @@
 > - **Its own settings and results**, not fields on the backup plan and backup list: `GET`/`PUT
 >   …/backups/restore-tests` and `POST …/backups/restore-test`, stored in `"restore-tests"` (the last 20 results per
 >   server). The Backups tab shows them in their own card.
-> - **Local host only for now.** Servers on other Docker hosts would need the query run from a helper on that host's
->   network; they get a clear refusal.
-> - **One test at a time on the whole of hlm**, rather than one per host (only the local host runs them).
+> - **Other hosts** (branch `feature/25-remote-restore-tests`): the copy is made through the host's own Docker
+>   connection (SSH, TLS or agent), and a probe helper on the copy's network asks its game: the copy's image with hlm's
+>   static binary copied in (as the idle wake listener does; the check and copy are now `internal/selfexe`), running
+>   the new `hlm probe-game` command, which tries the methods `gamequery.CopyMethods` lists until one answers or time
+>   runs out and prints one JSON line. The binary is copied once per test, and hlm reads the helper's result when it
+>   exits.
+> - **One test at a time on the whole of hlm**, rather than one per host: a copy can need as much memory as its
+>   server, and that's simpler to reason about.
 > - **The query** uses the method that last worked for the server, then its saved settings, then detection; a server
 >   with its status query off passes by running for a minute. hlm in a container joins the test network to reach
 >   the copy.
@@ -92,7 +97,7 @@ A failure sends `backup.restore_test_failed` (error). **Test a restore now** on 
 ## Tasks
 
 - [x] Isolated test copies: internal network, no ports or connections, limits, labels
-- [x] Waiting for the status query inside the network (local host; other hosts not yet)
+- [x] Waiting for the status query inside the network (local host, and other hosts through a probe helper)
 - [x] Results and history; notification
 - [x] Scheduling; on-demand button
 - [x] Leftover cleanup at start

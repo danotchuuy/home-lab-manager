@@ -1090,7 +1090,13 @@ Since the copy can't download anything, the backup has to hold everything the se
 
 Tests can run **on a schedule**: once a week, or after every N backups, each time testing the newest backup if it isn't
 tested yet. One test runs at a time. A test is **skipped** (not failed) when the host has less free memory than the
-server uses, and tried again a day later. Tests run only for servers on hlm's own Docker host for now.
+server uses, and tried again a day later.
+
+**Servers on other Docker hosts** are tested there too: the copy is made on the server's host, and since hlm can't
+reach that host's test network, a small **probe** container next to the copy asks its game instead. The probe is the
+copy's own image (already on that host) with hlm's binary copied in, running `hlm probe-game` as nobody, with no
+capabilities, 64 MiB of memory and only the test network; it asks the copy by name the way the server is asked, and
+is removed with the copy. That needs a static build of hlm for the host's architecture, as releases are.
 
 ### Backing up hlm's own configuration
 

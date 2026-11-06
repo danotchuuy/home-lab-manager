@@ -698,37 +698,52 @@ func (s *Service) Test(ctx context.Context, name string, set Settings) (Settings
 	return set, res, err
 }
 
-// ProbeCopy asks a container that isn't one of the servers (a restore
-// test's copy of server) whether its game is up, the way the server is
-// asked: the method that last worked for it, its saved settings, or else
-// detection. The console isn't used: the copy isn't a server hlm talks to.
-func (s *Service) ProbeCopy(ctx context.Context, server string, info docker.ContainerJSON) (Result, error) {
+// CopyMethods are the ways to ask a copy of server (a restore test's)
+// whether its game is up, the way the server is asked: the method that last
+// worked for it, its saved settings, or else every detection candidate. The
+// console is never one: the copy isn't a server hlm talks to.
+func (s *Service) CopyMethods(ctx context.Context, server string, info docker.ContainerJSON) ([]Settings, error) {
 	// The copy runs the server's image by ID; its profile goes by name.
 	if srv, err := s.opts.Servers.Inspect(ctx, server); err == nil {
 		info.Config.Image = srv.Config.Image
 	}
 	st := s.Status(server, false)
 	if m := st.Method; m != nil && m.Protocol != ProtoRCON && m.Protocol != ProtoOff && m.Protocol != ProtoAuto {
-		return s.query(ctx, info, *m, "")
+		return []Settings{*m}, nil
 	}
 	switch set := st.Settings; set.Protocol {
 	case ProtoOff:
-		return Result{}, errors.New("the server's status query is off")
+		return nil, errors.New("the server's status query is off")
 	case ProtoAuto, ProtoRCON:
 	default:
-		return s.query(ctx, info, set, "")
+		return []Settings{set}, nil
 	}
 	app, _, _ := s.opts.Servers.Config(ctx, server)
-	cands := candidates(info, app, false)
-	if len(cands) == 0 {
-		return Result{}, errNoMethod
+	var out []Settings
+	for _, c := range candidates(info, app, false) {
+		if c.Protocol != ProtoRCON {
+			out = append(out, Settings{Protocol: c.Protocol, Port: c.Port})
+		}
+	}
+	if len(out) == 0 {
+		return nil, errNoMethod
+	}
+	return out, nil
+}
+
+// ProbeCopy asks a copy of server on hlm's own host whether its game is up,
+// trying CopyMethods at its addresses.
+func (s *Service) ProbeCopy(ctx context.Context, server string, info docker.ContainerJSON) (Result, error) {
+	methods, err := s.CopyMethods(ctx, server, info)
+	if err != nil {
+		return Result{}, err
 	}
 	var lastErr error
-	for _, c := range cands {
+	for _, m := range methods {
 		if ctx.Err() != nil {
 			return Result{}, ctx.Err()
 		}
-		res, err := s.query(ctx, info, Settings{Protocol: c.Protocol, Port: c.Port}, "")
+		res, err := s.query(ctx, info, m, "")
 		if err == nil {
 			return res, nil
 		}

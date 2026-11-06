@@ -1,16 +1,12 @@
 package idle
 
 import (
-	"archive/tar"
 	"bufio"
 	"context"
-	"debug/elf"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,6 +15,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/gameprofile"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
+	"github.com/danotchuuy/home-lab-manager/internal/selfexe"
 )
 
 // LabelListener marks wake listener containers, with the server's name.
@@ -31,21 +28,8 @@ const listenerBinary = "/hlm-wake"
 // can't: it has to be a static Linux binary, since it runs in the game's
 // image.
 func checkExecutable(path string) string {
-	if runtime.GOOS != "linux" {
-		return "waking on a connection needs hlm to run on Linux"
-	}
-	if path == "" {
-		return "hlm couldn't find its own binary to run the wake listener"
-	}
-	f, err := elf.Open(path)
-	if err != nil {
-		return "hlm couldn't read its own binary: " + err.Error()
-	}
-	defer f.Close()
-	for _, p := range f.Progs {
-		if p.Type == elf.PT_INTERP {
-			return "waking on a connection needs a static build of hlm (CGO_ENABLED=0, as releases are)"
-		}
+	if why := selfexe.Check(path); why != "" {
+		return "waking on a connection: " + why
 	}
 	return ""
 }
@@ -164,9 +148,8 @@ func (s *Service) startListener(ctx context.Context, name string) (string, error
 	if err != nil {
 		return "", fmt.Errorf("inspect the server's image: %w", err)
 	}
-	if (img.Os != "" && img.Os != "linux") || (img.Architecture != "" && img.Architecture != runtime.GOARCH) {
-		return "", fmt.Errorf("the server's image is for %s/%s and hlm for linux/%s, so hlm can't run in it",
-			img.Os, img.Architecture, runtime.GOARCH)
+	if why := selfexe.Fits(img.Os, img.Architecture); why != "" {
+		return "", fmt.Errorf("%s, so hlm can't run in it", why)
 	}
 	// A listener left over from before is in the way.
 	if old, err := d.ListContainers(ctx, LabelListener+"="+name); err == nil {
@@ -219,31 +202,7 @@ func (s *Service) startListener(ctx context.Context, name string) (string, error
 
 // copyBinary puts hlm's binary into a created container.
 func copyBinary(ctx context.Context, d Docker, id, path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return err
-	}
-	pr, pw := io.Pipe()
-	go func() {
-		tw := tar.NewWriter(pw)
-		err := tw.WriteHeader(&tar.Header{Name: strings.TrimPrefix(listenerBinary, "/"), Mode: 0o755, Size: st.Size(),
-			ModTime: st.ModTime(), Typeflag: tar.TypeReg})
-		if err == nil {
-			_, err = io.Copy(tw, f)
-		}
-		if err == nil {
-			err = tw.Close()
-		}
-		pw.CloseWithError(err)
-	}()
-	err = d.CopyTo(ctx, id, "/", pr)
-	pr.Close()
-	return err
+	return selfexe.CopyInto(ctx, d, id, path, listenerBinary)
 }
 
 func (s *Service) docker(name string) (Docker, error) {

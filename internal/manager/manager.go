@@ -56,7 +56,10 @@ type Manager struct {
 	// selfID is the container hlm runs in, shown with the connections as
 	// self; see UseSelf.
 	selfID string
-	self   ConnectionKind
+	// executable is hlm's own binary, for helpers that run it in
+	// containers (UseExecutable).
+	executable string
+	self       ConnectionKind
 	// notifier gets crashes, updates and the like; see UseNotifier.
 	notifier notify.Notifier
 	// crashes counts unexpected exits; see health.go.
