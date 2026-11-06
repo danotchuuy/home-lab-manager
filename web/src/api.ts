@@ -5,6 +5,8 @@ import type {
   AuditPage,
   AuditSettings,
   RegistryForm,
+  GameProfile,
+  GameProfiles,
   HistoryRange,
   MetricHistory,
   MetricsSettings,
@@ -808,6 +810,14 @@ export const api = {
     json<MetricHistory>(`/api/servers/${encodeURIComponent(id)}/history?range=${range}`),
   metricsSettings: () => json<MetricsSettings>("/api/system/metrics"),
   setMetricsSettings: (s: MetricsSettings) => json<MetricsSettings>("/api/system/metrics", { method: "PUT", body: JSON.stringify(s) }),
+  gameProfiles: () => json<GameProfiles>("/api/game-profiles"),
+  gameProfileYAML: async (id: string, builtin = false) =>
+    (await request(`/api/game-profiles/${encodeURIComponent(id)}/yaml${builtin ? "?builtin=1" : ""}`)).text(),
+  importGameProfile: (yaml: string) =>
+    json<GameProfile>("/api/game-profiles", { method: "POST", body: yaml, headers: { "Content-Type": "text/yaml" } }),
+  deleteGameProfile: (id: string) =>
+    json<GameProfiles>(`/api/game-profiles/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  reloadGameProfiles: () => json<GameProfiles>("/api/game-profiles/reload", { method: "POST" }),
   registries: () => json<RegistryLogin[]>("/api/registries"),
   addRegistry: (f: RegistryForm) => json<RegistryLogin>("/api/registries", { method: "POST", body: JSON.stringify(f) }),
   updateRegistry: (host: string, f: RegistryForm) =>

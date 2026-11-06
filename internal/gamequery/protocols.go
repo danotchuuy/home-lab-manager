@@ -514,7 +514,7 @@ func addPalworldInfo(res *Result, out string) {
 // parsePlayerList reads a game's answer to its player list command, as its
 // profile says.
 func parsePlayerList(game, out string) (Result, error) {
-	p := gameprofile.Default().ByID(game)
+	p := gameprofile.Current().ByID(game)
 	if p == nil || p.Console.Players == nil {
 		return Result{}, fmt.Errorf("no player list command for %q", game)
 	}

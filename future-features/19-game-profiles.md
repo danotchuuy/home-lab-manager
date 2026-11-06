@@ -2,9 +2,10 @@
 
 **Priority:** Requested · **Depends on:** nothing
 
-> **Status: phase 1 done** (branch `feature/19-game-profiles`): the built-in games are profiles in
+> **Status: phases 1 and 2 done.** Phase 1 (branch `feature/19-game-profiles`): the built-in games are profiles in
 > `internal/gameprofile/profiles/`, read by the status queries, the console and settings-file suggestions, and the web
-> UI's schedule presets get their commands from the console status. Phases 2 (your own profiles) and 3 are to do.
+> UI's schedule presets get their commands from the console status. Phase 2 (branch
+> `feature/19-game-profiles-phase2`): your own profiles, see [Phase 2 design](#phase-2-design). Phase 3 only if needed.
 > Where phase 1 differs from the plan:
 >
 > - **One way to recognise a game.** The console used to read only the repository name (split at `-`, `_`, `.`);
@@ -101,6 +102,26 @@ Built-in drivers (`console.rest.driver`) stay Go: they're protocols, not data. P
 - `configfiles`: suggestions from the profile's `settings_files`.
 - Web: the schedule's presets use the console status's `say` and `save`.
 
+## Phase 2 design
+
+- `gameprofile.Store` keeps `<data>/game-profiles/*.yaml`. `Reload` reads them (a missing folder is fine), records
+  each file it can't use (a mistake, larger than 64 KiB, or an id an earlier file already has) and puts
+  `Merge(Default(), yours)` in use: `Current()`, which `Match` and everything that matched on `Default()` now read.
+  It's read at start and after every change. `Import` checks a profile, writes it (0600, all at once) to its id's file
+  or the file that already has its id, and reloads; `Delete` removes your file, bringing a built-in one back.
+- Each profile says where it came from (`source`: built-in or custom, `file`, `replaces`) and keeps its YAML as
+  written, for **View** and **Edit a copy**.
+- API (admin): `GET /api/game-profiles` (profiles in use, the folder, the files not used), `POST` (YAML body),
+  `POST …/reload`, `GET …/{id}/yaml` (`?builtin=1` for the built-in one behind yours), `DELETE …/{id}`.
+- Servers carry `gameProfile` (`id`, `name`, `source`), shown on the server page under its network.
+- Configuration backups include `game-profiles/`.
+- YAML errors read as `line 4: field players not found`, without Go's type names.
+
+Where phase 2 differs from the plan: **Edit** a profile in the page as well as importing a file, since a profile is
+short and starting from a built-in one is the easiest way to write one. Admins only, like the other System settings:
+a profile's `exec` command is only ever suggested in a server's console settings, and runs only once a manager
+chooses it.
+
 ## Testing
 
 - Every built-in profile parses and validates; matching picks the expected profile for real image names (itzg,
@@ -115,5 +136,5 @@ Built-in drivers (`console.rest.driver`) stay Go: they're protocols, not data. P
 - [x] `gamequery`, `console`, `configfiles` read profiles
 - [x] Console status `say`/`save`; schedule presets use them
 - [x] README
-- [ ] (phase 2) user profiles, import, per-server profile shown
+- [x] (phase 2) user profiles, import, per-server profile shown
 - [ ] (phase 3) only if needed

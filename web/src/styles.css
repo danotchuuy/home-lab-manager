@@ -4252,3 +4252,11 @@ pre .muted {
   border: 1px solid var(--border);
   border-radius: 6px;
 }
+
+.game-profiles .game-profile-yaml {
+  max-height: 480px;
+}
+
+.game-profiles textarea.code-input {
+  width: 100%;
+}
