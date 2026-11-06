@@ -2,7 +2,26 @@ import { Fragment, useState } from "react";
 import type { CrashLoop } from "../types";
 import { timeAgo } from "../util";
 
-export function StateBadge({ state, health }: { state: string; health?: string }) {
+export function StateBadge({
+  state,
+  health,
+  asleep,
+}: {
+  state: string;
+  health?: string;
+  /** hlm stopped it because nobody played. */
+  asleep?: { since: string; minutes: number };
+}) {
+  if (asleep && state !== "running") {
+    return (
+      <span
+        className="badge state-asleep"
+        title={`Nobody played for ${asleep.minutes} minutes, so hlm stopped it ${timeAgo(asleep.since)}. It starts again when someone wants to play.`}
+      >
+        asleep
+      </span>
+    );
+  }
   const label = health && state === "running" ? `${state} · ${health}` : state;
   return <span className={`badge state-${state}`}>{label}</span>;
 }

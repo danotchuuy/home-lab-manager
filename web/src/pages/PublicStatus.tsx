@@ -7,6 +7,7 @@ const STATE_LABEL: Record<PublicStatusServer["state"], string> = {
   starting: "Starting",
   running: "Up",
   offline: "Offline",
+  asleep: "Asleep",
 };
 
 /**
@@ -19,9 +20,13 @@ export function PublicStatus() {
   // Set when the page needs its password; the title to show above the form.
   const [locked, setLocked] = useState<string>();
 
-  const load = useCallback(async () => {
+  // fresh skips the browser's cache of the page (15 seconds), after a change.
+  const load = useCallback(async (fresh = false) => {
     try {
-      const res = await fetch("/api/status-page", { credentials: "same-origin" });
+      const res = await fetch("/api/status-page", {
+        credentials: "same-origin",
+        cache: fresh ? "no-cache" : "default",
+      });
       if (res.status === 401) {
         const body = (await res.json().catch(() => ({}))) as { title?: string };
         setLocked(body.title ?? "Status");
@@ -43,7 +48,7 @@ export function PublicStatus() {
 
   useEffect(() => {
     load();
-    const timer = setInterval(load, 30000);
+    const timer = setInterval(() => load(), 30000);
     return () => clearInterval(timer);
   }, [load]);
 
@@ -73,7 +78,7 @@ export function PublicStatus() {
           {page.message && <div className="alert info status-message">{page.message}</div>}
           <div className="status-list">
             {page.servers.map((s) => (
-              <StatusCard key={s.slug} s={s} />
+              <StatusCard key={s.slug} s={s} onWoken={() => load(true)} />
             ))}
           </div>
           {page.access?.detailsLocked && (
@@ -97,7 +102,7 @@ export function PublicStatus() {
   );
 }
 
-function StatusCard({ s }: { s: PublicStatusServer }) {
+function StatusCard({ s, onWoken }: { s: PublicStatusServer; onWoken: () => void }) {
   const players =
     s.players !== undefined
       ? `${s.players}${s.maxPlayers ? ` / ${s.maxPlayers}` : ""} player${s.players === 1 && !s.maxPlayers ? "" : "s"}`
@@ -120,6 +125,7 @@ function StatusCard({ s }: { s: PublicStatusServer }) {
           <span aria-hidden="true">●</span> {STATE_LABEL[s.state]}
         </span>
       </div>
+      {s.state === "asleep" && <WakeButton s={s} onWoken={onWoken} />}
       {(players || s.version || s.map) && (
         <div className="small status-facts">
           {players && <span>{players}</span>}
@@ -149,6 +155,47 @@ function StatusCard({ s }: { s: PublicStatusServer }) {
         </div>
       )}
     </section>
+  );
+}
+
+/** A sleeping server: why it's off, and a Start button if visitors may use one. */
+function WakeButton({ s, onWoken }: { s: PublicStatusServer; onWoken: () => void }) {
+  const [state, setState] = useState<"idle" | "busy" | "started">("idle");
+  const [error, setError] = useState<string>();
+
+  async function wake() {
+    setState("busy");
+    setError(undefined);
+    try {
+      const res = await fetch(`/api/status-page/${encodeURIComponent(s.slug)}/wake`, {
+        method: "POST",
+        headers: { "X-HLM-Request": "1" },
+        credentials: "same-origin",
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? "It couldn't be started.");
+      }
+      setState("started");
+      // Show it starting, then keep checking until it's up.
+      onWoken();
+      [15, 45, 90].forEach((sec) => setTimeout(onWoken, sec * 1000));
+    } catch (e) {
+      setError((e as Error).message);
+      setState("idle");
+    }
+  }
+
+  return (
+    <div className="status-wake small">
+      <span className="muted">Nobody was playing, so it&apos;s asleep.</span>
+      {s.canWake && (
+        <button className="btn small primary" onClick={wake} disabled={state !== "idle"}>
+          {state === "busy" ? "Starting…" : state === "started" ? "Starting: give it a minute or two" : "Start it"}
+        </button>
+      )}
+      {error && <span className="alert error small no-margin">{error}</span>}
+    </div>
   );
 }
 

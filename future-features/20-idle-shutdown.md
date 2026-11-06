@@ -3,6 +3,25 @@
 **Priority:** High · **Depends on:** [05](05-game-query.md) (player counts), [17](17-public-status-page.md) (wake from
 the status page, optional)
 
+> **Status: done** (branch `feature/20-idle-shutdown`). See the README's
+> [Stopping idle servers](../README.md#stopping-idle-servers). Where the result differs from this plan:
+>
+> - **The wake listener is a container, not hlm binding ports itself.** hlm usually runs in a container on a bridge
+>   network, where it can't bind the host's ports, and servers can be on other hosts. So while a server sleeps, hlm
+>   creates `hlm-wake-<name>` on its host: the server's own image (already there, right architecture), hlm's static
+>   binary copied in (`hlm wake-listener`), the server's port bindings, user 65534, no capabilities, no mounts,
+>   `no-new-privileges`, 64 MB and 64 processes. It exits printing what woke it; hlm waits on it, then starts the
+>   server. This also covers **other hosts** (through TLS, SSH or the agent), which the plan left for later.
+> - **Wake rules instead of a per-server wake limit.** Port scans (connect, send nothing), Steam's A2S queries and
+>   Minecraft (Java and Bedrock) server-list pings don't wake a server; a TCP connection that sends something, a UDP
+>   packet, or a Minecraft login does. The status page has its own per-address limit (three, then one every 10
+>   minutes).
+> - **Bedrock** answers its server list pings too (as asleep), since clients send them constantly.
+> - **Starts from anywhere wake it:** the manager runs `BeforeStart` before starting a stopped server (Start, Restart,
+>   scheduled tasks), which moves the listener out of the ports' way; a start outside hlm is noticed on the next check.
+> - Servers' JSON gains `asleep` (`since`, `minutes`); game summaries didn't need `idleSince`, which is in the idle
+>   status instead.
+
 ## Why
 
 Most home-lab game servers are empty most of the day, but a running Palworld or ARK server holds 8–16 GB of memory
@@ -98,11 +117,11 @@ Servers' JSON gains `asleep` (`{since, minutes}`), and game summaries gain `idle
 
 ## Tasks
 
-- [ ] `internal/idle` settings, idle detection and the stop sequence
-- [ ] Persisted sleep state; "Asleep" in the list, server page and status page
-- [ ] TCP/UDP wake listeners for local servers, with limits
-- [ ] Minecraft sleeping MOTD and login message
-- [ ] Status page wake button
-- [ ] Notifications `server.asleep`, `server.wake_failed`; audit
-- [ ] Schedule tab → Idle UI
-- [ ] README section and API table
+- [x] `internal/idle` settings, idle detection and the stop sequence
+- [x] Persisted sleep state; "Asleep" in the list, server page and status page
+- [x] TCP/UDP wake listeners for local servers, with limits
+- [x] Minecraft sleeping MOTD and login message
+- [x] Status page wake button
+- [x] Notifications `server.asleep`, `server.wake_failed`; audit
+- [x] Schedule tab → Idle UI
+- [x] README section and API table

@@ -53,9 +53,12 @@ func (c *Client) PullImage(ctx context.Context, ref string, progress func(PullPr
 
 // Image is the subset of image inspect output that we use.
 type Image struct {
-	ID          string   `json:"Id"`
-	RepoTags    []string `json:"RepoTags"`
-	RepoDigests []string `json:"RepoDigests"`
+	ID string `json:"Id"`
+	// Architecture and Os are what the image runs on (amd64, linux).
+	Architecture string   `json:"Architecture"`
+	Os           string   `json:"Os"`
+	RepoTags     []string `json:"RepoTags"`
+	RepoDigests  []string `json:"RepoDigests"`
 	// Config holds the defaults the image gives its containers.
 	Config struct {
 		Env          []string            `json:"Env"`

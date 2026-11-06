@@ -24,6 +24,10 @@ var statusLimiter = &statuspage.Limiter{Rate: 2, Burst: 60}
 // one every 12 seconds, per address.
 var unlockLimiter = &statuspage.Limiter{Rate: 1.0 / 12, Burst: 5}
 
+// wakeLimiter keeps one address from starting servers over and over: three,
+// then one every 10 minutes.
+var wakeLimiter = &statuspage.Limiter{Rate: 1.0 / 600, Burst: 3}
+
 func remoteHost(r *http.Request) string {
 	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return h
@@ -286,10 +290,13 @@ func statusOnlyPath(p string) bool {
 }
 
 // statusMethodOK: the page is read-only, apart from giving and forgetting
-// its password.
+// its password, and starting sleeping servers that allow it.
 func statusMethodOK(r *http.Request) bool {
 	switch r.URL.Path {
 	case "/api/status-page/unlock", "/api/status-page/lock":
+		return r.Method == http.MethodPost
+	}
+	if strings.HasSuffix(r.URL.Path, "/wake") && strings.Count(r.URL.Path, "/") == 4 {
 		return r.Method == http.MethodPost
 	}
 	return r.Method == http.MethodGet || r.Method == http.MethodHead

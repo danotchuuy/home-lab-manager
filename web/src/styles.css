@@ -372,6 +372,11 @@ select:disabled {
   color: var(--warn);
 }
 
+.badge.state-asleep {
+  background: color-mix(in srgb, var(--info) 14%, transparent);
+  color: var(--info);
+}
+
 .badge.state-dead {
   background: color-mix(in srgb, var(--danger) 18%, transparent);
   color: var(--danger);
@@ -4185,6 +4190,17 @@ pre .muted {
 .status-pill.offline {
   color: var(--danger);
 }
+.status-pill.asleep {
+  background: color-mix(in srgb, var(--info) 14%, transparent);
+  color: var(--info);
+}
+.status-wake {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-top: 0.6rem;
+}
 .status-facts {
   display: flex;
   flex-wrap: wrap;
@@ -4259,4 +4275,8 @@ pre .muted {
 
 .game-profiles textarea.code-input {
   width: 100%;
+}
+
+.card.idle-settings {
+  margin-top: 1rem;
 }

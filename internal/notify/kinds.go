@@ -23,6 +23,8 @@ const (
 	KindUpdateAvailable    = "server.update_available"
 	KindServerUpdated      = "server.updated"
 	KindServerUpdateFail   = "server.update_failed"
+	KindServerAsleep       = "server.asleep"
+	KindServerWakeFailed   = "server.wake_failed"
 	KindBackupFailed       = "backup.failed"
 	KindBackupSucceeded    = "backup.succeeded"
 	KindBackupVerifyFailed = "backup.verify_failed"
@@ -55,6 +57,8 @@ var Kinds = []Kind{
 	{KindServerUnhealthy, "Servers", Warning, "A server's health check started failing", time.Hour},
 	{KindServerOnline, "Servers", Info, "A server that was starting is ready for players (it answered its game's status query)", 0},
 	{KindNotResponding, "Servers", Warning, "A running server stopped answering its game's status query, or never started answering", time.Hour},
+	{KindServerAsleep, "Servers", Info, "Nobody played on a server for a while, so hlm stopped it until someone wants to play", 0},
+	{KindServerWakeFailed, "Servers", Error, "Someone wanted to play on a sleeping server, but starting it failed", 15 * time.Minute},
 	{KindTaskFailed, "Servers", Error, "A scheduled task failed, or was missed because hlm wasn't running", time.Hour},
 	{KindUpdateAvailable, "Updates", Info, "A newer image is available for a server", sentOnce},
 	{KindServerUpdated, "Updates", Info, "A server was updated", 0},
