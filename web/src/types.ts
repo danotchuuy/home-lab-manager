@@ -328,6 +328,51 @@ export interface ModPlan {
   running: boolean;
 }
 
+export type DiscordAction = "players" | "start" | "stop" | "restart" | "say";
+
+export interface DiscordRule {
+  roleId: string;
+  roleName?: string;
+  /** Server group IDs; none means every server on the status page. */
+  groups: string[];
+  actions: DiscordAction[];
+}
+
+export interface DiscordSettings {
+  enabled: boolean;
+  guildId: string;
+  rules: DiscordRule[];
+  /** Show addresses and who's playing. */
+  details: boolean;
+}
+
+export interface DiscordState {
+  status: "off" | "connecting" | "connected" | "error";
+  error?: string;
+  bot?: string;
+  applicationId?: string;
+  since?: string;
+  commands: boolean;
+}
+
+export interface DiscordView {
+  settings: DiscordSettings;
+  hasToken: boolean;
+  state: DiscordState;
+  inviteUrl?: string;
+}
+
+export interface DiscordRole {
+  id: string;
+  name: string;
+  position: number;
+}
+
+export interface DiscordTest {
+  result: { bot?: string; guild?: string; inviteUrl?: string; commands: boolean };
+  error?: string;
+}
+
 export interface IdleSettings {
   /** Minutes without players before it's stopped; 0 is off. */
   minutes: number;
@@ -1929,7 +1974,7 @@ export interface ConfigFiles {
 }
 
 export type AuditResult = "ok" | "denied" | "error";
-export type AuditActorKind = "local" | "sso" | "key" | "ssh" | "token" | "anonymous" | "hlm" | "host" | "";
+export type AuditActorKind = "local" | "sso" | "key" | "ssh" | "token" | "anonymous" | "hlm" | "host" | "discord" | "";
 
 /** One thing someone (or hlm) did. */
 export interface AuditEntry {

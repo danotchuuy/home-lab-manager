@@ -4336,3 +4336,55 @@ pre .muted {
 .mods .mod-search input {
   flex: 1;
 }
+
+.discord-settings h3 {
+  font-size: 1rem;
+  margin: 1.25rem 0 0.4rem;
+}
+
+.discord-settings details ol {
+  margin: 0.4rem 0 0.75rem;
+  padding-left: 1.3rem;
+}
+
+.discord-settings .checkbox {
+  display: block;
+  margin: 0.35rem 0;
+}
+
+.discord-state.discord-connected strong {
+  color: var(--success);
+}
+
+.discord-state.discord-error strong {
+  color: var(--danger);
+}
+
+.discord-rule {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+  margin-bottom: 0.6rem;
+}
+
+.discord-rule-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.discord-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin-top: 0.4rem;
+}
+
+.discord-checks .checkbox {
+  display: inline-flex;
+  margin: 0;
+}
+
+.discord-settings .add-role {
+  max-width: 20rem;
+}

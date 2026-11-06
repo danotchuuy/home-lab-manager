@@ -3,6 +3,25 @@
 **Priority:** Low · **Depends on:** [01](01-notifications.md) (Discord already a target), [05](05-game-query.md),
 [20](20-idle-shutdown.md) (waking, optional)
 
+> **Status: done** (branch `feature/23-discord-commands`). See the README's
+> [Discord commands](../README.md#discord-commands). Where the result differs from this plan:
+>
+> - **Its own small WebSocket client** (`internal/discord/ws.go`): the agent's is a byte stream over binary frames, and
+>   the gateway needs text messages with their boundaries.
+> - **Rules are the bot's own, not rbac grants**: each is a Discord role (or Everyone), actions, and server groups (or
+>   every server on the page), checked with the same group membership (by name and by whole host). Audit entries are
+>   `discord:<username>` with the new actor kind `discord`.
+> - **Discord sees the status page's servers**, whether or not the page is on, through a new `statuspage.All`. Which
+>   ones it may act on comes from the rules. Addresses and player names need the new **Show addresses and who's
+>   playing** setting, the Discord version of the page's details password.
+> - **Commands are registered in the one Discord server**, not globally, so they appear at once; `/stop` replies when
+>   the server has stopped; refusals are private (ephemeral) and the same for unknown servers and forbidden ones.
+> - **The token is checked with Discord when saved.** `GET …/discord/roles` lists the server's roles for the rule
+>   editor.
+> - **Not tested with a real bot in a real Discord server**: that needs a bot token of yours. The fake gateway
+>   (`discordtest`) covers the protocol, and `TestGatewayLive` (`HLM_LIVE_DISCORD=1`) checks the WebSocket client
+>   against Discord's real gateway (hello, identify, a refused token closing with 4004).
+
 ## Why
 
 The people who play on a home-lab server are usually in a Discord server together. "Can you start Valheim?" goes to
@@ -75,9 +94,9 @@ players"), or with the failure.
 
 ## Tasks
 
-- [ ] `internal/discord` gateway and REST client with `discordtest`
-- [ ] Settings, rules and their rbac mapping
-- [ ] Commands: status, players, start/stop/restart (with waiting), say; autocomplete
-- [ ] Audit and rate limit
-- [ ] System → Discord setup page with the developer portal steps
-- [ ] README section and API table
+- [x] `internal/discord` gateway and REST client with `discordtest`
+- [x] Settings and rules (the bot's own, checked against server groups)
+- [x] Commands: status, players, start/stop/restart (with waiting), say; autocomplete
+- [x] Audit and rate limit
+- [x] System → Discord setup page with the developer portal steps
+- [x] README section and API table

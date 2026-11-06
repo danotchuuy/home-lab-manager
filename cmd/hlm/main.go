@@ -39,6 +39,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/configfiles"
 	"github.com/danotchuuy/home-lab-manager/internal/console"
 	"github.com/danotchuuy/home-lab-manager/internal/deploy"
+	"github.com/danotchuuy/home-lab-manager/internal/discord"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/forwarding"
 	"github.com/danotchuuy/home-lab-manager/internal/gameprofile"
@@ -625,28 +626,37 @@ func run(log *slog.Logger) error {
 	go cleaner.Run(ctx)
 	// The public status page, with addresses suggested from the proxy and
 	// UniFi's port forwards.
+	// The server groups' servers by group ID, with whole hosts as "@host".
+	serverGroups := func() (map[string][]string, error) {
+		list, err := groups.Groups()
+		if err != nil {
+			return nil, err
+		}
+		out := make(map[string][]string, len(list))
+		for _, g := range list {
+			out[g.ID] = slices.Clone(g.Servers)
+			for _, h := range g.Hosts {
+				out[g.ID] = append(out[g.ID], "@"+h)
+			}
+		}
+		return out, nil
+	}
 	statusPage := statuspage.New(statuspage.Options{
 		Secrets: store, Servers: mgr, Query: queries,
 		Uptime:       func(name string, rng time.Duration) (float64, bool) { return metrics.Uptime(history, name, rng) },
 		Suggest:      suggestAddresses(mgr, fwd, relay),
 		HashPassword: auth.HashPassword, PasswordMatches: auth.PasswordMatches,
 		Asleep: idleServers.AsleepInfo,
-		Groups: func() (map[string][]string, error) {
-			list, err := groups.Groups()
-			if err != nil {
-				return nil, err
-			}
-			out := make(map[string][]string, len(list))
-			for _, g := range list {
-				// Whole hosts as "@host".
-				out[g.ID] = slices.Clone(g.Servers)
-				for _, h := range g.Hosts {
-					out[g.ID] = append(out[g.ID], "@"+h)
-				}
-			}
-			return out, nil
-		},
+		Groups: serverGroups,
 	})
+	// A Discord bot for slash commands, connecting out to Discord.
+	discord.SetVersion(version)
+	discordBot := discord.New(discord.Options{
+		Secrets: store, Servers: mgr, Page: statusPage, Console: consoles, Groups: serverGroups,
+		Asleep: func(name string) bool { asleep, _ := idleServers.AsleepInfo(name); return asleep },
+		Wake:   idleServers.Wake, Audit: auditLog, Log: log,
+	})
+	go discordBot.Run(ctx)
 	// The proxy server can serve the status page's sites too, through the
 	// WireGuard tunnel to hlm's port on this host.
 	// Cloudflare in front of them, when that's their HTTPS option.
@@ -710,6 +720,7 @@ func run(log *slog.Logger) error {
 		Idle:          idleServers,
 		Players:       playerManager,
 		Mods:          modManager,
+		Discord:       discordBot,
 		// Set when HLM_UPDATE_CHECK overrides the setting.
 		UpdateCheckEnv: updateCheckEnv,
 		Token:          env("HLM_TOKEN", ""),

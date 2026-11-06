@@ -439,12 +439,17 @@ func TestForgetServer(t *testing.T) {
 
 func TestRedact(t *testing.T) {
 	tests := map[string]string{
-		"dial https://user:hunter2@s3.lan:8333/bucket": "dial https://***@s3.lan:8333/bucket",
-		"GET /x?token=abc123&page=2":                   "GET /x?token=***&page=2",
-		"X-Amz-Signature=deadbeef failed":              "X-Amz-Signature=*** failed",
-		"Authorization: Bearer abcdefghijkl":           "Authorization: Bearer ***",
-		"https://discord.com/api/webhooks/123/AbC-dEf": "https://discord.com/api/webhooks/123/***",
-		"exit code 1": "exit code 1",
+		"dial https://user:hunter2@s3.lan:8333/bucket":                                     "dial https://***@s3.lan:8333/bucket",
+		"GET /x?token=abc123&page=2":                                                       "GET /x?token=***&page=2",
+		"X-Amz-Signature=deadbeef failed":                                                  "X-Amz-Signature=*** failed",
+		"Authorization: Bearer abcdefghijkl":                                               "Authorization: Bearer ***",
+		"https://discord.com/api/webhooks/123/AbC-dEf":                                     "https://discord.com/api/webhooks/123/***",
+		"POST /api/v10/interactions/123/aW50ZXJhY3Rpb24.x/callback":                        "POST /api/v10/interactions/123/***/callback",
+		"PATCH /api/v10/webhooks/123/aW50ZXJh/messages/@original":                          "PATCH /api/v10/webhooks/123/***/messages/@original",
+		"Authorization: Bot MTAwMDAwMDAwMDAwMDAwMDAy.GaBcDe.abcdefghijklmnopqrstuvwxyz012": "Authorization: Bot ***",
+		"token MTAwMDAwMDAwMDAwMDAwMDAy.GaBcDe.abcdefghijklmnopqrstuvwxyz012 leaked":       "token *** leaked",
+		"exit code 1":      "exit code 1",
+		"server 1.21.4 up": "server 1.21.4 up",
 	}
 	for in, want := range tests {
 		if got := Redact(in); got != want {

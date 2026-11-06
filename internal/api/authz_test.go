@@ -71,6 +71,8 @@ var expected = map[string]string{
 	"PUT /api/auth/keys/{id}":                "confirmed",
 	"PUT /api/auth/oidc":                     "confirmed",
 	"DELETE /api/auth/oidc":                  "confirmed",
+	"PUT /api/integrations/discord":          "confirmed",
+	"DELETE /api/integrations/discord":       "confirmed",
 	"POST /api/groups":                       "confirmed",
 	"PUT /api/groups/{id}":                   "confirmed",
 	"PUT /api/servers/{id}/groups":           "confirmed",

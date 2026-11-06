@@ -12,6 +12,10 @@ import type {
   PlayerAction,
   PlayersOverview,
   ModsOverview,
+  DiscordView,
+  DiscordSettings,
+  DiscordTest,
+  DiscordRole,
   ModSearchHit,
   ModChange,
   ModPlan,
@@ -818,6 +822,15 @@ export const api = {
     json<MetricHistory>(`/api/servers/${encodeURIComponent(id)}/history?range=${range}`),
   metricsSettings: () => json<MetricsSettings>("/api/system/metrics"),
   setMetricsSettings: (s: MetricsSettings) => json<MetricsSettings>("/api/system/metrics", { method: "PUT", body: JSON.stringify(s) }),
+  discord: () => json<DiscordView>("/api/integrations/discord"),
+  saveDiscord: (settings: DiscordSettings, token?: string) =>
+    json<DiscordView>("/api/integrations/discord", {
+      method: "PUT",
+      body: JSON.stringify({ ...settings, ...(token !== undefined ? { token } : {}) }),
+    }),
+  testDiscord: () => json<DiscordTest>("/api/integrations/discord/test", { method: "POST" }),
+  discordRoles: () => json<DiscordRole[]>("/api/integrations/discord/roles"),
+  disconnectDiscord: () => json<DiscordView>("/api/integrations/discord", { method: "DELETE" }),
   serverMods: (id: string) => json<ModsOverview>(`/api/servers/${encodeURIComponent(id)}/mods`),
   checkModUpdates: (id: string) =>
     json<ModsOverview>(`/api/servers/${encodeURIComponent(id)}/mods/check`, { method: "POST" }),

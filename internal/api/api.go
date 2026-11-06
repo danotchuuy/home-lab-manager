@@ -34,6 +34,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/configfiles"
 	"github.com/danotchuuy/home-lab-manager/internal/console"
 	"github.com/danotchuuy/home-lab-manager/internal/deploy"
+	"github.com/danotchuuy/home-lab-manager/internal/discord"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/files"
 	"github.com/danotchuuy/home-lab-manager/internal/forwarding"
@@ -129,6 +130,8 @@ type Options struct {
 	Players *players.Service
 	// Mods installs servers' mods from Modrinth.
 	Mods *mods.Service
+	// Discord is the Discord bot.
+	Discord *discord.Service
 	// UpdateCheckEnv is HLM_UPDATE_CHECK, which overrides the setting for
 	// how often updates are checked for, if set.
 	UpdateCheckEnv string

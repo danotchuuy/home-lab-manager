@@ -1,3 +1,4 @@
+import { DiscordSettings } from "../components/DiscordSettings";
 import { useEffect, useRef, useState } from "react";
 import { StatusPageSettings } from "../components/StatusPageSettings";
 import { useAdmin } from "../access";
@@ -344,6 +345,11 @@ export function SystemPage() {
       <section className="card" id="status-page">
         <h2>Status page</h2>
         <StatusPageSettings />
+      </section>
+
+      <section className="card" id="discord">
+        <h2>Discord</h2>
+        <DiscordSettings />
       </section>
 
       <section className="card">
