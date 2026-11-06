@@ -36,6 +36,9 @@ type fake struct {
 	backups   []string
 	busy      bool
 	tar       []byte
+	// The probe helper on another host.
+	probeArgs  []string
+	probeCalls int
 }
 
 func newFake(t *testing.T, withWorld bool) *fake {
@@ -64,7 +67,7 @@ func (f *fake) CreateTestCopy(ctx context.Context, server string) (*manager.Test
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.copies++
-	return &manager.TestCopy{Server: server, Name: "hlm-restore-test-" + server, ID: "copy"}, nil
+	return &manager.TestCopy{Server: server, Host: f.host, Name: "hlm-restore-test-" + server, ID: "copy"}, nil
 }
 func (f *fake) RestoreTestCopy(ctx context.Context, tc *manager.TestCopy, r io.Reader, progress func(files.ArchiveStats)) (files.ArchiveStats, error) {
 	var st files.ArchiveStats
@@ -109,6 +112,27 @@ func (f *fake) RemoveTestCopy(ctx context.Context, tc *manager.TestCopy) error {
 	return nil
 }
 func (f *fake) RemoveTestCopies(ctx context.Context, server string) error { return nil }
+func (f *fake) StartTestProbe(ctx context.Context, tc *manager.TestCopy, cmd string, args []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.probeArgs = append([]string{cmd}, args...)
+	return nil
+}
+
+// TestProbe finishes on its third look: it answered if the backup had the
+// world, or gave up.
+func (f *fake) TestProbe(ctx context.Context, tc *manager.TestCopy) (string, int, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.probeCalls++
+	if f.probeCalls < 3 {
+		return "", 0, false, nil
+	}
+	if f.restored["data/world"] {
+		return "some noise\n" + `{"result":{"protocol":"minecraft","version":"1.21.4","players":1,"maxPlayers":20,"hasPlayers":true}}` + "\n", 0, true, nil
+	}
+	return `{"error":"minecraft port 25565: nothing is listening on that port"}`, 1, true, nil
+}
 func (f *fake) StartJob(job manager.Job, emit func(manager.Event)) (func(manager.Event), func(error), error) {
 	return emit, func(error) {}, nil
 }
@@ -252,9 +276,41 @@ func TestQueryOffAndSkips(t *testing.T) {
 	if _, err := s.Test(context.Background(), "mc", "", "manual", nil); err == nil || !strings.Contains(err.Error(), "no backups") {
 		t.Errorf("no backups: %v", err)
 	}
+}
+
+// On another host, a probe helper next to the copy asks its game.
+func TestRemote(t *testing.T) {
+	f := newFake(t, true)
 	f.host = "nas"
-	if _, err := s.Test(context.Background(), "mc", "b/1", "manual", nil); !errors.Is(err, manager.ErrTestRemote) {
-		t.Errorf("remote: %v", err)
+	s, _ := setup(t, f)
+	s.opts.Methods = func(context.Context, string, docker.ContainerJSON) ([]gamequery.Settings, error) {
+		return []gamequery.Settings{{Protocol: "minecraft", Port: 25565}}, nil
+	}
+	s.opts.Probe = func(context.Context, string, docker.ContainerJSON) (gamequery.Result, error) {
+		t.Error("asked from hlm, not the probe")
+		return gamequery.Result{}, errors.New("no")
+	}
+	res, err := s.Test(context.Background(), "mc", "", "manual", nil)
+	if err != nil || res.Outcome != Passed || res.Answer != "1.21.4, 1/20 players" {
+		t.Fatalf("remote: %+v, %v", res, err)
+	}
+	if strings.Join(f.probeArgs, " ") != "probe-game --host hlm-restore-test-mc --methods minecraft:25565 --timeout 10m0s --interval 1s" {
+		t.Errorf("probe args: %v", f.probeArgs)
+	}
+	if f.removed != 1 {
+		t.Errorf("removed %d", f.removed)
+	}
+
+	// The probe gives up: failed at once, with its last error.
+	f = newFake(t, false)
+	f.host = "nas"
+	s, n := setup(t, f)
+	s.opts.Methods = func(context.Context, string, docker.ContainerJSON) ([]gamequery.Settings, error) {
+		return []gamequery.Settings{{Protocol: "minecraft", Port: 25565}}, nil
+	}
+	res, err = s.Test(context.Background(), "mc", "", "manual", nil)
+	if err != nil || res.Outcome != Failed || !strings.Contains(res.Error, "nothing is listening") || len(n.events) != 1 {
+		t.Fatalf("gave up: %+v, %v", res, err)
 	}
 }
 
