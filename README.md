@@ -734,6 +734,40 @@ server's name and version), looks for the command in the container, or checks th
 Console commands can do whatever the game's admins can, and some games can run scripts or change files through them,
 so giving someone the **operator** role on a server lets them administer the game.
 
+## Stopping idle servers
+
+A game server holds its memory and CPU whether anyone is playing or not. On a server's **Schedule** tab, **When nobody's
+playing** (managers) can stop it after a while without players, and start it again when someone wants to play:
+
+- **Stop it when nobody has played for N minutes** (5 minutes to a day; 30 by default). hlm counts the time from its
+  [status query](#is-the-game-up-players-and-status), so it needs a query that counts players; the card says when it can't. A query that
+  fails, or a player joining, starts the count again. A minute before stopping, players get a warning through the
+  game's `say` command (if its [console](#sending-commands-to-a-server) is set up); hlm checks again that nobody's on, then stops it,
+  saving first for games that need it. It doesn't stop a server while a job (an install, update, backup or restore)
+  or one of its scheduled tasks is running.
+- The server shows as **Asleep** in the server list, on its page and on the status page. Starting it in any way (its
+  Start button, a scheduled task, Docker on boot) wakes it; hlm notices.
+- **Start it when someone connects to it.** While it's asleep, a small **wake listener** container takes its published
+  ports. It's made from the server's own image with hlm's binary copied in, so it works on [other Docker
+  hosts](#more-docker-hosts) too, and it runs as nobody, with no capabilities, no mounts and 64 MB of memory. When
+  someone really tries to play, it exits and hlm starts the server; they connect again a minute or two later.
+  - **Minecraft (Java):** the server list shows **Asleep** with your MOTD. A player joining sees "The server is
+    starting: join again in a minute or two" and wakes it; list pings don't.
+  - **Minecraft Bedrock:** the server list shows it as asleep, and a player joining wakes it; the LAN discovery pings
+    clients send all the time don't.
+  - **Other games:** any TCP connection that sends something, or any UDP packet, wakes it, except Steam's server
+    queries (`A2S`), so server browsers refreshing don't start it. A port scan that only connects doesn't either.
+  - It needs published ports (not the host's network, or a macvlan address of its own), a static Linux build of hlm
+    (releases are) and an image for the same CPU architecture as hlm. The card says when one is missing.
+  - With ports open to the internet, anyone who connects can start the server; that's all they can do.
+- **Let visitors start it from the status page.** A **Start it** button beside it on the [public status
+  page](#public-status-page) while it's asleep (if it's on the page). Each address can start servers three times, then
+  once every 10 minutes.
+
+Each sleep and wake is in the [activity log](#activity-audit-log) as `servers.idle.sleep` and `servers.idle.wake`, with
+what woke it ("a Minecraft player joining to port 25565/tcp from 192.168.1.20"). [Notifications](#notifications):
+`server.asleep` and `server.wake_failed`.
+
 ## Scheduled tasks
 
 A server's **Schedule** tab runs **tasks** at set times: a nightly restart that warns players first, a save every half
@@ -1667,6 +1701,8 @@ Each target chooses its **events** (warnings and errors by default):
 | `https.renew_failed`, `https.expiring` | error, warning | Getting or renewing hlm's certificate fails, and when it's getting close to expiring without being renewed. |
 | `disk.low` | warning | A filesystem on the Docker host gets fuller than the threshold (90% by default), checked every 5 minutes. |
 | `auth.locked_out` | warning | Sign-in for a local account is locked after repeated wrong passwords. |
+| `server.asleep` | info | Nobody played on a server for a while, so hlm [stopped it](#stopping-idle-servers) until someone wants to play. |
+| `server.wake_failed` | error | Someone wanted to play on a [sleeping server](#stopping-idle-servers), but starting it failed. |
 | `task.failed` | error | A [scheduled task](#scheduled-tasks) failed, or was missed because hlm wasn't running. |
 
 - **Which servers:** a target can be limited to some servers and [server groups](#roles-and-server-groups). Alerts that
@@ -2150,6 +2186,7 @@ when the `HLM_*` one isn't set.
 | `POST /api/servers/bulk`                       | `{servers, action: "start"\|"stop"\|"restart"\|"update"\|"backup"}`: one action on several servers in turn, checking the caller's role on each. Streams NDJSON (each event's `target` is the server; `summary` at the end). |
 | `GET /api/status-page`                         | The [public status page](#public-status-page) (no sign-in; 404 while it's off). |
 | `GET /api/status-page/{name}.json`, `.svg`     | One server of the page, as JSON or a badge.                                       |
+| `POST /api/status-page/{slug}/wake`            | Start a [sleeping server](#stopping-idle-servers) whose idle settings allow it (send `X-HLM-Request: 1`); 404 for anything else. Three per address, then one every 10 minutes. |
 | `POST /api/status-page/unlock`, `.../lock`     | `{password}`: give the page's view or details password (sets the `hlm_status` cookie; send `X-HLM-Request: 1`), or forget it. |
 | `GET/PUT /api/system/status-page`              | The status page's settings `{enabled, title, message, servers: [{server, displayName, showPlayers, showNames, showVersion, address, hint}], allowFrom, sites: [{id, hostname, groups, title, message}]}`, plus `viewPassword`/`detailsPassword` on `PUT`, page-wide and on each site (a new one; `""` removes it; left out keeps it; a site keeps its passwords by its `id`). Answers `hasViewPassword`/`hasDetailsPassword` (and the same on each of `sites`), never the passwords. Admins. |
 | `GET /api/system/status-page/suggest?server=`  | Public addresses hlm can suggest for a server (from the proxy and UniFi). Admins. |
@@ -2262,6 +2299,7 @@ when the `HLM_*` one isn't set.
 | `GET /api/updates`                             | When updates were last checked and how many are available.                        |
 | `GET/PUT /api/servers/{id}/update-policy`      | A server's [automatic updates](#automatic-updates): `{mode, windowStart?, windowEnd?, warn?, warnMinutes?, backup}` (`mode` is `auto`, `manual`, or empty to follow the default), plus what it follows, the update's state and the last result. `PUT` takes a manager; the warning is only shown to operators. |
 | `GET/PUT /api/servers/{id}/health`             | A server's [health settings](#health-checks-and-crash-loops): `{crashLoop: {off?, exits?, minutes?}, check: {kind, port?, path?, command?, interval?, timeout?, retries?, startPeriod?}, restartAfter?, signal?}` (`kind` is empty for the image's check, `none`, `tcp`, `http` or `command`; `signal` is empty for Docker's health or `query`), plus Docker's health, the crash loop it was stopped for, recent exits and whether the container has the check yet. `PUT` takes a manager; commands are only shown to operators. |
+| `GET/PUT /api/servers/{id}/idle`               | A server's [idle settings](#stopping-idle-servers) `{minutes, wakeOnConnect, wakeFromStatusPage}`, plus `idleSince`, `asleep` (`since`, `minutes`, `listener`, `listenerError`), `canStop`/`why` and `canListen`/`listenWhy`. `PUT` takes a manager. |
 | `POST /api/servers/{id}/health/test`           | Run a health check `{check}` (or the container's own, without one) in the running server once: `{healthy, exitCode, output}`. Managers only. |
 | `GET /api/query`                               | Each running server you can see: its [game status](#is-the-game-up-players-and-status) and player count. |
 | `GET /api/servers/{id}/query`                  | A server's game status: the last answer (players' names only for operators), how it's queried, errors, and a day of player counts. |

@@ -46,6 +46,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/health"
 	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
 	"github.com/danotchuuy/home-lab-manager/internal/hosts"
+	"github.com/danotchuuy/home-lab-manager/internal/idle"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
 	"github.com/danotchuuy/home-lab-manager/internal/metrics"
 	"github.com/danotchuuy/home-lab-manager/internal/metricstore"
@@ -97,6 +98,17 @@ func main() {
 				if !errors.Is(err, flag.ErrHelp) {
 					fmt.Fprintln(os.Stderr, "hlm agent:", err)
 				}
+				os.Exit(1)
+			}
+			return
+		case idle.ListenerCommand:
+			// In a sleeping server's wake listener container: no logging,
+			// just what woke it.
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			err := idle.RunListener(ctx, os.Args[2:], os.Stdout)
+			stop()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "hlm "+idle.ListenerCommand+":", err)
 				os.Exit(1)
 			}
 			return
@@ -526,6 +538,23 @@ func run(log *slog.Logger) error {
 		Notifier: notifier, Players: queries.Players, Audit: auditLog, Location: sched.Location, ZoneName: sched.ZoneName, Log: log,
 	})
 	go autoUpdates.Run(ctx)
+	// Servers nobody plays on are stopped, and started again when someone
+	// wants to play.
+	self, _ := os.Executable()
+	idleServers := idle.New(idle.Options{
+		Secrets: store, Servers: mgr, Console: consoles, Tasks: sched, Notifier: notifier, Audit: auditLog, Log: log,
+		DockerFor: func(host string) (idle.Docker, error) { return mgr.DockerFor(host) },
+		Players: func(name string) (int, int, bool) {
+			st := queries.Status(name, false)
+			if st.Status != gamequery.StatusOnline || st.Result == nil || !st.Result.HasPlayers {
+				return 0, 0, false
+			}
+			return st.Result.Players, st.Result.MaxPlayers, true
+		},
+		Executable: self,
+	})
+	mgr.UseBeforeStart(idleServers.BeforeStart)
+	go idleServers.Run(ctx)
 	// Servers whose health keeps failing are restarted, if they want that.
 	healthMonitor := health.NewMonitor(health.Options{
 		Store: healthStore, Servers: mgr, Responding: queries.Responding, Busy: backups.Busy,
@@ -556,6 +585,7 @@ func run(log *slog.Logger) error {
 		Uptime:       func(name string, rng time.Duration) (float64, bool) { return metrics.Uptime(history, name, rng) },
 		Suggest:      suggestAddresses(mgr, fwd, relay),
 		HashPassword: auth.HashPassword, PasswordMatches: auth.PasswordMatches,
+		Asleep: idleServers.AsleepInfo,
 		Groups: func() (map[string][]string, error) {
 			list, err := groups.Groups()
 			if err != nil {
@@ -632,6 +662,7 @@ func run(log *slog.Logger) error {
 		Prefs:         prefs.New(store),
 		StatusPage:    statusPage,
 		GameProfiles:  gameProfiles,
+		Idle:          idleServers,
 		// Set when HLM_UPDATE_CHECK overrides the setting.
 		UpdateCheckEnv: updateCheckEnv,
 		Token:          env("HLM_TOKEN", ""),

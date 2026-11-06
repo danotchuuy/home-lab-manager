@@ -18,6 +18,7 @@ import { ServerBackups } from "../components/ServerBackups";
 import { ServerGroupPicker } from "../components/ServerGroups";
 import { ServerHostnames } from "../components/ServerHostnames";
 import { ServerSchedule } from "../components/ServerSchedule";
+import { IdleSettings } from "../components/IdleSettings";
 import { ServerUpdatePolicyCard } from "../components/UpdatePolicy";
 import { ServerHealthCard } from "../components/HealthSettings";
 import { StatTiles } from "../components/Resources";
@@ -146,7 +147,7 @@ export function ServerDetailPage() {
         <div className="grow">
           <h1>
             {bareName(server.name)}
-            <HostBadge host={server.host} hosts={hosts} /> <StateBadge state={server.state} /> <HealthBadge state={server.state} health={server.health} />{" "}
+            <HostBadge host={server.host} hosts={hosts} /> <StateBadge state={server.state} asleep={server.asleep} /> <HealthBadge state={server.state} health={server.health} />{" "}
             <CrashLoopBadge crashLoop={server.crashLoop} />
           </h1>
           <div className="muted">
@@ -282,7 +283,12 @@ export function ServerDetailPage() {
 
       {tab === "backups" && <ServerBackups server={server.name} running={running} canRun={operator} canManage={manager} />}
 
-      {tab === "schedule" && <ServerSchedule server={server.name} canRun={operator} canManage={manager} />}
+      {tab === "schedule" && (
+        <>
+          <ServerSchedule server={server.name} canRun={operator} canManage={manager} />
+          <IdleSettings server={server.name} canManage={manager} />
+        </>
+      )}
 
       {tab === "ports" && (
         <>

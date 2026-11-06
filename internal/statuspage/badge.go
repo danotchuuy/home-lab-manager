@@ -27,6 +27,8 @@ func Badge(srv Server) []byte {
 		value, color = "starting", "#b07500"
 	case StateRunning:
 		value, color = "up", "#2b8a3e"
+	case StateAsleep:
+		value, color = "asleep", "#5a6acf"
 	}
 	lw, vw := textWidth(label)+10, textWidth(value)+10
 	w := lw + vw

@@ -116,6 +116,7 @@ const (
 	StateStarting = "starting" // running, not answering yet
 	StateRunning  = "running"  // running; hlm can't ask the game
 	StateOffline  = "offline"
+	StateAsleep   = "asleep" // stopped by hlm while nobody played
 )
 
 // Page is the public page. Only what's here is ever sent.
@@ -144,6 +145,8 @@ type Server struct {
 	// there's history.
 	Uptime7d  *float64 `json:"uptime7d,omitempty"`
 	Uptime30d *float64 `json:"uptime30d,omitempty"`
+	// CanWake says the page may start it while it's asleep.
+	CanWake bool `json:"canWake,omitempty"`
 }
 
 // Servers is what the page needs from the manager.
@@ -173,6 +176,9 @@ type Options struct {
 	// Groups lists the server groups: their servers by group ID, and
 	// "@host" for each Docker host a group holds whole.
 	Groups func() (map[string][]string, error)
+	// Asleep says whether hlm stopped a server while nobody played, and
+	// whether the page may start it.
+	Asleep func(server string) (asleep, canWake bool)
 }
 
 // Suggestion is an address the settings form offers.
@@ -539,7 +545,13 @@ func (s *Service) server(e Entry, srv manager.Server, exists bool) Server {
 	if s.opts.Query != nil && running {
 		st = s.opts.Query.Status(e.Server, e.ShowNames)
 	}
+	asleep, canWake := false, false
+	if s.opts.Asleep != nil && exists && !running {
+		asleep, canWake = s.opts.Asleep(e.Server)
+	}
 	switch {
+	case asleep:
+		out.State, out.CanWake = StateAsleep, canWake
 	case !running:
 		out.State = StateOffline
 	case st.Status == gamequery.StatusOnline:
@@ -576,6 +588,36 @@ func (s *Service) server(e Entry, srv manager.Server, exists bool) Server {
 		}
 	}
 	return out
+}
+
+// ServerName is the server behind one of the page's entries, as it is on a
+// host (a site shows only its groups' servers).
+func (s *Service) ServerName(ctx context.Context, host, slug string) (string, error) {
+	p, err := s.Page(ctx, host, time.Now())
+	if err != nil {
+		return "", err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, srv := range p.Servers {
+		if srv.Slug != slug {
+			continue
+		}
+		for i, built := range s.page.Servers {
+			if built.Slug == slug {
+				return s.names[i], nil
+			}
+		}
+	}
+	return "", ErrDisabled
+}
+
+// Invalidate makes the next request build the page again, after a change
+// visitors should see at once.
+func (s *Service) Invalidate() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.page = nil
 }
 
 // ServerBySlug returns one server of the page, for its JSON and badge.

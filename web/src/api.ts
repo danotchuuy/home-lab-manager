@@ -7,6 +7,8 @@ import type {
   RegistryForm,
   GameProfile,
   GameProfiles,
+  IdleSettings,
+  IdleStatus,
   HistoryRange,
   MetricHistory,
   MetricsSettings,
@@ -810,6 +812,9 @@ export const api = {
     json<MetricHistory>(`/api/servers/${encodeURIComponent(id)}/history?range=${range}`),
   metricsSettings: () => json<MetricsSettings>("/api/system/metrics"),
   setMetricsSettings: (s: MetricsSettings) => json<MetricsSettings>("/api/system/metrics", { method: "PUT", body: JSON.stringify(s) }),
+  serverIdle: (id: string) => json<IdleStatus>(`/api/servers/${encodeURIComponent(id)}/idle`),
+  setServerIdle: (id: string, set: IdleSettings) =>
+    json<IdleStatus>(`/api/servers/${encodeURIComponent(id)}/idle`, { method: "PUT", body: JSON.stringify(set) }),
   gameProfiles: () => json<GameProfiles>("/api/game-profiles"),
   gameProfileYAML: async (id: string, builtin = false) =>
     (await request(`/api/game-profiles/${encodeURIComponent(id)}/yaml${builtin ? "?builtin=1" : ""}`)).text(),

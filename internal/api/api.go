@@ -42,6 +42,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/health"
 	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
 	"github.com/danotchuuy/home-lab-manager/internal/hosts"
+	"github.com/danotchuuy/home-lab-manager/internal/idle"
 	"github.com/danotchuuy/home-lab-manager/internal/linode"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
 	"github.com/danotchuuy/home-lab-manager/internal/metrics"
@@ -120,6 +121,8 @@ type Options struct {
 	StatusPage *statuspage.Service
 	// GameProfiles keeps your own game profiles.
 	GameProfiles *gameprofile.Store
+	// Idle stops servers nobody plays on and wakes them.
+	Idle *idle.Service
 	// UpdateCheckEnv is HLM_UPDATE_CHECK, which overrides the setting for
 	// how often updates are checked for, if set.
 	UpdateCheckEnv string
@@ -529,6 +532,11 @@ func (s *server) removeServer(w http.ResponseWriter, r *http.Request) {
 	if s.Notify != nil {
 		if err := s.Notify.ForgetServer(srv.Name); err != nil {
 			s.Log.Warn("take deleted server out of notification targets", "server", srv.Name, "err", err)
+		}
+	}
+	if s.Idle != nil {
+		if err := s.Idle.ForgetServer(srv.Name); err != nil {
+			s.Log.Warn("forget deleted server's idle settings", "server", srv.Name, "err", err)
 		}
 	}
 	if s.StatusPage != nil {

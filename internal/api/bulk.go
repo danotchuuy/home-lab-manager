@@ -12,6 +12,7 @@ import (
 
 	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"github.com/danotchuuy/home-lab-manager/internal/gameprofile"
+	"github.com/danotchuuy/home-lab-manager/internal/idle"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
 )
@@ -29,11 +30,18 @@ func userKey(ctx context.Context) string {
 	return "anonymous"
 }
 
-// decorate adds servers' game profiles, their tags and whether the caller
-// has them as favourites.
+// decorate adds servers' game profiles, whether they're asleep, their tags
+// and whether the caller has them as favourites.
 func (s *server) decorate(ctx context.Context, list []manager.Server) []manager.Server {
+	var asleep map[string]idle.Asleep
+	if s.Idle != nil {
+		asleep = s.Idle.AsleepSince()
+	}
 	for i := range list {
 		list[i].GameProfile = gameprofile.Match(list[i].Image).Ref()
+		if a, ok := asleep[list[i].Name]; ok && list[i].State != "running" {
+			list[i].Asleep = &manager.Asleep{Since: a.Since, Minutes: a.Minutes}
+		}
 	}
 	if s.Prefs == nil {
 		return list

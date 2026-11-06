@@ -577,7 +577,7 @@ export function ServersPage() {
                 </div>
               </Link>
               <div className="server-side">
-                <StateBadge state={s.state} />
+                <StateBadge state={s.state} asleep={s.asleep} />
                 <CrashLoopBadge crashLoop={s.crashLoop} />
                 <HealthBadge state={s.state} health={s.health} />
                 <GameStatusBadge s={games[s.name]} />

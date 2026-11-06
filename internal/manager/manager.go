@@ -65,7 +65,8 @@ type Manager struct {
 	audit        audit.Recorder
 	// beforeStop saves a running server's world before hlm stops it; see
 	// UseBeforeStop.
-	beforeStop func(ctx context.Context, id string)
+	beforeStop  func(ctx context.Context, id string)
+	beforeStart func(ctx context.Context, name string)
 	// removeOldImages says whether to delete a server's old image after it's
 	// recreated with another; see UseOldImageRemoval.
 	removeOldImages func() bool
@@ -79,6 +80,16 @@ type Manager struct {
 // running server, such as saving a game that doesn't save when it's told
 // to stop. It should give up by itself after a short while.
 func (m *Manager) UseBeforeStop(f func(ctx context.Context, id string)) { m.beforeStop = f }
+
+// UseBeforeStart sets what runs before hlm starts a stopped server, by its
+// name: putting a sleeping server's wake listener out of its ports' way.
+func (m *Manager) UseBeforeStart(f func(ctx context.Context, name string)) { m.beforeStart = f }
+
+func (m *Manager) prepareStart(ctx context.Context, info docker.ContainerJSON) {
+	if m.beforeStart != nil && !info.State.Running {
+		m.beforeStart(ctx, strings.TrimPrefix(info.Name, "/"))
+	}
+}
 
 func (m *Manager) prepareStop(ctx context.Context, info docker.ContainerJSON) {
 	if m.beforeStop != nil && info.State.Running {
@@ -191,7 +202,17 @@ type Server struct {
 	// GameProfile is the game profile its image matches, if any; the API
 	// fills it in.
 	GameProfile *gameprofile.Ref `json:"gameProfile,omitempty"`
-	imageID     string
+	// Asleep is set while hlm has it stopped because nobody played; the API
+	// fills it in.
+	Asleep  *Asleep `json:"asleep,omitempty"`
+	imageID string
+}
+
+// Asleep says since when hlm has had a server stopped, and after how many
+// minutes without players.
+type Asleep struct {
+	Since   time.Time `json:"since"`
+	Minutes int       `json:"minutes"`
 }
 
 // startsOnBoot reports whether a restart policy starts the container when the
@@ -840,6 +861,7 @@ func (m *Manager) Start(ctx context.Context, id string) error {
 		return err
 	}
 	m.ClearCrashLoop(strings.TrimPrefix(info.Name, "/"))
+	m.prepareStart(ctx, info)
 	return m.docker.StartContainer(ctx, info.ID)
 }
 
@@ -862,6 +884,7 @@ func (m *Manager) Restart(ctx context.Context, id string) error {
 	}
 	m.ClearCrashLoop(strings.TrimPrefix(info.Name, "/"))
 	m.prepareStop(ctx, info)
+	m.prepareStart(ctx, info)
 	return m.docker.RestartContainer(ctx, info.ID, -1)
 }
 

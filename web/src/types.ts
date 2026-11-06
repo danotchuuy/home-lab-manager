@@ -213,6 +213,24 @@ export interface Server {
   stackService?: string;
   /** The game profile its image matches. */
   gameProfile?: GameProfileRef;
+  /** Set while hlm has it stopped because nobody played. */
+  asleep?: { since: string; minutes: number };
+}
+
+export interface IdleSettings {
+  /** Minutes without players before it's stopped; 0 is off. */
+  minutes: number;
+  wakeOnConnect: boolean;
+  wakeFromStatusPage: boolean;
+}
+
+export interface IdleStatus extends IdleSettings {
+  idleSince?: string;
+  asleep?: { since: string; minutes: number; listener?: string; listenerError?: string };
+  canStop: boolean;
+  why?: string;
+  canListen: boolean;
+  listenWhy?: string;
 }
 
 export type GameProfileSource = "built-in" | "custom";
@@ -2033,7 +2051,9 @@ export interface PublicStatusServer {
   name: string;
   game?: string;
   icon?: string;
-  state: "online" | "starting" | "running" | "offline";
+  state: "online" | "starting" | "running" | "offline" | "asleep";
+  /** It's asleep, and visitors may start it. */
+  canWake?: boolean;
   players?: number;
   maxPlayers?: number;
   playerNames?: string[];
