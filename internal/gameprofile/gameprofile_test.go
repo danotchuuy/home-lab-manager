@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 )
 
 // Every built-in profile parses and validates (Default panics otherwise).
@@ -144,5 +145,36 @@ func TestValidation(t *testing.T) {
 	fsys := fstest.MapFS{"p/a.yaml": {Data: []byte(good)}, "p/b.yaml": {Data: []byte(good)}, "p/readme.txt": {Data: []byte("x")}}
 	if _, err := Load(fsys, "p"); err == nil || !strings.Contains(err.Error(), "already") {
 		t.Errorf("duplicate id: %v", err)
+	}
+}
+
+func TestMods(t *testing.T) {
+	mc := Default().ByID("minecraft")
+	if mc.Mods == nil || mc.Mods.Timeout() != 10*time.Minute || !mc.Ref().Mods {
+		t.Fatalf("minecraft mods: %+v", mc.Mods)
+	}
+	for env, want := range map[string]string{"fabric": "/data/mods", "PAPER": "/data/plugins", "": ""} {
+		name, l, ok := mc.Mods.Modrinth.Loader(map[string]string{"TYPE": env})
+		if ok != (want != "") || l.Dir != want {
+			t.Errorf("TYPE=%q: %s %+v %v", env, name, l, ok)
+		}
+	}
+	if Default().ByID("valheim").Ref().Mods {
+		t.Error("valheim takes mods?")
+	}
+	base := "id: x\nname: X\nmatch: [[x]]\nmods:\n"
+	for body, want := range map[string]string{
+		"  modrinth: { loader_env: TYPE, loaders: { FABRIC: { modrinth: [fabric], dir: /data/mods } } }": "",
+		"  modrinth: { loader_env: TYPE, loaders: {} }":                                                  "loaders needs",
+		"  modrinth: { loader_env: 'A B', loaders: { F: { modrinth: [f], dir: /m } } }":                  "loader_env",
+		"  modrinth: { loader_env: T, loaders: { F: { modrinth: [f], dir: data/mods } } }":               "clean absolute path",
+		"  modrinth: { loader_env: T, loaders: { F: { modrinth: [f], dir: /data/../etc } } }":            "clean absolute path",
+		"  modrinth: { loader_env: T, loaders: { F: { modrinth: ['F!'], dir: /m } } }":                   "Modrinth loader",
+		"  start_timeout: 2h": "up to an hour",
+	} {
+		_, err := Parse([]byte(base + body))
+		if (want == "") != (err == nil) || err != nil && !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v, want %q", body, err, want)
+		}
 	}
 }

@@ -9,6 +9,7 @@ import { ExportCard } from "../components/ExportCard";
 import { ConfigForm } from "../components/ConfigForm";
 import { ConsoleInputBar } from "../components/Console";
 import { DeployProgress } from "../components/DeployProgress";
+import { ServerMods } from "../components/ServerMods";
 import { FileBrowser } from "../components/FileBrowser";
 import { GameStatusCard } from "../components/GameStatus";
 import { LogViewer } from "../components/LogViewer";
@@ -31,7 +32,7 @@ import { HostBadge, useHosts } from "../components/HostPicker";
 import { ConnectCard } from "../components/ConnectInfo";
 import { TagEditor } from "../components/TagEditor";
 
-type Tab = "logs" | "files" | "players" | "backups" | "schedule" | "ports" | "settings";
+type Tab = "logs" | "files" | "players" | "mods" | "backups" | "schedule" | "ports" | "settings";
 
 export function ServerDetailPage() {
   const { name = "" } = useParams();
@@ -54,8 +55,8 @@ export function ServerDetailPage() {
   // Viewers don't get the tabs that show logs, files or settings.
   const tabs: Tab[] =
     operator || !server
-      ? ["logs", "files", "players", "backups", "schedule", "ports", "settings"]
-      : ["backups", "schedule", "ports"];
+      ? ["logs", "files", "players", "mods", "backups", "schedule", "ports", "settings"]
+      : ["backups", "schedule", "ports", "mods"];
   const tab = (tabs.includes(params.get("tab") as Tab) ? params.get("tab") : tabs[0]) as Tab;
   const setTab = (t: Tab) => setParams(t === "logs" ? {} : { tab: t });
   const [busy, setBusy] = useState(false);
@@ -255,6 +256,11 @@ export function ServerDetailPage() {
             )}
           </>
         )}
+        {server.gameProfile?.mods && (
+          <button className={tab === "mods" ? "active" : ""} onClick={() => setTab("mods")}>
+            Mods
+          </button>
+        )}
         <button className={tab === "backups" ? "active" : ""} onClick={() => setTab("backups")}>
           Backups
         </button>
@@ -290,6 +296,7 @@ export function ServerDetailPage() {
       {tab === "files" && <FileBrowser server={server.name} running={running} canEdit={manager} />}
 
       {tab === "players" && <ServerPlayers server={server.name} running={running} canManage={manager} />}
+      {tab === "mods" && <ServerMods server={server.name} canCheck={operator} canManage={manager} />}
       {tab === "backups" && <ServerBackups server={server.name} running={running} canRun={operator} canManage={manager} />}
 
       {tab === "schedule" && (

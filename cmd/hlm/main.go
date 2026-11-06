@@ -50,6 +50,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
 	"github.com/danotchuuy/home-lab-manager/internal/metrics"
 	"github.com/danotchuuy/home-lab-manager/internal/metricstore"
+	"github.com/danotchuuy/home-lab-manager/internal/mods"
 	"github.com/danotchuuy/home-lab-manager/internal/notify"
 	"github.com/danotchuuy/home-lab-manager/internal/players"
 	"github.com/danotchuuy/home-lab-manager/internal/prefs"
@@ -566,6 +567,39 @@ func run(log *slog.Logger) error {
 		},
 	})
 	go idleServers.Run(ctx)
+	// Mods from Modrinth, installed as transactions that undo themselves.
+	modsWork := filepath.Join(dataDir, "tmp", "mods")
+	if err := os.MkdirAll(modsWork, 0o700); err != nil {
+		log.Error("create mods work folder", "err", err)
+		os.Exit(1)
+	}
+	modManager := mods.New(mods.Options{
+		Servers: mgr, Modrinth: mods.NewModrinth("danotchuuy/home-lab-manager/" + version), Dir: modsWork,
+		Notifier: notifier, Log: log,
+		Ready: func(ctx context.Context, name string) (bool, bool) {
+			set := queries.Status(name, false).Settings
+			if set.Protocol == gamequery.ProtoOff {
+				return false, false
+			}
+			ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			defer cancel()
+			_, _, err := queries.Test(ctx, name, set)
+			return err == nil, true
+		},
+		GameVersion: func(name string) string {
+			if st := queries.Status(name, false); st.Result != nil {
+				return st.Result.Version
+			}
+			return ""
+		},
+		Busy: func(name string) string {
+			if backups.Busy(name) {
+				return "a backup or restore of this server is running; try again when it's done"
+			}
+			return ""
+		},
+	})
+	go modManager.Run(ctx, mgr, 15*time.Minute)
 	// Servers whose health keeps failing are restarted, if they want that.
 	healthMonitor := health.NewMonitor(health.Options{
 		Store: healthStore, Servers: mgr, Responding: queries.Responding, Busy: backups.Busy,
@@ -675,6 +709,7 @@ func run(log *slog.Logger) error {
 		GameProfiles:  gameProfiles,
 		Idle:          idleServers,
 		Players:       playerManager,
+		Mods:          modManager,
 		// Set when HLM_UPDATE_CHECK overrides the setting.
 		UpdateCheckEnv: updateCheckEnv,
 		Token:          env("HLM_TOKEN", ""),

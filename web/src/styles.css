@@ -4293,3 +4293,46 @@ pre .muted {
 .players .add-player {
   margin-top: 1.25rem;
 }
+
+.mods section {
+  margin-top: 1.25rem;
+}
+
+.mods h3 {
+  font-size: 1rem;
+  margin: 0 0 0.4rem;
+}
+
+.mods .badge {
+  margin-left: 0.4rem;
+  text-transform: none;
+}
+
+.mods tr.mod-off td:first-child > div:first-child {
+  opacity: 0.6;
+}
+
+.mods .mod-update {
+  color: var(--accent);
+}
+
+.mods .mod-plan,
+.mods .mod-progress {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+}
+
+.mods .mod-plan ul {
+  margin: 0 0 0.5rem;
+  padding-left: 1.2rem;
+}
+
+.mods .mod-search {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.mods .mod-search input {
+  flex: 1;
+}

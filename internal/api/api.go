@@ -47,6 +47,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
 	"github.com/danotchuuy/home-lab-manager/internal/metrics"
 	"github.com/danotchuuy/home-lab-manager/internal/metricstore"
+	"github.com/danotchuuy/home-lab-manager/internal/mods"
 	"github.com/danotchuuy/home-lab-manager/internal/notify"
 	"github.com/danotchuuy/home-lab-manager/internal/players"
 	"github.com/danotchuuy/home-lab-manager/internal/prefs"
@@ -126,6 +127,8 @@ type Options struct {
 	Idle *idle.Service
 	// Players kicks, bans and keeps servers' player lists.
 	Players *players.Service
+	// Mods installs servers' mods from Modrinth.
+	Mods *mods.Service
 	// UpdateCheckEnv is HLM_UPDATE_CHECK, which overrides the setting for
 	// how often updates are checked for, if set.
 	UpdateCheckEnv string
@@ -541,6 +544,9 @@ func (s *server) removeServer(w http.ResponseWriter, r *http.Request) {
 		if err := s.Players.ForgetServer(srv.Name); err != nil {
 			s.Log.Warn("forget deleted server's player records", "server", srv.Name, "err", err)
 		}
+	}
+	if s.Mods != nil {
+		s.Mods.ForgetServer(srv.Name)
 	}
 	if s.Idle != nil {
 		if err := s.Idle.ForgetServer(srv.Name); err != nil {

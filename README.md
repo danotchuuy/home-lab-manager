@@ -613,6 +613,16 @@ settings_files:
     words: [mygame]         # only for images with these words too
 player_lists:               # where the game keeps its lists: allow, ban, admin
   ban: { file: banned.txt, format: lines }   # lines or minecraft-json
+mods:                       # installing mods from Modrinth (see Mods and plugins)
+  start_timeout: 10m        # how long it gets to come back after a change (5m)
+  modrinth:
+    loader_env: TYPE        # the variable naming the mod loader…
+    loader_default: VANILLA # …and its value when it isn't set
+    version_env: VERSION    # the game version; else what the server reports
+    loaders:                # the loader values that take mods: Modrinth loaders and the folder
+      FABRIC: { modrinth: [fabric], dir: /data/mods }
+      PAPER: { modrinth: [paper, spigot, bukkit], dir: /data/plugins, plugins: true }
+    warn_env: [MODRINTH_PROJECTS]  # variables that make the image install mods itself
 ```
 
 Every field but `id`, `name` and `match` is optional. The built-in profiles are good examples: **View** shows each
@@ -775,6 +785,41 @@ Other games can get them in their profile: `console.actions` (`kick`, `ban`, `un
 
 Each action is in the [activity log](#activity-audit-log) as `servers.players.<action>` with the player and reason, and
 in the tab's **Done through hlm**. A ban sends the `server.player_banned` [notification](#notifications).
+
+## Mods and plugins
+
+A server's **Mods** tab (shown when its game has a [profile](#game-profiles) that says how it takes mods; Minecraft
+Java with `itzg/minecraft-server` is built in) installs, updates and removes mods from [Modrinth](https://modrinth.com).
+On Paper, Purpur, Spigot, Bukkit and Folia servers they're plugins, in `/data/plugins`; on Fabric, Quilt, Forge and
+NeoForge, mods in `/data/mods`. Vanilla servers don't load mods: set the server's `TYPE` variable first.
+
+- **Installed**: each mod's name and version, whether hlm installed it (and who, when), and whether an update is out.
+  Files put in the folder some other way are recognised by their hash when Modrinth has them (**added outside hlm**),
+  and can be updated like the rest. **Turn off** keeps a mod but stops it loading (it's renamed to `….jar.disabled`).
+- **Add a mod**: search Modrinth. Only mods that run on servers, with a version for the server's loader and game
+  version, are shown. The game version comes from the server's `VERSION` variable or, when that's `LATEST`, from what
+  the server reports to its [status query](#is-the-game-up-players-and-status).
+- **Before anything changes, hlm shows what it will do**: the files it adds, updates and removes, the mods it needs
+  too (a mod's required dependencies are added, newest release that fits), and warnings (a mod that says it doesn't
+  work with one you have, a dependency that's turned off).
+- **Every change is a transaction.** hlm saves a copy of the folder, downloads the files, stops the server, makes the
+  change, starts it and waits for it to answer its status query (up to 10 minutes for Minecraft). If the server stops,
+  crashes or doesn't answer in time, hlm puts the folder back as it was, starts the server again, and sends the
+  `server.mods_failed` [notification](#notifications). A stopped server is changed and left stopped.
+- **Updates** are looked for once a day and with **Check for updates**; `server.mod_updates` says when there are new
+  ones. A newer version that needs a different game version is shown, but not offered. **Update all** updates every mod
+  that can be.
+- **Managers** add, update, turn off and remove mods; operators can check for updates; viewers can see the list.
+
+Mods are code that runs in the server's container, so they're treated like its image: files come only from
+Modrinth's own download host (`cdn.modrinth.com`) over HTTPS, each is checked against the SHA-512 Modrinth lists
+before it's installed, and file names are checked (a `.jar`, no paths). Each change is in the
+[activity log](#activity-audit-log) as `servers.mods.apply`, with the files and their hashes. hlm doesn't need a
+Modrinth account.
+
+hlm records what it installed in `.hlm-mods.json` in the mods folder, so the record travels with the server's backups
+and clones. If the image installs mods itself (`MODRINTH_PROJECTS`, `MODS`, `PLUGINS`, `REMOVE_OLD_MODS` and the
+like), the tab warns that the two can undo each other's changes.
 
 ## Stopping idle servers
 
@@ -1746,6 +1791,8 @@ Each target chooses its **events** (warnings and errors by default):
 | `server.asleep` | info | Nobody played on a server for a while, so hlm [stopped it](#stopping-idle-servers) until someone wants to play. |
 | `server.wake_failed` | error | Someone wanted to play on a [sleeping server](#stopping-idle-servers), but starting it failed. |
 | `server.player_banned` | info | Someone [banned a player](#managing-players) on a server through hlm. |
+| `server.mods_failed` | error | A server didn't come back after a [change to its mods](#mods-and-plugins), so hlm put them back. |
+| `server.mod_updates` | info | Newer versions of a server's [mods](#mods-and-plugins) are out (once per set of versions). |
 | `task.failed` | error | A [scheduled task](#scheduled-tasks) failed, or was missed because hlm wasn't running. |
 
 - **Which servers:** a target can be limited to some servers and [server groups](#roles-and-server-groups). Alerts that
@@ -2344,6 +2391,11 @@ when the `HLM_*` one isn't set.
 | `GET/PUT /api/servers/{id}/health`             | A server's [health settings](#health-checks-and-crash-loops): `{crashLoop: {off?, exits?, minutes?}, check: {kind, port?, path?, command?, interval?, timeout?, retries?, startPeriod?}, restartAfter?, signal?}` (`kind` is empty for the image's check, `none`, `tcp`, `http` or `command`; `signal` is empty for Docker's health or `query`), plus Docker's health, the crash loop it was stopped for, recent exits and whether the container has the check yet. `PUT` takes a manager; commands are only shown to operators. |
 | `GET /api/servers/{id}/players`                | A server's [players](#managing-players) (operators): `{game, running, actions, needsId, online: [{name, id}], onlineFrom, onlineError, lists: {allow, ban, admin: {file, path, format, players: [{name, id, reason}], error, editable}}, log}`, or `{unsupported}` for a game without player actions or lists. |
 | `POST /api/servers/{id}/players/{action}`      | `{name, id, reason}`: `kick` (operators), `ban`, `unban`, `allow`, `disallow`, `admin`, `unadmin` (managers). `{output}` is the console's answer. |
+| `GET /api/servers/{id}/mods`                   | A server's [mods](#mods-and-plugins): `{plugins, loader, fit: {loaders, gameVersion}, fitError, dir, running, warnings, mods: [{file, disabled, size, source, project, title, version, versionNumber, by, installed, update: {version, versionNumber, blocked}}], checked, timeoutNs}`, or `{unsupported}`. |
+| `GET /api/servers/{id}/mods/search?q=`         | Modrinth projects that fit the server (managers). |
+| `POST /api/servers/{id}/mods/check`            | Looks for updates now (operators); answers like `GET …/mods`. |
+| `POST /api/servers/{id}/mods/plan`             | `{changes: [{op, project, version, file}]}` with `op` `add`, `update`, `remove`, `disable` or `enable` (managers): `{steps, changes, warnings, running}`, where `changes` has the versions chosen and dependencies added. |
+| `POST /api/servers/{id}/mods/apply`            | The same body (usually a plan's `changes`); streams the change's progress as JSON lines, ending with `done` or `error` (managers). |
 | `GET/PUT /api/servers/{id}/idle`               | A server's [idle settings](#stopping-idle-servers) `{minutes, wakeOnConnect, wakeFromStatusPage}`, plus `idleSince`, `asleep` (`since`, `minutes`, `listener`, `listenerError`), `canStop`/`why` and `canListen`/`listenWhy`. `PUT` takes a manager. |
 | `POST /api/servers/{id}/health/test`           | Run a health check `{check}` (or the container's own, without one) in the running server once: `{healthy, exitCode, output}`. Managers only. |
 | `GET /api/query`                               | Each running server you can see: its [game status](#is-the-game-up-players-and-status) and player count. |

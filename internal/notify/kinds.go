@@ -26,6 +26,8 @@ const (
 	KindServerAsleep       = "server.asleep"
 	KindServerWakeFailed   = "server.wake_failed"
 	KindPlayerBanned       = "server.player_banned"
+	KindModsFailed         = "server.mods_failed"
+	KindModUpdates         = "server.mod_updates"
 	KindBackupFailed       = "backup.failed"
 	KindBackupSucceeded    = "backup.succeeded"
 	KindBackupVerifyFailed = "backup.verify_failed"
@@ -61,10 +63,12 @@ var Kinds = []Kind{
 	{KindServerAsleep, "Servers", Info, "Nobody played on a server for a while, so hlm stopped it until someone wants to play", 0},
 	{KindServerWakeFailed, "Servers", Error, "Someone wanted to play on a sleeping server, but starting it failed", 15 * time.Minute},
 	{KindPlayerBanned, "Servers", Info, "Someone banned a player on a server through hlm", 0},
+	{KindModsFailed, "Servers", Error, "A server didn't come back after a change to its mods, so hlm put them back", 0},
 	{KindTaskFailed, "Servers", Error, "A scheduled task failed, or was missed because hlm wasn't running", time.Hour},
 	{KindUpdateAvailable, "Updates", Info, "A newer image is available for a server", sentOnce},
 	{KindServerUpdated, "Updates", Info, "A server was updated", 0},
 	{KindServerUpdateFail, "Updates", Error, "Updating a server failed", 0},
+	{KindModUpdates, "Updates", Info, "Newer versions of a server's mods are available", sentOnce},
 	{KindHLMUpdate, "Updates", Info, "A new version of hlm is available", sentOnce},
 	{KindHLMUpdateFailed, "Updates", Error, "hlm couldn't update itself automatically", 0},
 	{KindBackupFailed, "Backups", Error, "A backup (of a server or of hlm's configuration) failed", 6 * time.Hour},
