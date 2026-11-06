@@ -1,0 +1,14 @@
+id: terraria
+name: Terraria
+match: [[terraria], [tshock]]
+console:
+  # The server reads commands from its console.
+  stdin: true
+  say: say
+  save: save
+  commands: [playing, save, "say ", "kick ", time, dawn]
+settings_files:
+  - names: [serverconfig.txt]
+    words: [terraria]
+  - names: [config.json]
+    words: [tshock]

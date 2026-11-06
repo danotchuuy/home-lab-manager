@@ -1,0 +1,21 @@
+id: minecraft-bedrock
+name: Minecraft (Bedrock)
+match: [[minecraft, bedrock]]
+query:
+  protocol: bedrock
+  port: 19132
+  port_env: SERVER_PORT
+console:
+  say: say
+  save: save hold
+  commands: [list, "say ", "allowlist add ", "op ", "kick ", time set day]
+  exec:
+    - image: itzg/minecraft-bedrock-server
+      command: "send-command {command}"
+      why: This image has send-command, which types commands into the server's console.
+  players:
+    command: list
+    format: summary
+    pattern: '(?s)^\s*There are (?P<online>\d+) of a max of (?P<max>\d+) players online:?(?P<names>.*)$'
+settings_files:
+  - names: [server.properties]

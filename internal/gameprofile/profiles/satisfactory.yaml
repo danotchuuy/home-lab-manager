@@ -1,0 +1,8 @@
+id: satisfactory
+name: Satisfactory
+match: [[satisfactory]]
+query:
+  a2s_ports: [15777]
+settings_files:
+  - names: [ServerSettings.ini, Game.ini]
+    prefer: /Saved/Config/

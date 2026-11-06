@@ -12,6 +12,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/catalog"
 	"github.com/danotchuuy/home-lab-manager/internal/deploy"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
+	"github.com/danotchuuy/home-lab-manager/internal/gameprofile"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
 	"github.com/danotchuuy/home-lab-manager/internal/notify"
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
@@ -319,7 +320,7 @@ func TestCandidates(t *testing.T) {
 	if got := candidates(ctr("p", "plexinc/pms-docker", "", time.Now()), nil, true); len(got) != 0 {
 		t.Errorf("plex = %+v", got)
 	}
-	if got := words("ghcr.io/ich777/steamcmd:7dtd"); !slices.Contains(got, "7dtd") {
+	if got := gameprofile.Words("ghcr.io/ich777/steamcmd:7dtd"); !slices.Contains(got, "7dtd") {
 		t.Errorf("words = %q", got)
 	}
 }

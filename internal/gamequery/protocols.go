@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/danotchuuy/home-lab-manager/internal/gameprofile"
 )
 
 // Protocols.
@@ -484,13 +486,6 @@ func TCP(ctx context.Context, addr string) (Result, error) {
 
 // --- Player lists from console commands ---
 
-// rconCommands are the console commands that list players, by game.
-var rconCommands = map[string]string{
-	"palworld":  "ShowPlayers",
-	"minecraft": "list",
-	"ark":       "ListPlayers",
-}
-
 // addPalworldMetrics reads the console's answer to Metrics (from
 // Palworld's REST API): "Players: 3/32" and so on.
 func addPalworldMetrics(res *Result, out string) {
@@ -516,56 +511,26 @@ func addPalworldInfo(res *Result, out string) {
 	res.Game = "Palworld"
 }
 
-// parsePlayerList reads a game's answer to its rconCommands command.
+// parsePlayerList reads a game's answer to its player list command, as its
+// profile says.
 func parsePlayerList(game, out string) (Result, error) {
-	res := Result{HasPlayers: true}
-	out = strings.ReplaceAll(out, "\r\n", "\n")
-	switch game {
-	case "palworld":
-		// name,playeruid,steamid — a header line, then one line per player.
-		lines := strings.Split(strings.TrimSpace(out), "\n")
-		if len(lines) == 0 || !strings.HasPrefix(strings.ToLower(lines[0]), "name,") {
-			return res, errors.New("unexpected ShowPlayers output")
+	p := gameprofile.Default().ByID(game)
+	if p == nil || p.Console.Players == nil {
+		return Result{}, fmt.Errorf("no player list command for %q", game)
+	}
+	return playersResult(p.Console.Players, out)
+}
+
+func playersResult(players *gameprofile.Players, out string) (Result, error) {
+	list, err := players.Parse(out)
+	if err != nil {
+		return Result{}, err
+	}
+	res := Result{HasPlayers: true, Players: list.Online, MaxPlayers: list.Max}
+	for _, n := range list.Names {
+		if len(res.PlayerNames) < maxPlayerNames {
+			res.PlayerNames = append(res.PlayerNames, n)
 		}
-		for _, l := range lines[1:] {
-			name, _, _ := strings.Cut(strings.TrimSpace(l), ",")
-			if l = strings.TrimSpace(l); l != "" {
-				res.Players++
-				if name != "" && len(res.PlayerNames) < maxPlayerNames {
-					res.PlayerNames = append(res.PlayerNames, name)
-				}
-			}
-		}
-	case "minecraft":
-		// There are 2 of a max of 20 players online: alex, sam
-		var online, max int
-		head, names, _ := strings.Cut(out, ":")
-		if _, err := fmt.Sscanf(strings.TrimSpace(head), "There are %d of a max of %d players online", &online, &max); err != nil {
-			return res, errors.New("unexpected list output")
-		}
-		res.Players, res.MaxPlayers = online, max
-		for _, n := range strings.Split(names, ",") {
-			if n = strings.TrimSpace(n); n != "" && len(res.PlayerNames) < maxPlayerNames {
-				res.PlayerNames = append(res.PlayerNames, n)
-			}
-		}
-	case "ark":
-		// "0. Name, 0002…" per line, or "No Players Connected".
-		for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
-			l = strings.TrimSpace(l)
-			if l == "" || strings.EqualFold(l, "No Players Connected") {
-				continue
-			}
-			if _, rest, ok := strings.Cut(l, ". "); ok {
-				name, _, _ := strings.Cut(rest, ",")
-				res.Players++
-				if len(res.PlayerNames) < maxPlayerNames {
-					res.PlayerNames = append(res.PlayerNames, strings.TrimSpace(name))
-				}
-			}
-		}
-	default:
-		return res, fmt.Errorf("no player list command for %q", game)
 	}
 	return res, nil
 }

@@ -1,0 +1,5 @@
+id: nightingale
+name: Nightingale
+match: [[nightingale]]
+settings_files:
+  - names: [ServerSettings.ini]

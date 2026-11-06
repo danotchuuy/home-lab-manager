@@ -125,3 +125,20 @@ func TestPinned(t *testing.T) {
 		t.Errorf("after forgetting: %+v", p)
 	}
 }
+
+// A game's variants have their own files: tShock's config.json is only
+// suggested for tShock images, Terraria's serverconfig.txt only for plain
+// Terraria ones.
+func TestSuggestionsByVariant(t *testing.T) {
+	fs := []string{"/serverdata/serverfiles/serverconfig.txt", "/serverdata/serverfiles/tshock/config.json"}
+	for image, want := range map[string]string{
+		"beardedio/terraria:latest": "/serverdata/serverfiles/serverconfig.txt",
+		"ryshe/tshock:latest":       "/serverdata/serverfiles/tshock/config.json",
+	} {
+		s, _ := setup(t, image, fs)
+		l, err := s.List(context.Background(), "terraria")
+		if err != nil || len(l.Suggested) != 1 || l.Suggested[0].Path != want {
+			t.Errorf("%s: %+v %v", image, l.Suggested, err)
+		}
+	}
+}

@@ -1,0 +1,8 @@
+id: conan
+name: Conan Exiles
+match: [[conan]]
+query:
+  a2s_ports: [27015]
+settings_files:
+  - names: [ServerSettings.ini]
+    prefer: /Saved/Config/

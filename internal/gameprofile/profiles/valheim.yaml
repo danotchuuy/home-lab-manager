@@ -1,0 +1,5 @@
+id: valheim
+name: Valheim
+match: [[valheim]]
+query:
+  a2s_ports: [2457]

@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"path"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/files"
+	"github.com/danotchuuy/home-lab-manager/internal/gameprofile"
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
 )
 
@@ -134,43 +134,6 @@ func (s *Service) ForgetServer(server string) error {
 	return err
 }
 
-// known are games' usual settings files, by a word in the image name (its
-// tag included, as ich777's images name the game there). prefer, if set,
-// picks among several files of that name.
-var known = []struct {
-	word   string
-	names  []string
-	prefer string
-}{
-	{"palworld", []string{"PalWorldSettings.ini"}, "/Saved/Config/"},
-	{"minecraft", []string{"server.properties"}, ""},
-	{"ark", []string{"GameUserSettings.ini", "Game.ini"}, "/Saved/Config/"},
-	{"arkse", []string{"GameUserSettings.ini", "Game.ini"}, "/Saved/Config/"},
-	{"enshrouded", []string{"enshrouded_server.json"}, ""},
-	{"vrising", []string{"ServerHostSettings.json", "ServerGameSettings.json"}, "/Settings/"},
-	{"7dtd", []string{"serverconfig.xml"}, ""},
-	{"7daystodie", []string{"serverconfig.xml"}, ""},
-	{"terraria", []string{"serverconfig.txt"}, ""},
-	{"tshock", []string{"config.json"}, ""},
-	{"factorio", []string{"server-settings.json"}, ""},
-	{"cs2", []string{"server.cfg"}, ""},
-	{"rust", []string{"server.cfg"}, ""},
-	{"zomboid", []string{"servertest.ini"}, ""},
-	{"conan", []string{"ServerSettings.ini"}, "/Saved/Config/"},
-	{"satisfactory", []string{"ServerSettings.ini", "Game.ini"}, "/Saved/Config/"},
-	{"nightingale", []string{"ServerSettings.ini"}, ""},
-	{"soulmask", []string{"GameXishu.json"}, ""},
-}
-
-var wordRE = regexp.MustCompile(`[a-z0-9]+`)
-
-func words(image string) []string {
-	if i := strings.LastIndex(image, "/"); i >= 0 {
-		image = image[i+1:]
-	}
-	return wordRE.FindAllString(strings.ToLower(image), -1)
-}
-
 // List returns a server's pinned files, and suggested ones that aren't
 // pinned.
 func (s *Service) List(ctx context.Context, id string) (List, error) {
@@ -201,15 +164,19 @@ func (s *Service) suggest(ctx context.Context, info docker.ContainerJSON) []File
 	}
 	s.mu.Unlock()
 
-	ws := words(info.Config.Image)
+	// The usual files of the server's game, from its profile.
 	var names []string
 	prefer := map[string]string{}
-	for _, k := range known {
-		if slices.Contains(ws, k.word) {
-			for _, n := range k.names {
+	if game := gameprofile.Match(info.Config.Image); game != nil {
+		ws := gameprofile.Words(info.Config.Image)
+		for _, f := range game.SettingsFiles {
+			if slices.ContainsFunc(f.Words, func(w string) bool { return !slices.Contains(ws, w) }) {
+				continue // a file of a variant this image isn't
+			}
+			for _, n := range f.Names {
 				if !slices.Contains(names, n) {
 					names = append(names, n)
-					prefer[n] = k.prefer
+					prefer[n] = f.Prefer
 				}
 			}
 		}

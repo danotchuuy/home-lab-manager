@@ -1,0 +1,11 @@
+id: 7dtd
+name: 7 Days to Die
+match: [[7dtd], [7daystodie]]
+query:
+  a2s_ports: [26900]
+console:
+  say: say
+  save: saveworld
+  commands: [listplayers, saveworld, "say ", "kick ", gettime]
+settings_files:
+  - names: [serverconfig.xml]

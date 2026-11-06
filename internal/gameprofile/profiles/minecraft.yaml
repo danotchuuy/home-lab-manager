@@ -1,0 +1,24 @@
+id: minecraft
+name: Minecraft (Java)
+match: [[minecraft]]
+query:
+  protocol: minecraft
+  port: 25565
+  port_env: SERVER_PORT
+console:
+  rcon_port: 25575
+  say: say
+  save: save-all
+  commands: [list, save-all, "say ", "whitelist add ", "op ", "kick ", time set day, weather clear]
+  exec:
+    - image: itzg/minecraft-server
+      command: "rcon-cli {command}"
+      why: This image has rcon-cli, which already knows the server's RCON password.
+      off_when: { ENABLE_RCON: "false" }
+  players:
+    command: list
+    format: summary
+    # There are 2 of a max of 20 players online: alex, sam
+    pattern: '(?s)^\s*There are (?P<online>\d+) of a max of (?P<max>\d+) players online:?(?P<names>.*)$'
+settings_files:
+  - names: [server.properties]

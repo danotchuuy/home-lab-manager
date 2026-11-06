@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
+	"github.com/danotchuuy/home-lab-manager/internal/gameprofile"
 	"github.com/danotchuuy/home-lab-manager/internal/rcon"
 	"github.com/danotchuuy/home-lab-manager/internal/reach"
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
@@ -85,9 +86,19 @@ type Status struct {
 	// Game names the game the built-in quick commands are for.
 	Game          string   `json:"game,omitempty"`
 	QuickCommands []string `json:"quickCommands"`
+	// Schedule is the game's commands for scheduled tasks, if its profile
+	// has them.
+	Schedule *ScheduleCommands `json:"schedule,omitempty"`
 	// EnvVars are the names of the container's environment variables, to
 	// choose the RCON password from.
 	EnvVars []string `json:"envVars"`
+}
+
+// ScheduleCommands are a game's commands for scheduled tasks: to warn
+// players, and to save the world ("" if it has none).
+type ScheduleCommands struct {
+	Say  string `json:"say"`
+	Save string `json:"save"`
 }
 
 // Result is what a command returned.
@@ -227,10 +238,15 @@ func (s *Service) Status(ctx context.Context, id string) (Status, error) {
 	if d, why := Detect(info); d.Mode != ModeNone {
 		st.Detected, st.DetectedBecause = &d, why
 	}
-	st.Game = gameOf(info.Config.Image)
-	st.QuickCommands = slices.Clone(gameCommands[st.Game])
-	if set.Mode == ModeREST {
-		st.QuickCommands = slices.Clone(restQuickCommands)
+	if game := gameprofile.Match(info.Config.Image); game != nil {
+		st.Game = game.ID
+		st.QuickCommands = slices.Clone(game.Console.Commands)
+		if set.Mode == ModeREST && game.Console.REST != nil {
+			st.QuickCommands = slices.Clone(game.Console.REST.Commands)
+		}
+		if game.Console.Say != "" {
+			st.Schedule = &ScheduleCommands{Say: game.Console.Say, Save: game.Console.Save}
+		}
 	}
 	for _, q := range set.QuickCommands {
 		if !slices.Contains(st.QuickCommands, q) {
@@ -486,13 +502,6 @@ func (s *Service) Mode(ctx context.Context, id string) string {
 	return set.Mode
 }
 
-// saveCommands are commands that save a game's world, sent before hlm stops
-// or restarts it (by game; see SaveBeforeStop).
-var saveCommands = map[string]string{
-	// Palworld doesn't save when it's told to stop.
-	"palworld": "Save",
-}
-
 // SaveBeforeStop saves a running server's world before hlm stops,
 // restarts or recreates it, for games that don't save when they're told to
 // stop and whose console can do it (Palworld through its REST API or RCON).
@@ -502,10 +511,11 @@ func (s *Service) SaveBeforeStop(ctx context.Context, id string, timeout time.Du
 	if err != nil || !info.State.Running {
 		return
 	}
-	cmd := saveCommands[gameOf(info.Config.Image)]
-	if cmd == "" {
+	game := gameprofile.Match(info.Config.Image)
+	if game == nil || !game.Console.SaveBeforeStop {
 		return
 	}
+	cmd := game.Console.Save
 	set, err := s.settings(serverName(info))
 	if err != nil || set.Mode == ModeNone || set.Mode == ModeStdin {
 		return

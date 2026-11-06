@@ -1,0 +1,317 @@
+// Package gameprofile is what hlm knows about particular games, as data:
+// how to recognise a game from its image, which ports answer status
+// queries, its console's commands and RCON port, how to read its player
+// list, and its settings files. Each game is one YAML profile; the built-in
+// ones are embedded. Profiles only point hlm's own features at things (a
+// port, a command, a file name, a pattern): they don't run code.
+package gameprofile
+
+import (
+	"bytes"
+	"embed"
+	"errors"
+	"fmt"
+	"io/fs"
+	"path"
+	"regexp"
+	"slices"
+	"strings"
+	"sync"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Profile is one game.
+type Profile struct {
+	// ID names the game (lower-case letters, digits and dashes); the
+	// console reports it, and the web UI keys things by it.
+	ID   string `yaml:"id" json:"id"`
+	Name string `yaml:"name" json:"name"`
+	// Match are sets of image words: the profile fits an image that has all
+	// the words of any one set.
+	Match         [][]string     `yaml:"match" json:"match"`
+	Query         Query          `yaml:"query" json:"query"`
+	Console       Console        `yaml:"console" json:"console"`
+	SettingsFiles []SettingsFile `yaml:"settings_files" json:"settingsFiles,omitempty"`
+}
+
+// Query is how a game answers status queries.
+type Query struct {
+	// ConsoleFirst asks through the console (names and counts) before any
+	// query port.
+	ConsoleFirst bool `yaml:"console_first" json:"consoleFirst,omitempty"`
+	// Protocol, if set, is the game's own status protocol ("minecraft" or
+	// "bedrock") on Port, or on the port in the variable PortEnv.
+	Protocol string `yaml:"protocol" json:"protocol,omitempty"`
+	Port     int    `yaml:"port" json:"port,omitempty"`
+	PortEnv  string `yaml:"port_env" json:"portEnv,omitempty"`
+	// A2SPorts are the game's usual Steam query ports (container ports).
+	A2SPorts []int `yaml:"a2s_ports" json:"a2sPorts,omitempty"`
+}
+
+// Console is how a game takes commands.
+type Console struct {
+	// RCONPort is its usual RCON port, for images that don't say.
+	RCONPort int `yaml:"rcon_port" json:"rconPort,omitempty"`
+	// Stdin means the server reads commands from its console.
+	Stdin bool `yaml:"stdin" json:"stdin,omitempty"`
+	// Commands are shortcuts; a trailing space means something goes after.
+	Commands []string `yaml:"commands" json:"commands,omitempty"`
+	// Say and Save are the commands scheduled tasks use to warn players and
+	// to save the world.
+	Say  string `yaml:"say" json:"say,omitempty"`
+	Save string `yaml:"save" json:"save,omitempty"`
+	// SaveBeforeStop sends Save before hlm stops, restarts or recreates
+	// the server, for games that don't save when they're told to stop.
+	SaveBeforeStop bool `yaml:"save_before_stop" json:"saveBeforeStop,omitempty"`
+	// Exec are images that bring a command that sends commands for you.
+	Exec []Exec `yaml:"exec" json:"exec,omitempty"`
+	// REST is a built-in console driver that replaces RCON when the image
+	// has it.
+	REST *REST `yaml:"rest" json:"rest,omitempty"`
+	// Players reads the player list through the console.
+	Players *Players `yaml:"players" json:"players,omitempty"`
+}
+
+// Exec is an image's own command sender.
+type Exec struct {
+	// Image is part of the image's name, e.g. itzg/minecraft-server.
+	Image string `yaml:"image" json:"image"`
+	// Command runs in the container; {command} is the command sent.
+	Command string `yaml:"command" json:"command"`
+	Why     string `yaml:"why" json:"why"`
+	// OffWhen are variables (and values, any case) that turn it off.
+	OffWhen map[string]string `yaml:"off_when" json:"offWhen,omitempty"`
+}
+
+// Off reports whether the container's variables turn the sender off.
+func (e Exec) Off(env map[string]string) bool {
+	for k, v := range e.OffWhen {
+		if strings.EqualFold(env[k], v) {
+			return true
+		}
+	}
+	return false
+}
+
+// REST is a built-in REST console driver.
+type REST struct {
+	// Driver names it; "palworld" is the only one.
+	Driver   string   `yaml:"driver" json:"driver"`
+	Commands []string `yaml:"commands" json:"commands,omitempty"`
+}
+
+// Drivers are the built-in REST console drivers.
+var Drivers = []string{"palworld"}
+
+// SettingsFile is a game's usual settings file.
+type SettingsFile struct {
+	Names []string `yaml:"names" json:"names"`
+	// Prefer picks among several files of that name: the one whose path
+	// contains it.
+	Prefer string `yaml:"prefer" json:"prefer,omitempty"`
+	// Words, if set, also have to be in the image's words (e.g. a mod's
+	// own file).
+	Words []string `yaml:"words" json:"words,omitempty"`
+}
+
+var (
+	idRE   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+	wordRE = regexp.MustCompile(`[a-z0-9]+`)
+	envRE  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
+)
+
+// Words splits an image reference into lower-case words: its repository
+// name and tag (ich777's images name the game in the tag, as in
+// steamcmd:valheim), without the registry and owner.
+func Words(image string) []string {
+	if i := strings.LastIndex(image, "/"); i >= 0 {
+		image = image[i+1:]
+	}
+	return wordRE.FindAllString(strings.ToLower(image), -1)
+}
+
+func validPort(p int) bool { return p > 0 && p < 65536 }
+
+// Validate checks a profile and compiles its patterns.
+func (p *Profile) Validate() error {
+	if !idRE.MatchString(p.ID) {
+		return fmt.Errorf("id %q: use lower-case letters, digits and dashes", p.ID)
+	}
+	if strings.TrimSpace(p.Name) == "" {
+		return errors.New("give it a name")
+	}
+	if len(p.Match) == 0 {
+		return errors.New("match needs at least one set of image words")
+	}
+	for _, set := range p.Match {
+		if len(set) == 0 {
+			return errors.New("a match set is empty")
+		}
+		for _, w := range set {
+			if got := wordRE.FindAllString(w, -1); len(got) != 1 || got[0] != w {
+				return fmt.Errorf("match word %q: one lower-case word of letters and digits", w)
+			}
+		}
+	}
+	q := p.Query
+	switch q.Protocol {
+	case "":
+		if q.Port != 0 || q.PortEnv != "" {
+			return errors.New("query: port and port_env go with a protocol")
+		}
+	case "minecraft", "bedrock":
+		if !validPort(q.Port) {
+			return fmt.Errorf("query: %s needs its port", q.Protocol)
+		}
+	default:
+		return fmt.Errorf("query: unknown protocol %q (minecraft or bedrock)", q.Protocol)
+	}
+	if q.PortEnv != "" && !envRE.MatchString(q.PortEnv) {
+		return fmt.Errorf("query: port_env %q isn't a variable name", q.PortEnv)
+	}
+	for _, port := range q.A2SPorts {
+		if !validPort(port) {
+			return fmt.Errorf("query: a2s port %d", port)
+		}
+	}
+	c := p.Console
+	if c.SaveBeforeStop && strings.TrimSpace(c.Save) == "" {
+		return errors.New("console: save_before_stop needs the save command")
+	}
+	if c.RCONPort != 0 && !validPort(c.RCONPort) {
+		return fmt.Errorf("console: rcon_port %d", c.RCONPort)
+	}
+	for _, e := range c.Exec {
+		if strings.TrimSpace(e.Image) == "" || !strings.Contains(e.Command, "{command}") {
+			return errors.New("console: an exec entry needs an image and a command with {command} in it")
+		}
+		for k := range e.OffWhen {
+			if !envRE.MatchString(k) {
+				return fmt.Errorf("console: off_when %q isn't a variable name", k)
+			}
+		}
+	}
+	if c.REST != nil && !slices.Contains(Drivers, c.REST.Driver) {
+		return fmt.Errorf("console: unknown REST driver %q (%s)", c.REST.Driver, strings.Join(Drivers, ", "))
+	}
+	if c.Players != nil {
+		if err := c.Players.compile(); err != nil {
+			return fmt.Errorf("console: players: %w", err)
+		}
+	}
+	for _, f := range p.SettingsFiles {
+		if len(f.Names) == 0 {
+			return errors.New("settings_files: an entry needs names")
+		}
+		for _, n := range f.Names {
+			if n == "" || strings.ContainsAny(n, "/\\") {
+				return fmt.Errorf("settings_files: %q isn't a file name", n)
+			}
+		}
+	}
+	return nil
+}
+
+// Parse reads one profile (YAML), refusing fields it doesn't know.
+func Parse(data []byte) (*Profile, error) {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	var p Profile
+	if err := dec.Decode(&p); err != nil {
+		return nil, err
+	}
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// Set is a set of profiles.
+type Set struct {
+	profiles []*Profile
+}
+
+// Load reads every *.yaml in a directory of fsys. Profiles with the same
+// id are an error.
+func Load(fsys fs.FS, dir string) (*Set, error) {
+	entries, err := fs.ReadDir(fsys, dir)
+	if err != nil {
+		return nil, err
+	}
+	s := &Set{}
+	for _, e := range entries {
+		if e.IsDir() || path.Ext(e.Name()) != ".yaml" {
+			continue
+		}
+		data, err := fs.ReadFile(fsys, path.Join(dir, e.Name()))
+		if err != nil {
+			return nil, err
+		}
+		p, err := Parse(data)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", e.Name(), err)
+		}
+		if s.ByID(p.ID) != nil {
+			return nil, fmt.Errorf("%s: there's already a profile %q", e.Name(), p.ID)
+		}
+		s.profiles = append(s.profiles, p)
+	}
+	slices.SortFunc(s.profiles, func(a, b *Profile) int { return strings.Compare(a.ID, b.ID) })
+	return s, nil
+}
+
+// All are the profiles, by id.
+func (s *Set) All() []*Profile { return s.profiles }
+
+// ByID finds a profile.
+func (s *Set) ByID(id string) *Profile {
+	for _, p := range s.profiles {
+		if p.ID == id {
+			return p
+		}
+	}
+	return nil
+}
+
+// Match finds the profile for an image: among those with a match set whose
+// words are all in the image's, the one with the most words (Minecraft
+// Bedrock's [minecraft, bedrock] before Minecraft's [minecraft]); nil if
+// none fits.
+func (s *Set) Match(image string) *Profile {
+	ws := Words(image)
+	var best *Profile
+	bestLen := 0
+	for _, p := range s.profiles {
+		for _, set := range p.Match {
+			if len(set) > bestLen && !slices.ContainsFunc(set, func(w string) bool { return !slices.Contains(ws, w) }) {
+				best, bestLen = p, len(set)
+			}
+		}
+	}
+	return best
+}
+
+//go:embed profiles/*.yaml
+var builtin embed.FS
+
+var (
+	defaultOnce sync.Once
+	defaultSet  *Set
+)
+
+// Default is the built-in profiles. They're checked by the tests, so a bad
+// one can't be released; it panics if one is broken anyway.
+func Default() *Set {
+	defaultOnce.Do(func() {
+		s, err := Load(builtin, "profiles")
+		if err != nil {
+			panic("built-in game profiles: " + err.Error())
+		}
+		defaultSet = s
+	})
+	return defaultSet
+}
+
+// Match is Default().Match.
+func Match(image string) *Profile { return Default().Match(image) }

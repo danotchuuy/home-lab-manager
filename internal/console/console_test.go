@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
+	"github.com/danotchuuy/home-lab-manager/internal/gameprofile"
 	"github.com/danotchuuy/home-lab-manager/internal/rcon"
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
 )
@@ -182,8 +183,12 @@ func TestSaveAndStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !st.Ready || !st.HasPassword || st.Settings.Password != "" || !slices.Equal(st.Settings.QuickCommands, []string{"kick bob", "server.save"}) ||
-		st.QuickCommands[len(st.QuickCommands)-1] != "kick bob" || len(st.QuickCommands) != len(gameCommands["rust"])+1 {
+		st.QuickCommands[len(st.QuickCommands)-1] != "kick bob" || len(st.QuickCommands) != len(gameprofile.Match("didstopia/rust-server").Console.Commands)+1 {
 		t.Errorf("status after saving = %+v", st)
+	}
+	// The game's commands for scheduled tasks, from its profile.
+	if st.Game != "rust" || st.Schedule == nil || st.Schedule.Say != "say" || st.Schedule.Save != "server.save" {
+		t.Errorf("game %q, schedule %+v", st.Game, st.Schedule)
 	}
 	// A blank password keeps the saved one; ClearPassword removes it.
 	if _, err := s.Save(ctx, "rust", Input{Settings: Settings{Mode: ModeRCON, PasswordVar: "RCON_PASSWORD"}}); err != nil {

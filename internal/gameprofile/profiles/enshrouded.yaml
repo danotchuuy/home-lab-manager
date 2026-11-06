@@ -1,0 +1,7 @@
+id: enshrouded
+name: Enshrouded
+match: [[enshrouded]]
+query:
+  a2s_ports: [15637]
+settings_files:
+  - names: [enshrouded_server.json]
