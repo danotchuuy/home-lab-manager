@@ -6,6 +6,7 @@ import type { BackupObject, BackupOverview, BackupPlan, BackupRun, BackupTargetR
 import { usePoll } from "../usePoll";
 import { formatBytes } from "../util";
 import { AtFields, describeAt, KeepingFields, VerifyBadge } from "./BackupOptions";
+import { RestoreTests } from "./RestoreTests";
 import { Ago, Spinner } from "./common";
 
 export const INTERVALS: [number, string][] = [
@@ -511,6 +512,7 @@ export function ServerBackups({
           host.
         </p>
       </div>
+      {canRun && <RestoreTests server={server} backups={overview.backups.map((b) => b.key)} canManage={canManage} />}
     </>
   );
 }

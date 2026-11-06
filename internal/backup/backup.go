@@ -1513,3 +1513,25 @@ func (s *Service) RunScheduler(ctx context.Context) {
 		}
 	}
 }
+
+// OpenBackup opens one of a server's backups in the primary storage as the
+// tar stream it holds (decrypted and decompressed).
+func (s *Service) OpenBackup(ctx context.Context, id, key string) (io.ReadCloser, error) {
+	st, _, err := s.backupKey(ctx, id, key, "")
+	if err != nil {
+		return nil, err
+	}
+	rc, _, err := st.open(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	gz, err := gzip.NewReader(rc)
+	if err != nil {
+		rc.Close()
+		return nil, fmt.Errorf("read the backup: %w", err)
+	}
+	return struct {
+		io.Reader
+		io.Closer
+	}{gz, rc}, nil
+}

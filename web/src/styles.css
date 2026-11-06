@@ -4450,3 +4450,40 @@ pre .muted {
 .game-profiles td .badge {
   margin-left: 0.3rem;
 }
+
+.restore-tests h3 {
+  font-size: 1rem;
+  margin: 1.25rem 0 0.4rem;
+}
+
+.restore-test-result {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.restore-test-result:last-child {
+  border-bottom: none;
+}
+
+.restore-test-progress {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-top: 0.6rem;
+}
+
+.restore-test-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem 0.75rem;
+}
+
+.restore-tests .badge {
+  text-transform: none;
+}
+
+.restore-tests .btn-row select {
+  width: auto;
+  max-width: 100%;
+}

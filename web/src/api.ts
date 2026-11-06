@@ -15,6 +15,8 @@ import type {
   PlayerAction,
   PlayersOverview,
   ModsOverview,
+  RestoreTests,
+  RestoreTestSettings,
   DiscordView,
   DiscordSettings,
   DiscordTest,
@@ -835,6 +837,18 @@ export const api = {
   discordRoles: (guild: string) =>
     json<DiscordRole[]>(`/api/integrations/discord/roles?guild=${encodeURIComponent(guild)}`),
   disconnectDiscord: () => json<DiscordView>("/api/integrations/discord", { method: "DELETE" }),
+  restoreTests: (id: string) => json<RestoreTests>(`/api/servers/${encodeURIComponent(id)}/backups/restore-tests`),
+  setRestoreTests: (id: string, set: RestoreTestSettings) =>
+    json<RestoreTestSettings>(`/api/servers/${encodeURIComponent(id)}/backups/restore-tests`, {
+      method: "PUT",
+      body: JSON.stringify(set),
+    }),
+  runRestoreTest: (id: string, key: string, onEvent: (e: DeployEvent) => void) =>
+    stream(
+      `/api/servers/${encodeURIComponent(id)}/backups/restore-test`,
+      { method: "POST", body: JSON.stringify({ key }) },
+      onEvent,
+    ),
   serverMods: (id: string) => json<ModsOverview>(`/api/servers/${encodeURIComponent(id)}/mods`),
   checkModUpdates: (id: string) =>
     json<ModsOverview>(`/api/servers/${encodeURIComponent(id)}/mods/check`, { method: "POST" }),

@@ -57,6 +57,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
 	"github.com/danotchuuy/home-lab-manager/internal/registry"
 	"github.com/danotchuuy/home-lab-manager/internal/remote"
+	"github.com/danotchuuy/home-lab-manager/internal/restoretest"
 	"github.com/danotchuuy/home-lab-manager/internal/s3"
 	"github.com/danotchuuy/home-lab-manager/internal/schedule"
 	"github.com/danotchuuy/home-lab-manager/internal/selfupdate"
@@ -135,6 +136,8 @@ type Options struct {
 	Discord *discord.Service
 	// ProfileShare imports game profiles from links and indexes.
 	ProfileShare *profileshare.Service
+	// RestoreTests restore backups into isolated copies and start them.
+	RestoreTests *restoretest.Service
 	// UpdateCheckEnv is HLM_UPDATE_CHECK, which overrides the setting for
 	// how often updates are checked for, if set.
 	UpdateCheckEnv string
@@ -553,6 +556,11 @@ func (s *server) removeServer(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.Mods != nil {
 		s.Mods.ForgetServer(srv.Name)
+	}
+	if s.RestoreTests != nil {
+		if err := s.RestoreTests.ForgetServer(srv.Name); err != nil {
+			s.Log.Warn("forget deleted server's restore tests", "server", srv.Name, "err", err)
+		}
 	}
 	if s.Idle != nil {
 		if err := s.Idle.ForgetServer(srv.Name); err != nil {

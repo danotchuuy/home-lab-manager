@@ -567,3 +567,15 @@ func (c *Client) ContainerStats(ctx context.Context, id string) (Stats, error) {
 	s.PIDs = raw.PidsStats.Current
 	return s, nil
 }
+
+// DisconnectNetwork detaches a container from a network.
+func (c *Client) DisconnectNetwork(ctx context.Context, network, container string, force bool) error {
+	body := map[string]any{"Container": container, "Force": force}
+	return c.doJSON(ctx, http.MethodPost, "/networks/"+url.PathEscape(network)+"/disconnect", nil, body, nil)
+}
+
+// CreateVolume creates a named volume.
+func (c *Client) CreateVolume(ctx context.Context, name string, labels map[string]string) error {
+	body := map[string]any{"Name": name, "Labels": labels}
+	return c.doJSON(ctx, http.MethodPost, "/volumes/create", nil, body, nil)
+}

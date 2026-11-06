@@ -308,6 +308,10 @@ func (s *server) routes() []route {
 		{"POST /api/servers/{id}/backups/restore", serverRole(rbac.Manager), s.restoreBackup},
 		{"POST /api/servers/{id}/backups/verify", serverRole(rbac.Operator), s.verifyBackup},
 		{"DELETE /api/servers/{id}/backups", serverRole(rbac.Manager), s.deleteBackup},
+		// A restore test runs a copy of the server, with its settings.
+		{"GET /api/servers/{id}/backups/restore-tests", serverRole(rbac.Viewer), s.restoreTests},
+		{"PUT /api/servers/{id}/backups/restore-tests", serverRole(rbac.Manager), s.setRestoreTests},
+		{"POST /api/servers/{id}/backups/restore-test", serverRole(rbac.Manager), s.runRestoreTest},
 		{"GET /api/system/backup", admin, s.configBackups},
 		{"PUT /api/system/backup", admin, s.setConfigBackupPlan},
 		{"POST /api/system/backup", admin, s.startConfigBackup},

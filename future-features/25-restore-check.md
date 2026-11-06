@@ -3,6 +3,25 @@
 **Priority:** Medium · **Depends on:** [11](11-backup-improvements.md) (verify, restore as new server),
 [05](05-game-query.md) (status query)
 
+> **Status: done** (branch `feature/25-restore-check`). See the README's
+> [Restore tests](../README.md#restore-tests). Where the result differs from this plan:
+>
+> - **The copy is made directly, not through "Restore as new server".** `manager.CreateTestCopy` builds it from the
+>   server's own inspect output (same image by ID, settings and limits) with fresh named volumes, an `--internal`
+>   network and no ports, devices, privileges or restart policy; nothing goes through templates, so the copy never
+>   becomes a server and nothing of the server's (connections, routes, forwards) is touched.
+> - **Its own settings and results**, not fields on the backup plan and backup list: `GET`/`PUT
+>   …/backups/restore-tests` and `POST …/backups/restore-test`, stored in `"restore-tests"` (the last 20 results per
+>   server). The Backups tab shows them in their own card.
+> - **Local host only for now.** Servers on other Docker hosts would need the query run from a helper on that host's
+>   network; they get a clear refusal.
+> - **One test at a time on the whole of hlm**, rather than one per host (only the local host runs them).
+> - **The query** uses the method that last worked for the server, then its saved settings, then detection; a server
+>   with its status query off passes by running for a minute. hlm in a container joins the test network to reach
+>   the copy.
+> - **Skipped tests** (not enough free memory) are tried again after a day; a schedule tests the newest backup only
+>   once.
+
 ## Why
 
 hlm already checks that each backup can be read back whole (**Verify**). That catches a damaged archive, but not a
@@ -72,10 +91,10 @@ A failure sends `backup.restore_test_failed` (error). **Test a restore now** on 
 
 ## Tasks
 
-- [ ] Test mode for restore-as-new: isolated network, no ports or connections, limits, labels
-- [ ] Waiting for the status query inside the network (local, then other hosts)
-- [ ] Results on backups and in history; notification
-- [ ] Scheduling in the backup plan; on-demand button
-- [ ] Leftover cleanup at start
-- [ ] UI in the Backups tab and backup plan
-- [ ] README section and API table
+- [x] Isolated test copies: internal network, no ports or connections, limits, labels
+- [x] Waiting for the status query inside the network (local host; other hosts not yet)
+- [x] Results and history; notification
+- [x] Scheduling; on-demand button
+- [x] Leftover cleanup at start
+- [x] UI in the Backups tab
+- [x] README section and API table
