@@ -37,6 +37,8 @@ type Profile struct {
 	// PlayerLists are the files the game keeps its allow, ban and admin
 	// lists in, by list.
 	PlayerLists map[string]ListFile `yaml:"player_lists" json:"playerLists,omitempty"`
+	// Mods is how it takes mods.
+	Mods *Mods `yaml:"mods" json:"mods,omitempty"`
 
 	// Source is where it came from (BuiltIn or Custom), File its file, and
 	// Replaces whether a custom profile takes a built-in one's place.
@@ -60,6 +62,8 @@ type Ref struct {
 	ID     string `json:"id"`
 	Name   string `json:"name"`
 	Source string `json:"source"`
+	// Mods says hlm can install mods for the game.
+	Mods bool `json:"mods,omitempty"`
 }
 
 // Ref is the profile's Ref; nil for no profile.
@@ -67,7 +71,7 @@ func (p *Profile) Ref() *Ref {
 	if p == nil {
 		return nil
 	}
-	return &Ref{ID: p.ID, Name: p.Name, Source: p.Source}
+	return &Ref{ID: p.ID, Name: p.Name, Source: p.Source, Mods: p.Mods != nil && p.Mods.Modrinth != nil}
 }
 
 // Query is how a game answers status queries.
@@ -320,6 +324,11 @@ func (p *Profile) Validate() error {
 		}
 		if f.Format != FormatMinecraftJSON && f.Format != FormatLines {
 			return fmt.Errorf("player_lists: %s: unknown format %q (minecraft-json or lines)", l, f.Format)
+		}
+	}
+	if p.Mods != nil {
+		if err := p.Mods.validate(); err != nil {
+			return fmt.Errorf("mods: %w", err)
 		}
 	}
 	for _, f := range p.SettingsFiles {

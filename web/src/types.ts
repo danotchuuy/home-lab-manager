@@ -260,6 +260,74 @@ export interface PlayersOverview {
   log: PlayerRecord[];
 }
 
+export interface ModsOverview {
+  /** Set when hlm can't manage this server's mods. */
+  unsupported?: string;
+  plugins?: boolean;
+  loader: string;
+  fit: { loaders: string[]; gameVersion: string };
+  /** Why mods can't be added (the game version isn't known). */
+  fitError?: string;
+  dir: string;
+  running: boolean;
+  warnings?: string[];
+  mods: InstalledMod[];
+  checked?: string;
+  timeoutNs: number;
+}
+
+export interface InstalledMod {
+  file: string;
+  disabled?: boolean;
+  size: number;
+  modified: string;
+  /** hlm: installed through hlm; modrinth: put there another way, and recognised. */
+  source: "hlm" | "modrinth" | "unknown";
+  project?: string;
+  slug?: string;
+  title?: string;
+  version?: string;
+  versionNumber?: string;
+  by?: string;
+  installed?: string;
+  update?: { version: string; versionNumber: string; blocked?: string };
+}
+
+export interface ModSearchHit {
+  project_id: string;
+  slug: string;
+  title: string;
+  description: string;
+  author: string;
+  downloads: number;
+  server_side?: string;
+  client_side?: string;
+}
+
+export type ModOp = "add" | "update" | "remove" | "disable" | "enable";
+
+export interface ModChange {
+  op: ModOp;
+  project?: string;
+  version?: string;
+  file?: string;
+  why?: string;
+}
+
+export interface ModPlan {
+  steps: {
+    op: "add" | "replace" | "remove" | "disable" | "enable";
+    file?: string;
+    title?: string;
+    new?: { project: string; version: string; versionNumber: string; file: string; size: number; sha512: string };
+    fromVersion?: string;
+    why?: string;
+  }[];
+  changes: ModChange[];
+  warnings?: string[];
+  running: boolean;
+}
+
 export interface IdleSettings {
   /** Minutes without players before it's stopped; 0 is off. */
   minutes: number;
@@ -282,6 +350,8 @@ export interface GameProfileRef {
   id: string;
   name: string;
   source: GameProfileSource;
+  /** hlm can install mods for the game. */
+  mods?: boolean;
 }
 
 /** What hlm knows about a game (only the parts the UI shows). */
@@ -528,7 +598,13 @@ export interface DeployEvent {
     | "created"
     | "template"
     | "settings"
-    | "copy";
+    | "copy"
+    // mod changes:
+    | "folder"
+    | "snapshot"
+    | "apply"
+    | "wait"
+    | "rollback";
   message?: string;
   /** The server an event is about, when updating several servers. */
   target?: string;

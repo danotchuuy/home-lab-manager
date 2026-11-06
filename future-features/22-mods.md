@@ -3,6 +3,29 @@
 **Priority:** Medium · **Depends on:** [11](11-backup-improvements.md) (backups), [19](19-game-profiles.md)
 (profiles), [05](05-game-query.md) (to know it came back)
 
+> **Status: done, Modrinth only** (branch `feature/22-mods`). See the README's
+> [Mods and plugins](../README.md#mods-and-plugins). Where the result differs from this plan:
+>
+> - **Steam Workshop isn't done.** It's a different kind of change (editing a variable and recreating the container,
+>   with the image doing the downloads), so it's left for its own change, with the ARK, Conan and Project Zomboid
+>   profiles. CurseForge and Thunderstore stay "maybe".
+> - **A snapshot of the mods folder, not a backup.** It's taken before every change and is what the rollback restores;
+>   a full backup first would make each change take as long as a backup. Changes are refused while a backup or restore
+>   of the server runs.
+> - **No `.mrpack` import and no automatic mod updates** in this version: updates are found daily and notified
+>   (`server.mod_updates`), and installed with **Update** or **Update all**.
+> - **Profile fields:** `mods.modrinth` has `loader_env`, `loader_default`, `version_env`, `loaders` (each a value of
+>   the loader variable, with its Modrinth loaders, folder, and whether they're plugins) and `warn_env`, and
+>   `mods.start_timeout` replaces the profile's start time. A `LATEST` version comes from the server's status query,
+>   not Mojang's manifest.
+> - **The record is `.hlm-mods.json`** in the mods folder. Turning a mod off renames it to `….jar.disabled`.
+> - **Plans are recomputed when applied:** the plan's `changes` (versions fixed, dependencies added) are what the UI
+>   sends, so the apply does exactly what was shown.
+> - **A stopped server** is changed and left stopped: there's nothing to wait for.
+> - **The opt-in Docker test** covers the helper-container file operations (`MakeDir`, `RemoveFiles`); the full
+>   Fabric install, update, turn-off and rollback were checked by hand against a real `itzg/minecraft-server` and
+>   Modrinth, and `TestModrinthLive` (`HLM_LIVE_MODRINTH=1`) checks the client against the real API.
+
 ## Why
 
 Mods are the main reason people open a server panel after the first install: add a mod pack, update one, take out
@@ -97,11 +120,11 @@ mods:
 
 ## Tasks
 
-- [ ] Profile `mods` section and validation
-- [ ] `internal/mods` with the Modrinth source and `modrinthtest`
-- [ ] `mods.json`, plans, the apply job with rollback
-- [ ] Mods tab (installed, search, plan, progress)
-- [ ] Update checks and notification
-- [ ] Workshop source (variable editing and Steam details)
-- [ ] Built-in profiles: Minecraft (itzg), ARK, Conan, Project Zomboid
-- [ ] README section and API table
+- [x] Profile `mods` section and validation
+- [x] `internal/mods` with the Modrinth source and `modrinthtest`
+- [x] `mods.json`, plans, the apply job with rollback
+- [x] Mods tab (installed, search, plan, progress)
+- [x] Update checks and notification
+- [ ] Workshop source (variable editing and Steam details) — not done, see above
+- [x] Built-in profiles: Minecraft (itzg); ARK, Conan, Project Zomboid wait for Workshop
+- [x] README section and API table

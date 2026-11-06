@@ -34,3 +34,23 @@ player_lists:
   allow: { file: whitelist.json, format: minecraft-json }
   ban: { file: banned-players.json, format: minecraft-json }
   admin: { file: ops.json, format: minecraft-json }
+mods:
+  # Modded servers take a while to start, the first time with a new mod.
+  start_timeout: 10m
+  modrinth:
+    # itzg/minecraft-server's TYPE and VERSION.
+    loader_env: TYPE
+    loader_default: VANILLA
+    version_env: VERSION
+    loaders:
+      FABRIC: { modrinth: [fabric], dir: /data/mods }
+      QUILT: { modrinth: [quilt, fabric], dir: /data/mods }
+      FORGE: { modrinth: [forge], dir: /data/mods }
+      NEOFORGE: { modrinth: [neoforge], dir: /data/mods }
+      PAPER: { modrinth: [paper, spigot, bukkit], dir: /data/plugins, plugins: true }
+      PURPUR: { modrinth: [purpur, paper, spigot, bukkit], dir: /data/plugins, plugins: true }
+      FOLIA: { modrinth: [folia], dir: /data/plugins, plugins: true }
+      SPIGOT: { modrinth: [spigot, bukkit], dir: /data/plugins, plugins: true }
+      BUKKIT: { modrinth: [bukkit], dir: /data/plugins, plugins: true }
+    # The image downloads mods itself from these, and some remove others.
+    warn_env: [MODRINTH_PROJECTS, MODS, MODS_FILE, PLUGINS, PLUGINS_FILE, CURSEFORGE_FILES, REMOVE_OLD_MODS]

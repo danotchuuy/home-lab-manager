@@ -208,3 +208,10 @@ func (m *Manager) JobRunning(name string) bool { return m.jobs.running(name) }
 func (m *Manager) Jobs() []Job {
 	return m.jobs.list()
 }
+
+// StartJob registers a job run outside the manager (a mod change, say), so
+// it shows with the others and doesn't overlap an install or update of the
+// same server. See jobTracker.start.
+func (m *Manager) StartJob(job Job, emit func(Event)) (func(Event), func(error), error) {
+	return m.jobs.start(job, emit)
+}

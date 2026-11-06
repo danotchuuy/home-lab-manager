@@ -11,6 +11,10 @@ import type {
   IdleStatus,
   PlayerAction,
   PlayersOverview,
+  ModsOverview,
+  ModSearchHit,
+  ModChange,
+  ModPlan,
   HistoryRange,
   MetricHistory,
   MetricsSettings,
@@ -814,6 +818,22 @@ export const api = {
     json<MetricHistory>(`/api/servers/${encodeURIComponent(id)}/history?range=${range}`),
   metricsSettings: () => json<MetricsSettings>("/api/system/metrics"),
   setMetricsSettings: (s: MetricsSettings) => json<MetricsSettings>("/api/system/metrics", { method: "PUT", body: JSON.stringify(s) }),
+  serverMods: (id: string) => json<ModsOverview>(`/api/servers/${encodeURIComponent(id)}/mods`),
+  checkModUpdates: (id: string) =>
+    json<ModsOverview>(`/api/servers/${encodeURIComponent(id)}/mods/check`, { method: "POST" }),
+  searchMods: (id: string, q: string) =>
+    json<ModSearchHit[]>(`/api/servers/${encodeURIComponent(id)}/mods/search?q=${encodeURIComponent(q)}`),
+  planMods: (id: string, changes: ModChange[]) =>
+    json<ModPlan>(`/api/servers/${encodeURIComponent(id)}/mods/plan`, {
+      method: "POST",
+      body: JSON.stringify({ changes }),
+    }),
+  applyMods: (id: string, changes: ModChange[], onEvent: (e: DeployEvent) => void) =>
+    stream(
+      `/api/servers/${encodeURIComponent(id)}/mods/apply`,
+      { method: "POST", body: JSON.stringify({ changes }) },
+      onEvent,
+    ),
   serverPlayers: (id: string) => json<PlayersOverview>(`/api/servers/${encodeURIComponent(id)}/players`),
   playerAction: (id: string, action: PlayerAction, player: { name?: string; id?: string; reason?: string }) =>
     json<{ output: string }>(`/api/servers/${encodeURIComponent(id)}/players/${action}`, {
