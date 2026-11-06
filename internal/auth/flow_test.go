@@ -483,13 +483,15 @@ func TestAPIKeys(t *testing.T) {
 	if code, _ := do(t, anon, "POST", e.hlm.URL+"/api/auth/keys", bearer(made.Key), `{"name":"spare"}`); code != 403 {
 		t.Errorf("key making a key = %d", code)
 	}
-	for _, bad := range []string{made.Key + "x", "hlm_" + made.ID + "_", "hlm_nope_" + strings.Split(made.Key, "_")[2], strings.TrimPrefix(made.Key, "hlm_")} {
+	// The secret is base64url, so it can hold "_" too.
+	secret := strings.TrimPrefix(made.Key, "hlm_"+made.ID+"_")
+	for _, bad := range []string{made.Key + "x", "hlm_" + made.ID + "_", "hlm_nope_" + secret, strings.TrimPrefix(made.Key, "hlm_")} {
 		if code, _ := do(t, anon, "GET", e.hlm.URL+"/api/auth/keys", bearer(bad), ""); code != 401 {
 			t.Errorf("bad key %q = %d", bad, code)
 		}
 	}
 	code, body = do(t, anon, "GET", e.hlm.URL+"/api/auth/keys", bearer(made.Key), "")
-	if !strings.Contains(body, `"lastUsed"`) || strings.Contains(body, `"hash"`) || strings.Contains(body, strings.Split(made.Key, "_")[2]) {
+	if !strings.Contains(body, `"lastUsed"`) || strings.Contains(body, `"hash"`) || strings.Contains(body, secret) {
 		t.Errorf("list = %s", body)
 	}
 
