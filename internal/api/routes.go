@@ -242,6 +242,7 @@ func (s *server) routes() []route {
 		{"POST /api/servers/{id}/mods/check", serverRole(rbac.Operator), s.checkModUpdates},
 		{"POST /api/servers/{id}/mods/plan", serverRole(rbac.Manager), s.planMods},
 		{"POST /api/servers/{id}/mods/apply", serverRole(rbac.Manager), s.applyMods},
+		{"POST /api/servers/{id}/mods/workshop", serverRole(rbac.Manager), s.applyWorkshop},
 		{"GET /api/servers/{id}/idle", serverRole(rbac.Viewer), s.serverIdle},
 		{"PUT /api/servers/{id}/idle", serverRole(rbac.Manager), s.setServerIdle},
 		{"GET /api/servers/{id}/health", serverRole(rbac.Viewer), s.serverHealth},

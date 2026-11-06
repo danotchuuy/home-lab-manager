@@ -73,7 +73,7 @@ func (p *Profile) Ref() *Ref {
 	if p == nil {
 		return nil
 	}
-	return &Ref{ID: p.ID, Name: p.Name, Source: p.Source, Mods: p.Mods != nil && p.Mods.Modrinth != nil}
+	return &Ref{ID: p.ID, Name: p.Name, Source: p.Source, Mods: p.Mods != nil && (p.Mods.Modrinth != nil || p.Mods.Workshop != nil)}
 }
 
 // Query is how a game answers status queries.

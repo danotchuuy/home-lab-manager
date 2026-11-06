@@ -260,9 +260,36 @@ export interface PlayersOverview {
   log: PlayerRecord[];
 }
 
+export interface WorkshopItem {
+  id: string;
+  /** Its mod name, for images that take those too. */
+  name?: string;
+  title?: string;
+  updated?: string;
+  size?: number;
+  missing?: boolean;
+  wrongGame?: boolean;
+  /** Updated on Steam after the server started. */
+  newer?: boolean;
+}
+
+export interface WorkshopOverview {
+  game: string;
+  appId: number;
+  env: string;
+  namesEnv?: string;
+  items: WorkshopItem[];
+  running: boolean;
+  started?: string;
+  warnings?: string[];
+  timeoutNs: number;
+}
+
 export interface ModsOverview {
   /** Set when hlm can't manage this server's mods. */
   unsupported?: string;
+  /** Set for servers whose image takes Steam Workshop items in a variable. */
+  workshop?: WorkshopOverview;
   plugins?: boolean;
   loader: string;
   fit: { loaders: string[]; gameVersion: string };

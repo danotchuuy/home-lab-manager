@@ -623,6 +623,10 @@ mods:                       # installing mods from Modrinth (see Mods and plugin
       FABRIC: { modrinth: [fabric], dir: /data/mods }
       PAPER: { modrinth: [paper, spigot, bukkit], dir: /data/plugins, plugins: true }
     warn_env: [MODRINTH_PROJECTS]  # variables that make the image install mods itself
+  workshop:                 # or: Steam Workshop items in the image's own variable
+    app_id: 346110          # the game's Steam app
+    images:
+      - { image: someone/mygame-server, env: MOD_IDS, separator: "," }  # names_env: a second variable of mod names
 ```
 
 Every field but `id`, `name` and `match` is optional. The built-in profiles are good examples: **View** shows each
@@ -853,6 +857,32 @@ Modrinth account.
 hlm records what it installed in `.hlm-mods.json` in the mods folder, so the record travels with the server's backups
 and clones. If the image installs mods itself (`MODRINTH_PROJECTS`, `MODS`, `PLUGINS`, `REMOVE_OLD_MODS` and the
 like), the tab warns that the two can undo each other's changes.
+
+### Steam Workshop
+
+Images that download Steam Workshop items themselves, given their IDs in a variable, get a **Steam Workshop** list on
+the Mods tab instead. hlm changes only that variable, through the server's settings; the image does the downloading,
+and hlm needs no Steam account.
+
+| Game | Image | Variable |
+| --- | --- | --- |
+| ARK: Survival Evolved | `hermsi/ark-server` | `GAME_MOD_IDS` |
+| Conan Exiles | `alinmear/docker-conanexiles` | `CONANEXILES_MODS` |
+| Project Zomboid | `renegademaster/zomboid-dedicated-server` | `MOD_WORKSHOP_IDS`, with each item's mod name in `MOD_NAMES` |
+
+- The list shows each item's name, size and when it was updated, from Steam's public Workshop details. An item updated
+  after the server started is marked: the image gets the update when it next starts, if it updates mods then.
+- **Add** takes an item's Workshop link or ID (and, for Project Zomboid, its mod name). Items can be removed and put in
+  order: in ARK, the first mod wins when two change the same thing. New items are checked with Steam first: they must
+  exist, be public, be for the server's game and not be banned.
+- **Apply and restart** recreates the server with the new list and waits for it to download the items and answer its
+  status query (30 minutes for ARK and Conan Exiles, 20 for Project Zomboid). A server has to keep running a few
+  seconds after answering to count. If it stops, crashes or doesn't answer in time, hlm recreates it with the old list,
+  starts it again, and sends `server.mods_failed`. A stopped server gets the new list and stays stopped.
+- Each change is in the [activity log](#activity-audit-log) as `servers.mods.workshop`, with the items.
+
+Other images can get it in their [profile](#game-profiles): `mods.workshop` with the game's Steam `app_id` and, under
+`images`, each image's name (or part of it), `env`, `separator` and optionally `names_env`.
 
 ## Stopping idle servers
 
@@ -2518,6 +2548,7 @@ when the `HLM_*` one isn't set.
 | `POST /api/servers/{id}/mods/check`            | Looks for updates now (operators); answers like `GET …/mods`. |
 | `POST /api/servers/{id}/mods/plan`             | `{changes: [{op, project, version, file}]}` with `op` `add`, `update`, `remove`, `disable` or `enable` (managers): `{steps, changes, warnings, running}`, where `changes` has the versions chosen and dependencies added. |
 | `POST /api/servers/{id}/mods/apply`            | The same body (usually a plan's `changes`); streams the change's progress as JSON lines, ending with `done` or `error` (managers). |
+| `POST /api/servers/{id}/mods/workshop`         | `{items: [{id, name}]}`: replace a [Steam Workshop](#steam-workshop) list (IDs or links; `name` for images with mod names); streams progress like `apply` (managers). For such servers `GET …/mods` answers `{workshop: {game, appId, env, namesEnv, items: [{id, name, title, updated, size, missing, wrongGame, newer}], running, started, warnings, timeoutNs}}`. |
 | `GET/PUT /api/servers/{id}/idle`               | A server's [idle settings](#stopping-idle-servers) `{minutes, wakeOnConnect, wakeFromStatusPage}`, plus `idleSince`, `asleep` (`since`, `minutes`, `listener`, `listenerError`), `canStop`/`why` and `canListen`/`listenWhy`. `PUT` takes a manager. |
 | `POST /api/servers/{id}/health/test`           | Run a health check `{check}` (or the container's own, without one) in the running server once: `{healthy, exitCode, output}`. Managers only. |
 | `GET /api/query`                               | Each running server you can see: its [game status](#is-the-game-up-players-and-status) and player count. |

@@ -426,6 +426,24 @@ func (s *Service) waitUp(ctx context.Context, server string, timeout time.Durati
 		}
 		up, known := s.opts.Ready(ctx, server)
 		if known && up {
+			// One answer isn't enough: a server can answer (or a published
+			// port can accept a connection) just before it crashes. It has
+			// to still be the same running container a little later.
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(s.opts.Settle):
+			}
+			after, err := s.opts.Servers.Inspect(ctx, server)
+			if err != nil {
+				return "", err
+			}
+			switch {
+			case !after.State.Running && !after.State.Restarting:
+				return "", fmt.Errorf("it answered, then stopped (exit code %d)", after.State.ExitCode)
+			case after.State.Restarting || after.RestartCount > info.RestartCount || after.State.StartedAt != info.State.StartedAt:
+				return "", errors.New("it answered, then crashed, and Docker restarted it")
+			}
 			return "", nil
 		}
 		if !known && time.Since(begin) >= s.opts.Unqueryable {

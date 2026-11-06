@@ -24,6 +24,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/danotchuuy/home-lab-manager/internal/catalog"
+	"github.com/danotchuuy/home-lab-manager/internal/deploy"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/files"
 	"github.com/danotchuuy/home-lab-manager/internal/gameprofile"
@@ -47,6 +49,8 @@ type Servers interface {
 	RestoreArchive(ctx context.Context, id string, r io.Reader, progress func(files.ArchiveStats)) (files.ArchiveStats, error)
 	RemoveFiles(ctx context.Context, id string, paths []string) error
 	MakeDir(ctx context.Context, id, path string) error
+	Config(ctx context.Context, id string) (*catalog.App, deploy.Request, error)
+	Reconfigure(ctx context.Context, id string, req deploy.Request, emit func(manager.Event)) (manager.Server, error)
 	Start(ctx context.Context, id string) error
 	Stop(ctx context.Context, id string) error
 	StartJob(job manager.Job, emit func(manager.Event)) (func(manager.Event), func(error), error)
@@ -56,6 +60,8 @@ type Servers interface {
 type Options struct {
 	Servers  Servers
 	Modrinth *Modrinth
+	// Steam reads Workshop items' details.
+	Steam *Steam
 	// Dir is where downloads and snapshots are kept while a change runs.
 	Dir string
 	// Ready asks a server's game whether it's up; known is false when it
@@ -72,6 +78,9 @@ type Options struct {
 	Now      func() time.Time
 	// StartTimeout, if set, replaces the profiles' start timeouts.
 	StartTimeout time.Duration
+	// Settle is how long a server that answered has to keep running to
+	// count as up (10s).
+	Settle time.Duration
 	// Poll is how often a restarted server is checked (5s).
 	Poll time.Duration
 	// Unqueryable is how long a server that can't be queried has to keep
@@ -106,6 +115,9 @@ func New(o Options) *Service {
 	}
 	if o.Poll == 0 {
 		o.Poll = 5 * time.Second
+	}
+	if o.Settle == 0 {
+		o.Settle = 10 * time.Second
 	}
 	if o.Unqueryable == 0 {
 		o.Unqueryable = time.Minute

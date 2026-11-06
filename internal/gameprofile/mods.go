@@ -13,6 +13,9 @@ import (
 type Mods struct {
 	// Modrinth installs mods from modrinth.com into a folder.
 	Modrinth *ModrinthMods `yaml:"modrinth" json:"modrinth,omitempty"`
+	// Workshop lists Steam Workshop items in the image's own variable; the
+	// image downloads them.
+	Workshop *WorkshopMods `yaml:"workshop" json:"workshop,omitempty"`
 	// StartTimeout is how long the server gets, after a change, to answer
 	// its status query again before hlm puts the mods back (default
 	// DefaultStartTimeout).
@@ -78,9 +81,61 @@ func (m *ModrinthMods) Loader(env map[string]string) (string, ModLoader, bool) {
 	return name, ModLoader{}, false
 }
 
+// WorkshopMods is how images of a game take Steam Workshop items.
+type WorkshopMods struct {
+	// AppID is the game's Steam app: items must be for it.
+	AppID int `yaml:"app_id" json:"appId"`
+	// Images are the images that take a list of items, and how.
+	Images []WorkshopImage `yaml:"images" json:"images"`
+}
+
+// WorkshopImage is one image's variable for Workshop items.
+type WorkshopImage struct {
+	// Image is part of the image's name, e.g. hermsi/ark-server.
+	Image string `yaml:"image" json:"image"`
+	// Env is the variable with the items' IDs, Separator between them.
+	Env       string `yaml:"env" json:"env"`
+	Separator string `yaml:"separator" json:"separator"`
+	// NamesEnv, if set, is a second variable with each item's mod name
+	// (Project Zomboid's), in the same order.
+	NamesEnv string `yaml:"names_env" json:"namesEnv,omitempty"`
+}
+
+// For finds the entry for an image, if any.
+func (w *WorkshopMods) For(image string) (WorkshopImage, bool) {
+	if w == nil {
+		return WorkshopImage{}, false
+	}
+	for _, i := range w.Images {
+		if strings.Contains(strings.ToLower(image), strings.ToLower(i.Image)) {
+			return i, true
+		}
+	}
+	return WorkshopImage{}, false
+}
+
 func (m *Mods) validate() error {
 	if m.StartTimeout < 0 || m.StartTimeout > time.Hour {
 		return errors.New("start_timeout: up to an hour")
+	}
+	if w := m.Workshop; w != nil {
+		if w.AppID <= 0 {
+			return errors.New("workshop: app_id is the game's Steam app ID")
+		}
+		if len(w.Images) == 0 {
+			return errors.New("workshop: images needs at least one")
+		}
+		for _, i := range w.Images {
+			if strings.TrimSpace(i.Image) == "" || !envRE.MatchString(i.Env) {
+				return errors.New("workshop: an image needs its image and env")
+			}
+			if i.NamesEnv != "" && !envRE.MatchString(i.NamesEnv) {
+				return fmt.Errorf("workshop: names_env %q isn't a variable name", i.NamesEnv)
+			}
+			if len(i.Separator) != 1 || strings.ContainsAny(i.Separator, "0123456789 \t\n") {
+				return errors.New("workshop: separator is one character, such as , or ;")
+			}
+		}
 	}
 	mr := m.Modrinth
 	if mr == nil {

@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/danotchuuy/home-lab-manager/internal/catalog"
+	"github.com/danotchuuy/home-lab-manager/internal/deploy"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/files"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
@@ -201,6 +203,14 @@ func (f *fakeServer) Stop(ctx context.Context, id string) error {
 	return nil
 }
 
+func (f *fakeServer) Config(ctx context.Context, id string) (*catalog.App, deploy.Request, error) {
+	return &catalog.App{}, deploy.Request{Name: id}, nil
+}
+
+func (f *fakeServer) Reconfigure(ctx context.Context, id string, req deploy.Request, emit func(manager.Event)) (manager.Server, error) {
+	return manager.Server{}, errors.New("not in this test")
+}
+
 func (f *fakeServer) StartJob(job manager.Job, emit func(manager.Event)) (func(manager.Event), func(error), error) {
 	return emit, func(error) {}, nil
 }
@@ -220,7 +230,7 @@ func (n *notes) Clear(string) {}
 var day = time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 
 // The fake's mods: Sodium Extra needs Sodium; Broken crashes the server.
-func catalog() []*modrinthtest.Project {
+func projects() []*modrinthtest.Project {
 	return []*modrinthtest.Project{
 		{ID: "AANobbMI", Slug: "sodium", Title: "Sodium", Versions: []*modrinthtest.Version{
 			{ID: "sod1", Number: "0.5.0", GameVersions: []string{"1.21.4"}, Loaders: []string{"fabric"}, Published: day, File: "sodium-0.5.0.jar", Content: []byte("sodium 0.5.0")},
@@ -248,7 +258,7 @@ func catalog() []*modrinthtest.Project {
 
 func setup(t *testing.T, srv *fakeServer) (*Service, *notes, *modrinthtest.Server) {
 	t.Helper()
-	mr := modrinthtest.New(catalog()...)
+	mr := modrinthtest.New(projects()...)
 	t.Cleanup(mr.Close)
 	client := NewModrinth("hlm-test")
 	client.API, client.CDN, client.AllowHTTP = mr.URL, []string{mr.Host()}, true
@@ -260,7 +270,7 @@ func setup(t *testing.T, srv *fakeServer) (*Service, *notes, *modrinthtest.Serve
 			defer srv.mu.Unlock()
 			return srv.running, true
 		},
-		Poll: time.Millisecond, StartTimeout: time.Second,
+		Poll: time.Millisecond, Settle: time.Millisecond, StartTimeout: time.Second,
 	})
 	return s, n, mr
 }
@@ -612,5 +622,30 @@ func TestCheckURL(t *testing.T) {
 		if err := m.checkURL(u); (err == nil) != ok {
 			t.Errorf("%s: %v", u, err)
 		}
+	}
+}
+
+// A server that answers once and then crashes isn't up.
+func TestAnswersThenCrashes(t *testing.T) {
+	srv := newFake("TYPE=FABRIC", "VERSION=1.21.4")
+	srv.put("/data/mods/other.jar", "other")
+	s, _, _ := setup(t, srv)
+	answered := false
+	s.opts.Ready = func(context.Context, string) (bool, bool) {
+		srv.mu.Lock()
+		defer srv.mu.Unlock()
+		if !answered && srv.running {
+			answered = true
+			srv.running = false // right after answering
+			return true, true
+		}
+		return srv.running, true
+	}
+	res, err := s.Apply(context.Background(), "mc", "dan", []Change{{Op: OpRemove, File: "other.jar"}}, noEvents)
+	if err == nil || !res.RolledBack || !strings.Contains(err.Error(), "it answered, then stopped") {
+		t.Fatalf("apply: %+v, %v", res, err)
+	}
+	if got := srv.names("/data/mods"); !slices.Equal(got, []string{"other.jar"}) {
+		t.Errorf("folder: %v", got)
 	}
 }

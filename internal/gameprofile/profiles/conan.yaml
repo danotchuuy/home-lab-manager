@@ -1,8 +1,15 @@
 id: conan
 name: Conan Exiles
-match: [[conan]]
+match: [[conan], [conanexiles]]
 query:
   a2s_ports: [27015]
 settings_files:
   - names: [ServerSettings.ini]
     prefer: /Saved/Config/
+mods:
+  start_timeout: 30m
+  workshop:
+    app_id: 440900
+    images:
+      # https://github.com/alinmear/docker-conanexiles
+      - { image: alinmear/docker-conanexiles, env: CONANEXILES_MODS, separator: "," }

@@ -24,3 +24,11 @@ console:
 settings_files:
   - names: [GameUserSettings.ini, Game.ini]
     prefer: /Saved/Config/
+mods:
+  # Mods download when the server starts, and can be large.
+  start_timeout: 30m
+  workshop:
+    app_id: 346110
+    images:
+      # https://github.com/Hermsi1337/docker-ark-server: the first mod wins when two change the same thing.
+      - { image: hermsi/ark-server, env: GAME_MOD_IDS, separator: "," }
