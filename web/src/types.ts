@@ -211,6 +211,32 @@ export interface Server {
   /** The Compose stack (and service in it) the server is part of. */
   stack?: string;
   stackService?: string;
+  /** The game profile its image matches. */
+  gameProfile?: GameProfileRef;
+}
+
+export type GameProfileSource = "built-in" | "custom";
+
+export interface GameProfileRef {
+  id: string;
+  name: string;
+  source: GameProfileSource;
+}
+
+/** What hlm knows about a game (only the parts the UI shows). */
+export interface GameProfile extends GameProfileRef {
+  match: string[][];
+  file?: string;
+  /** A custom profile that takes a built-in one's place. */
+  replaces?: boolean;
+}
+
+export interface GameProfiles {
+  /** Where your own profiles are kept. */
+  dir: string;
+  profiles: GameProfile[];
+  /** Files that couldn't be used. */
+  errors: { file: string; error: string }[];
 }
 
 /** A Compose stack's service as it runs. */

@@ -41,6 +41,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/deploy"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/forwarding"
+	"github.com/danotchuuy/home-lab-manager/internal/gameprofile"
 	"github.com/danotchuuy/home-lab-manager/internal/gamequery"
 	"github.com/danotchuuy/home-lab-manager/internal/health"
 	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
@@ -133,6 +134,15 @@ func run(log *slog.Logger) error {
 			// inside this container would put game data somewhere unexpected.
 			log.Warn("running in a container without HLM_APPDATA_ROOT; game data will go to this path on the docker host", "path", appdataRoot)
 		}
+	}
+	// Your own game profiles, in use from the start. A file that can't be
+	// used is shown on the System page, not fatal.
+	gameProfiles := gameprofile.NewStore(filepath.Join(dataDir, "game-profiles"))
+	if err := gameProfiles.Reload(); err != nil {
+		log.Warn("read game profiles", "dir", gameProfiles.Dir(), "err", err)
+	}
+	for _, e := range gameProfiles.State().Errors {
+		log.Warn("game profile not used", "file", e.File, "err", e.Error)
 	}
 	refresh, err := time.ParseDuration(env("HLM_FEED_REFRESH", "6h"))
 	if err != nil {
@@ -621,6 +631,7 @@ func run(log *slog.Logger) error {
 		Cleanup:       cleaner,
 		Prefs:         prefs.New(store),
 		StatusPage:    statusPage,
+		GameProfiles:  gameProfiles,
 		// Set when HLM_UPDATE_CHECK overrides the setting.
 		UpdateCheckEnv: updateCheckEnv,
 		Token:          env("HLM_TOKEN", ""),

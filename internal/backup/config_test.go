@@ -36,6 +36,8 @@ func configService(t *testing.T, keyFromEnv bool) (*Service, string) {
 		t.Fatal(err)
 	}
 	os.WriteFile(filepath.Join(dir, "templates.json"), []byte(`{"templates":[]}`), 0o644)
+	os.MkdirAll(filepath.Join(dir, "game-profiles"), 0o700)
+	os.WriteFile(filepath.Join(dir, "game-profiles", "mygame.yaml"), []byte("id: mygame\n"), 0o600)
 	os.MkdirAll(filepath.Join(dir, "cache"), 0o755)
 	os.WriteFile(filepath.Join(dir, "cache", "applicationFeed.json"), []byte("{}"), 0o644)
 	s := New(store, &fakeServers{files: map[string]string{}}, slog.New(slog.DiscardHandler))
@@ -85,14 +87,14 @@ func TestConfigArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := untar(t, data)
-	if want := []string{"README.txt", "secrets/secrets.enc", "servers.json", "templates.json"}; !slices.Equal(keys(got), want) {
+	if want := []string{"README.txt", "game-profiles/mygame.yaml", "secrets/secrets.enc", "servers.json", "templates.json"}; !slices.Equal(keys(got), want) {
 		t.Errorf("without the key: %v, want %v", keys(got), want)
 	}
 	enc, _ := os.ReadFile(filepath.Join(dir, "secrets", "secrets.enc"))
 	if got["secrets/secrets.enc"] != string(enc) || !strings.Contains(got["servers.json"], `"valheim-1"`) {
 		t.Errorf("contents: %v", got)
 	}
-	if !strings.Contains(got["README.txt"], "isn't in this backup") || run.Files != 4 {
+	if !strings.Contains(got["README.txt"], "isn't in this backup") || run.Files != 5 {
 		t.Errorf("README = %q, run = %+v", got["README.txt"], run)
 	}
 

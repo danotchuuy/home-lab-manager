@@ -563,7 +563,55 @@ What hlm knows about particular games is kept as **game profiles**: one YAML fil
 Built in: Minecraft (Java and Bedrock), Palworld, ARK, Rust, Terraria (and tShock), Factorio, Counter-Strike 2,
 7 Days to Die, Valheim, Enshrouded, V Rising, Conan Exiles, Project Zomboid, Satisfactory, Nightingale and Soulmask.
 Profiles only point hlm's own features at things (a port, a command, a file name, a pattern); they never run code.
-Adding your own profiles is planned ([future-features/19](future-features/19-game-profiles.md)).
+Each server's page says which profile it uses (**Game profile: Palworld**).
+
+**Your own profiles.** **System → Game profiles** lists every profile. **Add a game** starts one from a template,
+**Edit a copy** starts from a built-in one, and **Import a file…** loads a `.yaml` file. Saving checks the profile
+first (unknown fields, ports, patterns) and says what's wrong. A profile with the same `id` as a built-in one is used
+instead of it; deleting yours brings the built-in one back. Your profiles are kept in `game-profiles/` in hlm's data
+directory, one file each, and are in [hlm's configuration backups](#backing-up-hlms-own-configuration). You can also put files
+there yourself and click **Read the folder again** (hlm reads them at start too). A file with a mistake is listed with
+the reason and skipped; the others are used. Status queries try new profiles' ports when they next look for a way to
+ask a server (within 2 minutes).
+
+```yaml
+id: mygame                  # lower-case letters, digits and dashes
+name: My Game
+# Words in the image's name and tag (split at anything that isn't a letter or digit) that identify it:
+# all the words of any one set. The most specific match wins.
+match: [[mygame], [my, game, server]]
+query:
+  console_first: false      # ask through the console (names, counts) before query ports
+  protocol: minecraft       # optional: minecraft or bedrock, on port (or the port in port_env)
+  port: 25565
+  port_env: SERVER_PORT
+  a2s_ports: [27015]        # Steam query ports to try (container ports)
+console:
+  rcon_port: 27015          # when the image doesn't say
+  stdin: false              # the server reads commands from its console
+  commands: [status, "say "]  # quick commands; a trailing space means something goes after
+  say: say                  # scheduled tasks' warning…
+  save: save                # …and save commands
+  save_before_stop: false   # send save before hlm stops, restarts or recreates it
+  exec:                     # images that bring their own command sender
+    - image: someone/mygame-server
+      command: "send-command {command}"
+      why: This image has send-command.
+      off_when: { RCON_ENABLED: "false" }
+  rest: { driver: palworld, commands: [Info] }  # a built-in REST driver (palworld is the only one)
+  players:                  # reading the player list through the console
+    command: players
+    format: lines           # csv (header), summary (pattern with online, max, names) or lines (pattern with name)
+    pattern: '^\d+\. (?P<name>.+)$'
+    ignore: [No players online]
+settings_files:
+  - names: [server.cfg]
+    prefer: /cfg/           # among several files of that name, the one whose path contains this
+    words: [mygame]         # only for images with these words too
+```
+
+Every field but `id`, `name` and `match` is optional. The built-in profiles are good examples: **View** shows each
+one.
 
 ## Health checks and crash loops
 
@@ -847,6 +895,7 @@ Each backup holds, named as they are in the data directory (`HLM_DATA_DIR`):
 - `secrets/secrets.enc`: every integration's settings and credentials (UniFi, proxy and its SSH key, Linode, Cloudflare,
   backup storage), servers' port options and backup plans. Encrypted with AES-256-GCM.
 - `templates.json` (templates made from images) and `deleted-servers.json`, when they exist.
+- `game-profiles/`: your own [game profiles](#game-profiles).
 - `audit/`: the [activity log](#activity-audit-log), a file a month.
 - `servers.json`: every server's name, template, image, start on boot and settings. Servers live in Docker rather than
   the data directory, so this is what it takes to install them again on a new host. Their game data is in their own

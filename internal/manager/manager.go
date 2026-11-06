@@ -20,6 +20,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/catalog"
 	"github.com/danotchuuy/home-lab-manager/internal/deploy"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
+	"github.com/danotchuuy/home-lab-manager/internal/gameprofile"
 	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
 	"github.com/danotchuuy/home-lab-manager/internal/notify"
 )
@@ -187,7 +188,10 @@ type Server struct {
 	Favourite bool     `json:"favourite,omitempty"`
 	// CrashLoop is set when hlm stopped the server because it kept exiting.
 	CrashLoop *CrashLoop `json:"crashLoop,omitempty"`
-	imageID   string
+	// GameProfile is the game profile its image matches, if any; the API
+	// fills it in.
+	GameProfile *gameprofile.Ref `json:"gameProfile,omitempty"`
+	imageID     string
 }
 
 // startsOnBoot reports whether a restart policy starts the container when the

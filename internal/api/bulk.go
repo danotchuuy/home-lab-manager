@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/danotchuuy/home-lab-manager/internal/audit"
+	"github.com/danotchuuy/home-lab-manager/internal/gameprofile"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
 	"github.com/danotchuuy/home-lab-manager/internal/rbac"
 )
@@ -28,9 +29,12 @@ func userKey(ctx context.Context) string {
 	return "anonymous"
 }
 
-// decorate adds servers' tags and whether the caller has them as
-// favourites.
+// decorate adds servers' game profiles, their tags and whether the caller
+// has them as favourites.
 func (s *server) decorate(ctx context.Context, list []manager.Server) []manager.Server {
+	for i := range list {
+		list[i].GameProfile = gameprofile.Match(list[i].Image).Ref()
+	}
 	if s.Prefs == nil {
 		return list
 	}

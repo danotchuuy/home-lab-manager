@@ -278,6 +278,20 @@ func (s *Service) configArchive(ctx context.Context, includeKey bool, run *Run) 
 		}
 	}
 
+	// Your own game profiles.
+	profiles, _ := filepath.Glob(filepath.Join(s.config.DataDir, "game-profiles", "*.yaml"))
+	sort.Strings(profiles)
+	for _, p := range profiles {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			run.Warnings = append(run.Warnings, "couldn't read the game profile "+filepath.Base(p)+": "+err.Error())
+			continue
+		}
+		if err := add("game-profiles/"+filepath.Base(p), 0o600, data); err != nil {
+			return nil, err
+		}
+	}
+
 	// The audit log, a file a month.
 	auditFiles, _ := filepath.Glob(filepath.Join(s.config.DataDir, "audit", "audit-*.jsonl"))
 	sort.Strings(auditFiles)
@@ -331,6 +345,7 @@ To restore: stop hlm, extract this archive into its data directory
                         backup plans. Encrypted with AES-256-GCM.
   templates.json        Templates made from Docker images.
   deleted-servers.json  Data folders of deleted servers, shown on the Host page.
+  game-profiles/        Your own game profiles.
   audit/                The audit log of who changed what, a file a month.
   servers.json          Every server's settings. They live in Docker, so they
                         aren't restored by extracting; install each server again

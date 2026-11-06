@@ -37,6 +37,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/files"
 	"github.com/danotchuuy/home-lab-manager/internal/forwarding"
+	"github.com/danotchuuy/home-lab-manager/internal/gameprofile"
 	"github.com/danotchuuy/home-lab-manager/internal/gamequery"
 	"github.com/danotchuuy/home-lab-manager/internal/health"
 	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
@@ -117,6 +118,8 @@ type Options struct {
 	Prefs *prefs.Store
 	// StatusPage is the public status page.
 	StatusPage *statuspage.Service
+	// GameProfiles keeps your own game profiles.
+	GameProfiles *gameprofile.Store
 	// UpdateCheckEnv is HLM_UPDATE_CHECK, which overrides the setting for
 	// how often updates are checked for, if set.
 	UpdateCheckEnv string

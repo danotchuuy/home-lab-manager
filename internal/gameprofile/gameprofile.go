@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"gopkg.in/yaml.v3"
 )
@@ -33,6 +34,37 @@ type Profile struct {
 	Query         Query          `yaml:"query" json:"query"`
 	Console       Console        `yaml:"console" json:"console"`
 	SettingsFiles []SettingsFile `yaml:"settings_files" json:"settingsFiles,omitempty"`
+
+	// Source is where it came from (BuiltIn or Custom), File its file, and
+	// Replaces whether a custom profile takes a built-in one's place.
+	Source   string `yaml:"-" json:"source"`
+	File     string `yaml:"-" json:"file,omitempty"`
+	Replaces bool   `yaml:"-" json:"replaces,omitempty"`
+	raw      []byte
+}
+
+// Where profiles come from.
+const (
+	BuiltIn = "built-in"
+	Custom  = "custom"
+)
+
+// YAML is the profile as it was written.
+func (p *Profile) YAML() []byte { return bytes.Clone(p.raw) }
+
+// Ref names a profile, for showing which one a server uses.
+type Ref struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Source string `json:"source"`
+}
+
+// Ref is the profile's Ref; nil for no profile.
+func (p *Profile) Ref() *Ref {
+	if p == nil {
+		return nil
+	}
+	return &Ref{ID: p.ID, Name: p.Name, Source: p.Source}
 }
 
 // Query is how a game answers status queries.
@@ -119,6 +151,8 @@ var (
 	idRE   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 	wordRE = regexp.MustCompile(`[a-z0-9]+`)
 	envRE  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
+
+	goTypeRE = regexp.MustCompile(` in type [\w.*\[\]]+`)
 )
 
 // Words splits an image reference into lower-case words: its repository
@@ -219,12 +253,75 @@ func Parse(data []byte) (*Profile, error) {
 	dec.KnownFields(true)
 	var p Profile
 	if err := dec.Decode(&p); err != nil {
+		var te *yaml.TypeError
+		if errors.As(err, &te) {
+			// "line 4: field players not found", without Go's type names.
+			msgs := make([]string, len(te.Errors))
+			for i, m := range te.Errors {
+				msgs[i] = goTypeRE.ReplaceAllString(m, "")
+			}
+			return nil, errors.New(strings.Join(msgs, "; "))
+		}
 		return nil, err
 	}
 	if err := p.Validate(); err != nil {
 		return nil, err
 	}
+	p.raw = bytes.Clone(data)
 	return &p, nil
+}
+
+// MaxSize is the largest profile file read.
+const MaxSize = 64 << 10
+
+// LoadError is a profile file that couldn't be used.
+type LoadError struct {
+	File  string `json:"file"`
+	Error string `json:"error"`
+}
+
+// read parses every *.yaml in a directory of fsys, marking them as from
+// source. Files that can't be used are returned as errors beside the rest;
+// of profiles with the same id, the first file (by name) is kept.
+func read(fsys fs.FS, dir, source string) ([]*Profile, []LoadError, error) {
+	entries, err := fs.ReadDir(fsys, dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	var (
+		out  []*Profile
+		errs []LoadError
+	)
+	for _, e := range entries {
+		if e.IsDir() || path.Ext(e.Name()) != ".yaml" {
+			continue
+		}
+		fail := func(err error) { errs = append(errs, LoadError{File: e.Name(), Error: err.Error()}) }
+		if info, err := e.Info(); err != nil {
+			fail(err)
+			continue
+		} else if info.Size() > MaxSize {
+			fail(fmt.Errorf("larger than %d KiB", MaxSize>>10))
+			continue
+		}
+		data, err := fs.ReadFile(fsys, path.Join(dir, e.Name()))
+		if err != nil {
+			fail(err)
+			continue
+		}
+		p, err := Parse(data)
+		if err != nil {
+			fail(err)
+			continue
+		}
+		if i := slices.IndexFunc(out, func(o *Profile) bool { return o.ID == p.ID }); i >= 0 {
+			fail(fmt.Errorf("%s already has the id %q", out[i].File, p.ID))
+			continue
+		}
+		p.Source, p.File = source, e.Name()
+		out = append(out, p)
+	}
+	return out, errs, nil
 }
 
 // Set is a set of profiles.
@@ -232,33 +329,40 @@ type Set struct {
 	profiles []*Profile
 }
 
-// Load reads every *.yaml in a directory of fsys. Profiles with the same
-// id are an error.
+// Load reads every *.yaml in a directory of fsys as built-in profiles.
+// A file that can't be used, or two with the same id, are an error.
 func Load(fsys fs.FS, dir string) (*Set, error) {
-	entries, err := fs.ReadDir(fsys, dir)
+	ps, errs, err := read(fsys, dir, BuiltIn)
 	if err != nil {
 		return nil, err
 	}
-	s := &Set{}
-	for _, e := range entries {
-		if e.IsDir() || path.Ext(e.Name()) != ".yaml" {
-			continue
-		}
-		data, err := fs.ReadFile(fsys, path.Join(dir, e.Name()))
-		if err != nil {
-			return nil, err
-		}
-		p, err := Parse(data)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", e.Name(), err)
-		}
-		if s.ByID(p.ID) != nil {
-			return nil, fmt.Errorf("%s: there's already a profile %q", e.Name(), p.ID)
-		}
-		s.profiles = append(s.profiles, p)
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("%s: %s", errs[0].File, errs[0].Error)
 	}
-	slices.SortFunc(s.profiles, func(a, b *Profile) int { return strings.Compare(a.ID, b.ID) })
-	return s, nil
+	return newSet(ps), nil
+}
+
+func newSet(ps []*Profile) *Set {
+	ps = slices.Clone(ps)
+	slices.SortFunc(ps, func(a, b *Profile) int { return strings.Compare(a.ID, b.ID) })
+	return &Set{profiles: ps}
+}
+
+// Merge is base with custom profiles added; a custom profile replaces the
+// base one with the same id.
+func Merge(base *Set, custom []*Profile) *Set {
+	var ps []*Profile
+	for _, p := range base.profiles {
+		if !slices.ContainsFunc(custom, func(c *Profile) bool { return c.ID == p.ID }) {
+			ps = append(ps, p)
+		}
+	}
+	for _, c := range custom {
+		cp := *c
+		cp.Replaces = base.ByID(c.ID) != nil
+		ps = append(ps, &cp)
+	}
+	return newSet(ps)
 }
 
 // All are the profiles, by id.
@@ -313,5 +417,19 @@ func Default() *Set {
 	return defaultSet
 }
 
-// Match is Default().Match.
-func Match(image string) *Profile { return Default().Match(image) }
+var current atomic.Pointer[Set]
+
+// Current is the profiles in use: the built-in ones and, once a Store has
+// loaded them, your own.
+func Current() *Set {
+	if s := current.Load(); s != nil {
+		return s
+	}
+	return Default()
+}
+
+// Use makes s the profiles in use; nil goes back to the built-in ones.
+func Use(s *Set) { current.Store(s) }
+
+// Match is Current().Match.
+func Match(image string) *Profile { return Current().Match(image) }

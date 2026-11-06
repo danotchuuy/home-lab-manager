@@ -159,6 +159,13 @@ export function ServerDetailPage() {
           {server.groups && server.groups.length > 0 && (
             <div className="muted small">Server groups: {server.groups.join(", ")}</div>
           )}
+          {server.gameProfile && (
+            <div className="muted small" title="What hlm knows about this game: status queries, console, settings files">
+              Game profile:{" "}
+              {admin ? <Link to="/system#game-profiles">{server.gameProfile.name}</Link> : server.gameProfile.name}
+              {server.gameProfile.source === "custom" && " (yours)"}
+            </div>
+          )}
           <TagEditor server={server} canEdit={manager} onChange={(tags) => setServer({ ...server, tags })} />
         </div>
         <div className="btn-row">

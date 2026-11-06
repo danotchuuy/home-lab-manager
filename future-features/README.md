@@ -23,7 +23,7 @@ the API and UI it needs, who may use it, how to test it, and a task list. They'r
 | 16 | [UI improvements](16-ui-improvements.md) | Low | — | Done |
 | 17 | [Public status page](17-public-status-page.md) | Low | 05 | Done |
 | 18 | [Settings files: pinned files and a form editor](18-settings-files.md) | Requested | — | Done |
-| 19 | [Game profiles](19-game-profiles.md) | Requested | — | Phase 1 done |
+| 19 | [Game profiles](19-game-profiles.md) | Requested | — | Phases 1–2 done |
 
 ## Workflow: one feature at a time
 
