@@ -231,6 +231,10 @@ function HostForm({
   const [tlsPort, setTLSPort] = useState(2376);
   // The enrolment made for a new host's agent.
   const [enrolment, setEnrolment] = useState<AgentEnrolment>();
+  // For a new agent's host: hlm installs the agent over SSH, rather than showing the command.
+  const [agentSSH, setAgentSSH] = useState(false);
+  // hlm's address as the new agent's host reaches it.
+  const [agentServer, setAgentServer] = useState(window.location.origin);
 
   const set = <K extends keyof DockerHostInput>(k: K, v: DockerHostInput[K]) => {
     setForm((f) => ({ ...f, [k]: v }));
@@ -355,6 +359,30 @@ function HostForm({
     if (ok) setTimeout(onDone, 1500);
   }
 
+  async function installAgent() {
+    if (
+      !confirm(
+        `Install hlm's agent on ${form.ssh?.host}? hlm starts an hlm-agent container there, which connects to ${agentServer}.`,
+      )
+    )
+      return;
+    setBusy("install");
+    setError(undefined);
+    setSetupEvents([]);
+    let ok = false;
+    try {
+      await api.installAgent({ ...sshPayload(form), kind: "agent", server: agentServer }, (e) => {
+        setSetupEvents((prev) => [...prev, e]);
+        if (e.stage === "done") ok = true;
+      });
+    } catch (e) {
+      setSetupEvents((prev) => [...prev, { stage: "error", message: (e as Error).message }]);
+    } finally {
+      setBusy(undefined);
+    }
+    if (ok) setTimeout(onDone, 1500);
+  }
+
   async function makeKey() {
     try {
       onKey(await api.hostsSSHKey());
@@ -377,14 +405,18 @@ function HostForm({
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (agentKind && !initial) enrol();
-    else run("save");
+    if (agentKind && !initial) {
+      if (agentSSH) installAgent();
+      else enrol();
+    } else run("save");
   }
 
   const agentKind = form.kind === "agent";
   const ssh = form.kind === "ssh";
-  // Signing in over SSH: to use the host, or to set TLS up on it.
-  const viaSSH = ssh || auto;
+  // Installing a new host's agent over SSH.
+  const agentOverSSH = agentKind && agentSSH && !initial;
+  // Signing in over SSH: to use the host, to set TLS up on it, or to install its agent.
+  const viaSSH = ssh || (form.kind === "tcp" && auto) || agentOverSSH;
   const sshFields = (
     <>
       <div className="field-grid">
@@ -421,6 +453,11 @@ function HostForm({
             {ssh ? (
               <>
                 A user in the host&apos;s <code>docker</code> group (or root).
+              </>
+            ) : agentKind ? (
+              <>
+                A user in the host&apos;s <code>docker</code> group, root, or a user with passwordless{" "}
+                <code>sudo</code>. hlm signs in only to install the agent.
               </>
             ) : (
               <>
@@ -528,11 +565,46 @@ function HostForm({
             Agent: <AgentState agent={initial.agent} />
           </p>
         ) : (
-          <p className="muted small no-margin">
-            The host runs hlm&apos;s agent, a small container that connects out to this hlm over HTTPS and passes hlm
-            the Docker calls it makes there, and nothing else. Nothing has to be opened on the host or forwarded to it,
-            so it works behind NAT or another network. hlm makes a one-time command to run there.
-          </p>
+          <>
+            <p className="muted small no-margin">
+              The host runs hlm&apos;s agent, a small container that connects out to this hlm over HTTPS and passes hlm
+              the Docker calls it makes there, and nothing else. Nothing has to be opened on the host or forwarded to
+              it, so it works behind NAT or another network.
+            </p>
+            <div className="field">
+              <label className="radio small">
+                <input type="radio" checked={!agentSSH} onChange={() => setAgentSSH(false)} disabled={!!enrolment} />
+                Make a one-time command to run there
+              </label>
+              <label className="radio small">
+                <input type="radio" checked={agentSSH} onChange={() => setAgentSSH(true)} disabled={!!enrolment} />
+                Let hlm install it over SSH
+              </label>
+            </div>
+            {agentSSH && (
+              <>
+                {sshFields}
+                <div className="field-grid">
+                  <label className="field">
+                    <span className="field-label">hlm&apos;s address, from the host</span>
+                    <input
+                      value={agentServer}
+                      onChange={(e) => setAgentServer(e.target.value)}
+                      placeholder="https://hlm.example.com"
+                      spellCheck={false}
+                      required
+                    />
+                    <span className="field-help">
+                      Where the agent connects to. This page&apos;s address, unless the host reaches hlm another way.
+                      {/^https?:\/\/(localhost|127\.|\[::1\])/.test(agentServer) && (
+                        <strong> That&apos;s this machine&apos;s own address, which the other host can&apos;t reach.</strong>
+                      )}
+                    </span>
+                  </label>
+                </div>
+              </>
+            )}
+          </>
         )
       ) : ssh ? (
         <>{sshFields}</>
@@ -649,13 +721,13 @@ function HostForm({
           <span className="field-help">Where servers&apos; data folders go there, like HLM_APPDATA_ROOT here.</span>
         </label>
         <label className="field">
-          <span className="field-label">LAN address{agentKind ? "" : " (optional)"}</span>
+          <span className="field-label">LAN address{agentKind && !agentOverSSH ? "" : " (optional)"}</span>
           <input
             value={form.address ?? ""}
             onChange={(e) => set("address", e.target.value)}
-            placeholder={agentKind ? "192.168.1.20" : viaSSH ? form.ssh?.host : "the address's host"}
+            placeholder={viaSSH ? form.ssh?.host : agentKind ? "192.168.1.20" : "the address's host"}
             spellCheck={false}
-            required={agentKind}
+            required={agentKind && !agentOverSSH}
             disabled={!!enrolment}
           />
           <span className="field-help">
@@ -677,7 +749,21 @@ function HostForm({
       )}
       {enrolment && <AgentCommand enrolment={enrolment} onConnected={onDone} />}
       <div className="btn-row">
-        {agentKind ? (
+        {agentOverSSH ? (
+          <>
+            <button type="button" className="btn" onClick={() => run("check")} disabled={!!busy}>
+              {busy === "check" ? "Checking…" : "Check for Docker"}
+            </button>
+            <button
+              type="submit"
+              className="btn primary"
+              disabled={!!busy || !form.ssh?.hostKey || !inspection?.running}
+              title={!inspection?.running ? "Check for Docker first: it has to be installed and running" : undefined}
+            >
+              {busy === "install" ? "Installing…" : "Install the agent and add host"}
+            </button>
+          </>
+        ) : agentKind ? (
           !enrolment && (
             <button type="submit" className="btn primary" disabled={!!busy}>
               {initial ? (busy === "save" ? "Saving…" : "Save") : busy === "enrol" ? "Making it…" : "Make the command"}
