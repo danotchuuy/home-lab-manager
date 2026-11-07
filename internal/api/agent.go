@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/agent"
 	"github.com/danotchuuy/home-lab-manager/internal/audit"
 	"github.com/danotchuuy/home-lab-manager/internal/hosts"
+	"github.com/danotchuuy/home-lab-manager/internal/manager"
 	"github.com/danotchuuy/home-lab-manager/internal/statuspage"
 )
 
@@ -33,6 +35,30 @@ func (s *server) createEnrolment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"token": e.Token, "host": e.Host, "expires": e.Expires, "version": s.Version})
+}
+
+// installAgent installs hlm's agent on a host over SSH, with a new
+// enrolment token, and waits for it to connect, streaming the output.
+func (s *server) installAgent(w http.ResponseWriter, r *http.Request) {
+	var in hosts.AgentInput
+	if err := json.NewDecoder(io.LimitReader(r.Body, 256<<10)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	audit.Add(r.Context(), "host", in.ID)
+	if in.SSH != nil {
+		audit.Add(r.Context(), "ssh", in.SSH.User+"@"+in.SSH.Host)
+	}
+	s.stream(w, r, func(ctx context.Context, emit func(manager.Event)) error {
+		h, err := s.Hosts.InstallAgent(ctx, in, func(line string) {
+			emit(manager.Event{Stage: "log", Message: line})
+		})
+		if err != nil {
+			return err
+		}
+		emit(manager.Event{Stage: "done", Message: "The agent on " + h.Name + " is connected, and the host is added."})
+		return nil
+	})
 }
 
 // enrolAgent trades an enrolment token for the agent's credential. It's

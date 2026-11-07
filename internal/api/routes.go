@@ -192,6 +192,7 @@ func (s *server) routes() []route {
 		{"DELETE /api/hosts/{id}", confirmed, s.deleteHost},
 		{"POST /api/hosts/{id}/check", admin, s.checkHost},
 		{"POST /api/hosts/agent-enrolment", confirmed, s.createEnrolment},
+		{"POST /api/hosts/install-agent", confirmed, s.installAgent},
 		{"POST /api/agent/enrol", public, s.enrolAgent},
 		{"GET /api/agent/connect", public, s.agentConnect},
 		{"GET /api/stacks", signedIn, s.listStacks},
