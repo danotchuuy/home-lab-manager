@@ -195,6 +195,14 @@ func (f *fakeCloudflare) ProxyRecord(_ context.Context, hostname, target string)
 	return nil
 }
 
+func (f *fakeCloudflare) DNSRecord(_ context.Context, hostname, target string) error {
+	if hostname == f.refuse {
+		return errors.New(hostname + " already has a DNS record (CNAME abc.cfargotunnel.com) for the Cloudflare Tunnel (remove that route on the Tunnel page)")
+	}
+	f.records[hostname] = "dns-only " + target
+	return nil
+}
+
 func (f *fakeCloudflare) RemoveProxyRecord(_ context.Context, hostname string) error {
 	delete(f.records, hostname)
 	return nil

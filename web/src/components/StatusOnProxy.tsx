@@ -143,6 +143,24 @@ export function StatusOnProxyFields({
             <input
               type="radio"
               name="statusTls"
+              checked={form.statusTls === "letsencrypt-cloudflare"}
+              onChange={() => set("statusTls", "letsencrypt-cloudflare")}
+            />
+            Let&apos;s Encrypt, DNS on Cloudflare: hlm points each domain straight at the proxy server (a DNS-only
+            record) and gets, installs and renews its certificate there through Cloudflare
+          </label>
+          {form.statusTls === "letsencrypt-cloudflare" && (
+            <span className="field-help">
+              For domains on the <Link to="/tunnel">Cloudflare account</Link> (the tunnel itself isn&apos;t needed; its
+              token needs DNS: Edit). Browsers trust the certificates, visitors reach the proxy directly, and nothing
+              else has to be set up. A domain that already goes through the Cloudflare Tunnel says so on its site:
+              move it to the proxy there.
+            </span>
+          )}
+          <label className="radio">
+            <input
+              type="radio"
+              name="statusTls"
               checked={form.statusTls === "cloudflare"}
               onChange={() => set("statusTls", "cloudflare")}
             />
@@ -157,7 +175,9 @@ export function StatusOnProxyFields({
               Cloudflare dashboard. The proxy&apos;s firewall then lets only Cloudflare reach ports 80 and 443.
             </span>
           )}
-          {(form.statusTls === "letsencrypt" || (form.statusOnAddress && form.statusAddressHttps)) && (
+          {(form.statusTls === "letsencrypt" ||
+            form.statusTls === "letsencrypt-cloudflare" ||
+            (form.statusOnAddress && form.statusAddressHttps)) && (
             <label className="field">
               <span className="field-label">Email for Let&apos;s Encrypt (optional)</span>
               <input

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -99,41 +100,60 @@ fi`
 // of a failure; see RetryCert).
 func (s *Service) ensureAddressCert(ctx context.Context, st Settings) (StatusCert, error) {
 	domain := st.StatusAddressName
-	if s.issueCert == nil {
-		return StatusCert{}, errors.New("hlm can't get certificates here")
-	}
 	var c addressCert
 	if _, err := s.secrets.Get(secretAddressCert, &c); err != nil {
 		return StatusCert{}, err
 	}
-	now := time.Now()
-	if c.due(domain, now) {
-		// After a failure, wait an hour before asking again by itself.
-		if c.LastError != "" && now.Sub(c.LastTry) < time.Hour {
-			if c.Domain != domain || c.CertPEM == "" || now.After(c.NotAfter) {
-				return StatusCert{}, errors.New(c.LastError)
-			}
-		} else {
-			certPEM, keyPEM, nb, na, err := s.issueCert(ctx, domain, st.StatusEmail)
-			if err != nil {
-				c.LastError, c.LastTry = "getting a certificate for "+domain+": "+err.Error(), now
-				_ = s.secrets.Set(secretAddressCert, c)
-				if c.Domain != domain || c.CertPEM == "" || now.After(c.NotAfter) {
-					return StatusCert{}, errors.New(c.LastError)
-				}
-				s.log.Warn("renew the status page's certificate on the proxy; the current one is still good", "domain", domain, "err", err)
-			} else {
-				if c.Domain != "" && c.Domain != domain {
-					s.forgetAddressCert(ctx, domain) // the old name's files
-				}
-				c = addressCert{Domain: domain, CertPEM: certPEM, KeyPEM: keyPEM, NotBefore: nb, NotAfter: na}
-				if err := s.secrets.Set(secretAddressCert, c); err != nil {
-					return StatusCert{}, err
-				}
-				s.log.Info("got a certificate for the status page on the proxy", "domain", domain, "until", na)
-			}
-		}
+	old := c.Domain
+	c, err := s.currentCert(ctx, c, domain, st.StatusEmail, func(c addressCert) error { return s.secrets.Set(secretAddressCert, c) })
+	if err != nil {
+		return StatusCert{}, err
 	}
+	if old != "" && old != domain {
+		s.removeCertFiles(ctx, old) // the old name's files
+	}
+	return s.installCert(ctx, c)
+}
+
+// currentCert brings a saved certificate up to date for domain: got (again)
+// if it's due, but not within an hour of a failure (see RetryCert), keeping a
+// still good one when renewing fails. save keeps what changed.
+func (s *Service) currentCert(ctx context.Context, c addressCert, domain, email string, save func(addressCert) error) (addressCert, error) {
+	if s.issueCert == nil {
+		return c, errors.New("hlm can't get certificates here")
+	}
+	now := time.Now()
+	if !c.due(domain, now) {
+		return c, nil
+	}
+	usable := c.Domain == domain && c.CertPEM != "" && now.Before(c.NotAfter)
+	if c.LastError != "" && now.Sub(c.LastTry) < time.Hour {
+		if !usable {
+			return c, errors.New(c.LastError)
+		}
+		return c, nil
+	}
+	certPEM, keyPEM, nb, na, err := s.issueCert(ctx, domain, email)
+	if err != nil {
+		c.LastError, c.LastTry = "getting a certificate for "+domain+": "+err.Error(), now
+		_ = save(c)
+		if !usable {
+			return c, errors.New(c.LastError)
+		}
+		s.log.Warn("renew a status page certificate on the proxy; the current one is still good", "domain", domain, "err", err)
+		return c, nil
+	}
+	c = addressCert{Domain: domain, CertPEM: certPEM, KeyPEM: keyPEM, NotBefore: nb, NotAfter: na}
+	if err := save(c); err != nil {
+		return c, err
+	}
+	s.log.Info("got a certificate for the status page on the proxy", "domain", domain, "until", na)
+	return c, nil
+}
+
+// installCert puts a certificate and its key on the proxy server (unless
+// it's there already), reloading nginx.
+func (s *Service) installCert(ctx context.Context, c addressCert) (StatusCert, error) {
 	stdin := base64.StdEncoding.EncodeToString([]byte(c.CertPEM)) + "\n" + base64.StdEncoding.EncodeToString([]byte(c.KeyPEM)) + "\n"
 	res, err := s.run(ctx, "d="+remote.Quote(c.Domain)+" h="+remote.Quote(c.hash())+"\n"+certInstallScript, []byte(stdin), nil)
 	switch {
@@ -145,6 +165,66 @@ func (s *Service) ensureAddressCert(ctx context.Context, st Settings) (StatusCer
 	return addressCertFiles(c.Domain), nil
 }
 
+// removeCertFiles removes a domain's certificate and key from the proxy.
+func (s *Service) removeCertFiles(ctx context.Context, domain string) error {
+	script := "rm -f " + remote.Quote(certDir+"/"+domain+".crt") + " " + remote.Quote(certDir+"/"+domain+".key")
+	_, err := s.run(ctx, script, nil, nil)
+	if err != nil {
+		s.log.Warn("remove a status page certificate from the proxy", "domain", domain, "err", err)
+	}
+	return err
+}
+
+// secretSiteCerts keeps the certificates for the sites' domains, by domain,
+// with the "letsencrypt-cloudflare" HTTPS option.
+const secretSiteCerts = "proxy-status-site-certs"
+
+func (s *Service) siteCerts() map[string]addressCert {
+	m := map[string]addressCert{}
+	_, _ = s.secrets.Get(secretSiteCerts, &m)
+	return m
+}
+
+// ensureSiteCert has a current Let's Encrypt certificate for a site's
+// domain on the proxy, got through Cloudflare DNS (so the domain's record can
+// point anywhere while it's got).
+func (s *Service) ensureSiteCert(ctx context.Context, domain, email string) (StatusCert, error) {
+	certs := s.siteCerts()
+	c, err := s.currentCert(ctx, certs[domain], domain, email, func(c addressCert) error {
+		m := s.siteCerts()
+		m[domain] = c
+		return s.secrets.Set(secretSiteCerts, m)
+	})
+	if err != nil {
+		return StatusCert{}, err
+	}
+	return s.installCert(ctx, c)
+}
+
+// forgetSiteCerts removes the sites' certificates that aren't in keep, from
+// the proxy and from hlm.
+func (s *Service) forgetSiteCerts(ctx context.Context, keep []string) {
+	m := s.siteCerts()
+	changed := false
+	for d := range m {
+		if slices.Contains(keep, d) {
+			continue
+		}
+		if s.removeCertFiles(ctx, d) == nil {
+			delete(m, d)
+			changed = true
+		}
+	}
+	if !changed {
+		return
+	}
+	if len(m) == 0 {
+		_ = s.secrets.Delete(secretSiteCerts)
+	} else {
+		_ = s.secrets.Set(secretSiteCerts, m)
+	}
+}
+
 // RetryCert lets the next apply ask for the certificate again straight
 // away, after a failure: for an apply by hand.
 func (s *Service) RetryCert() {
@@ -152,6 +232,16 @@ func (s *Service) RetryCert() {
 	if ok, _ := s.secrets.Get(secretAddressCert, &c); ok && c.LastError != "" {
 		c.LastError, c.LastTry = "", time.Time{}
 		_ = s.secrets.Set(secretAddressCert, c)
+	}
+	m, changed := s.siteCerts(), false
+	for d, c := range m {
+		if c.LastError != "" {
+			c.LastError, c.LastTry = "", time.Time{}
+			m[d], changed = c, true
+		}
+	}
+	if changed {
+		_ = s.secrets.Set(secretSiteCerts, m)
 	}
 }
 
@@ -162,9 +252,7 @@ func (s *Service) forgetAddressCert(ctx context.Context, keep string) {
 	if ok, _ := s.secrets.Get(secretAddressCert, &c); !ok || c.Domain == "" || c.Domain == keep {
 		return
 	}
-	script := "rm -f " + remote.Quote(certDir+"/"+c.Domain+".crt") + " " + remote.Quote(certDir+"/"+c.Domain+".key")
-	if _, err := s.run(ctx, script, nil, nil); err != nil {
-		s.log.Warn("remove the status page's certificate from the proxy", "err", err)
+	if s.removeCertFiles(ctx, c.Domain) != nil {
 		return
 	}
 	_ = s.secrets.Delete(secretAddressCert)
@@ -182,17 +270,34 @@ func (s *Service) RunStatusCertRenewal(ctx context.Context, interval time.Durati
 		case <-t.C:
 		}
 		st, ok, err := s.Settings()
-		if err != nil || !ok || !st.StatusPage || !st.StatusOnAddress || !st.StatusAddressHTTPS {
+		if err != nil || !ok || !st.StatusPage {
 			continue
 		}
 		var c addressCert
-		if _, err := s.secrets.Get(secretAddressCert, &c); err != nil || !c.due(st.StatusAddressName, time.Now()) {
+		_, _ = s.secrets.Get(secretAddressCert, &c)
+		addressDue := st.StatusOnAddress && st.StatusAddressHTTPS && c.due(st.StatusAddressName, time.Now())
+		var sitesDue []string
+		if st.StatusTLS == TLSLetsEncryptCloudflare {
+			for d, c := range s.siteCerts() {
+				if c.due(d, time.Now()) {
+					sitesDue = append(sitesDue, d)
+				}
+			}
+		}
+		if !addressDue && len(sitesDue) == 0 {
 			continue
 		}
 		s.applyMu.Lock()
 		rctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
-		if _, err := s.ensureAddressCert(rctx, st); err != nil {
-			s.log.Warn("renew the status page's certificate on the proxy", "err", err)
+		if addressDue {
+			if _, err := s.ensureAddressCert(rctx, st); err != nil {
+				s.log.Warn("renew the status page's certificate on the proxy", "err", err)
+			}
+		}
+		for _, d := range sitesDue {
+			if _, err := s.ensureSiteCert(rctx, d, st.StatusEmail); err != nil {
+				s.log.Warn("renew a status page site's certificate on the proxy", "domain", d, "err", err)
+			}
 		}
 		cancel()
 		s.applyMu.Unlock()

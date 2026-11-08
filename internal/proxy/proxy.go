@@ -240,7 +240,7 @@ func Validate(st *Settings) error {
 		return fmt.Errorf("%q isn't an email address", st.StatusEmail)
 	}
 	switch st.StatusTLS {
-	case "", TLSLetsEncrypt, TLSCloudflare:
+	case "", TLSLetsEncrypt, TLSCloudflare, TLSLetsEncryptCloudflare:
 	default:
 		return fmt.Errorf("unknown HTTPS option %q for the status page's sites", st.StatusTLS)
 	}

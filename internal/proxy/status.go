@@ -39,6 +39,11 @@ import (
 const (
 	TLSLetsEncrypt = "letsencrypt"
 	TLSCloudflare  = "cloudflare"
+	// TLSLetsEncryptCloudflare: hlm points each domain straight at the
+	// proxy server with a DNS-only Cloudflare record and gets a Let's
+	// Encrypt certificate for it through Cloudflare DNS, installed on the
+	// proxy and renewed by hlm.
+	TLSLetsEncryptCloudflare = "letsencrypt-cloudflare"
 )
 
 // Cloudflare is what the status page's sites need from Cloudflare (the
@@ -46,6 +51,8 @@ const (
 type Cloudflare interface {
 	// ProxyRecord points a hostname at target through Cloudflare's proxy.
 	ProxyRecord(ctx context.Context, hostname, target string) error
+	// DNSRecord points a hostname straight at target (DNS only).
+	DNSRecord(ctx context.Context, hostname, target string) error
 	// RemoveProxyRecord removes the record ProxyRecord made.
 	RemoveProxyRecord(ctx context.Context, hostname string) error
 	// OriginCertificate signs a certificate request (PEM) for a hostname.
@@ -528,7 +535,7 @@ func (s *Service) applyStatus(ctx context.Context, st Settings) *StatusSiteResul
 	if port == 0 {
 		return fail(errors.New("hlm can't tell which port it's reached on at the Docker host"))
 	}
-	if st.StatusTLS == TLSCloudflare && s.cloudflare == nil {
+	if (st.StatusTLS == TLSCloudflare || st.StatusTLS == TLSLetsEncryptCloudflare) && s.cloudflare == nil {
 		return fail(errors.New("hlm can't reach Cloudflare here"))
 	}
 	probe, err := s.probeStatus(ctx, res.Domains)
@@ -565,6 +572,10 @@ func (s *Service) applyStatus(ctx context.Context, st Settings) *StatusSiteResul
 		// Each domain's record and certificate first: nginx needs nothing
 		// from the internet to get them.
 		cloudflared = s.cloudflareSites(ctx, st, res, probe, certs)
+	case TLSLetsEncryptCloudflare:
+		// Each domain's record and certificate first, through Cloudflare:
+		// nothing has to reach the proxy for them.
+		cloudflared = s.cloudflareDNSSites(ctx, st, res, certs)
 	}
 	render := func() string { return RenderStatus(res.Domains, certs, st.Upstream, port, probe.ipv6, addr) }
 	if res.Output, err = s.writeStatus(ctx, render()); err != nil {
@@ -575,6 +586,11 @@ func (s *Service) applyStatus(ctx context.Context, st Settings) *StatusSiteResul
 	// certificates, now that nginx no longer uses them; so does a
 	// certificate for the proxy's address it no longer uses.
 	s.forgetCloudflare(ctx, cloudflared)
+	if st.StatusTLS == TLSLetsEncryptCloudflare {
+		s.forgetSiteCerts(ctx, res.Domains)
+	} else {
+		s.forgetSiteCerts(ctx, nil)
+	}
 	if !st.StatusOnAddress || !st.StatusAddressHTTPS {
 		s.forgetAddressCert(ctx, "")
 	}
@@ -609,6 +625,29 @@ func (s *Service) applyStatus(ctx context.Context, st Settings) *StatusSiteResul
 	}
 	s.log.Info("served the status page's sites on the proxy", "domains", len(res.Domains), "https", len(res.HTTPS), "tls", st.StatusTLS, "address", res.Address)
 	return res
+}
+
+// cloudflareDNSSites points each domain straight at the proxy server with a
+// DNS-only Cloudflare record, and gives it a Let's Encrypt certificate got
+// through Cloudflare DNS (added to certs). It returns the domains with a
+// record.
+func (s *Service) cloudflareDNSSites(ctx context.Context, st Settings, res *StatusSiteResult, certs map[string]StatusCert) []string {
+	var recorded []string
+	for _, d := range res.Domains {
+		if err := s.cloudflare.DNSRecord(ctx, d, st.Host); err != nil {
+			res.setFailed(d, err.Error())
+			continue
+		}
+		recorded = append(recorded, d)
+		s.trackCloudflare(d)
+		c, err := s.ensureSiteCert(ctx, d, st.StatusEmail)
+		if err != nil {
+			res.setFailed(d, "the certificate: "+err.Error())
+			continue
+		}
+		certs[d] = c
+	}
+	return recorded
 }
 
 // cloudflareSites puts each domain behind Cloudflare: a proxied record to

@@ -1036,7 +1036,7 @@ export interface ProxySettings {
   servers: string[];
   /** Serve the status page's sites on the proxy (through the WireGuard tunnel), with HTTPS as statusTls says. */
   statusPage?: boolean;
-  statusTls?: "" | "letsencrypt" | "cloudflare";
+  statusTls?: "" | "letsencrypt" | "cloudflare" | "letsencrypt-cloudflare";
   statusEmail?: string;
   /** Also serve the status page on the proxy's own address (the one players use), over HTTP on statusPort (80). */
   statusOnAddress?: boolean;
@@ -1054,7 +1054,7 @@ export interface ProxyStatusSites {
   /** Why it's there without the HTTPS asked for. */
   addressError?: string;
   /** The HTTPS option used. */
-  tls?: "" | "letsencrypt" | "cloudflare";
+  tls?: "" | "letsencrypt" | "cloudflare" | "letsencrypt-cloudflare";
   https: string[];
   failed?: Record<string, string>;
   /** Things to fix that don't stop the sites working. */

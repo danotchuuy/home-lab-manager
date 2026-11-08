@@ -2027,6 +2027,16 @@ Status page** and add the servers to show; it's at `/status`.
   the status page's paths to hlm through the tunnel, so hlm's own port is never opened to the internet; everything
   else on those domains is 404 at the proxy as well as at hlm. **HTTPS** is one of:
   - **None:** plain HTTP; point each domain's DNS at the proxy server yourself.
+  - **Let's Encrypt, DNS on Cloudflare:** for domains on the [Cloudflare account](#web-addresses-with-cloudflare-tunnel)
+    (the tunnel itself isn't needed). hlm points each domain straight at the proxy server with a DNS-only record (A,
+    AAAA or CNAME to the proxy's host), gets a Let's Encrypt certificate for it itself through Cloudflare DNS (as for
+    [its own](#https), so nothing has to reach the proxy first and the token stays with hlm), installs it in
+    `/etc/nginx/hlm-certs` on the proxy (readable by root alone) and renews it with a third of its life left. Browsers
+    trust it and visitors reach the proxy directly; plain HTTP redirects to HTTPS. A domain that already goes through
+    the Cloudflare Tunnel (from **Publish on Cloudflare**) has a tunnel record in the way: its site says so, with **Move
+    it to the proxy**, which removes the tunnel route and its record so the proxy's can be made. A site served on the
+    proxy doesn't offer **Publish on Cloudflare**, since one name can only point one way. Choosing another option, or
+    a domain leaving, removes hlm's record and certificate for it.
   - **Let's Encrypt:** point each domain's DNS at the proxy server; certbot there gets a free certificate for each
     domain (and its timer renews them, reloading nginx), and plain HTTP redirects to HTTPS once a domain has one.
   - **Cloudflare:** for domains on the [Cloudflare account](#web-addresses-with-cloudflare-tunnel) (the tunnel itself

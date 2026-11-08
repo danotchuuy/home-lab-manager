@@ -34,9 +34,9 @@ func (s *Service) zoneFor(ctx context.Context, c *cloudflare.Client, accountID, 
 }
 
 // proxyRecordFor is the record pointing a name at target: A or AAAA for an
-// address, CNAME for a name.
-func proxyRecordFor(hostname, target string) cloudflare.DNSRecord {
-	r := cloudflare.DNSRecord{Name: hostname, Content: target, Type: "CNAME", Proxied: true, TTL: 1, Comment: ProxyRecordComment}
+// address, CNAME for a name; through Cloudflare's proxy, or DNS only.
+func proxyRecordFor(hostname, target string, proxied bool) cloudflare.DNSRecord {
+	r := cloudflare.DNSRecord{Name: hostname, Content: target, Type: "CNAME", Proxied: proxied, TTL: 1, Comment: ProxyRecordComment}
 	if a, err := netip.ParseAddr(target); err == nil {
 		r.Type, r.Content = "A", a.String()
 		if a.Is6() {
@@ -50,6 +50,17 @@ func proxyRecordFor(hostname, target string) cloudflare.DNSRecord {
 // or name) through Cloudflare's proxy. A record someone else made for the
 // name (or the tunnel's) is left alone, and reported.
 func (s *Service) ProxyRecord(ctx context.Context, hostname, target string) error {
+	return s.pointRecord(ctx, hostname, target, true)
+}
+
+// DNSRecord points a hostname straight at the proxy server (DNS only, not
+// through Cloudflare's proxy), for nginx there to answer it with its own
+// certificate. Records are left alone and reported as ProxyRecord's are.
+func (s *Service) DNSRecord(ctx context.Context, hostname, target string) error {
+	return s.pointRecord(ctx, hostname, target, false)
+}
+
+func (s *Service) pointRecord(ctx context.Context, hostname, target string, proxied bool) error {
 	c, a, err := s.client()
 	if err != nil {
 		return err
@@ -62,7 +73,7 @@ func (s *Service) ProxyRecord(ctx context.Context, hostname, target string) erro
 	if err != nil {
 		return err
 	}
-	want := proxyRecordFor(hostname, target)
+	want := proxyRecordFor(hostname, target, proxied)
 	var ours *cloudflare.DNSRecord
 	for i, rec := range recs {
 		switch {
@@ -83,7 +94,7 @@ func (s *Service) ProxyRecord(ctx context.Context, hostname, target string) erro
 	switch {
 	case ours == nil:
 		_, err = c.CreateDNSRecord(ctx, z.ID, want)
-	case ours.Type != want.Type || ours.Content != want.Content || !ours.Proxied:
+	case ours.Type != want.Type || ours.Content != want.Content || ours.Proxied != want.Proxied:
 		_, err = c.UpdateDNSRecord(ctx, z.ID, ours.ID, want)
 	}
 	if err == nil {

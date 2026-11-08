@@ -200,3 +200,43 @@ func TestStatusAddressCertFails(t *testing.T) {
 		t.Errorf("site's domain: %+v", res)
 	}
 }
+
+// "Let's Encrypt, DNS on Cloudflare": each site's domain points straight at
+// the proxy (DNS only), with a certificate got through Cloudflare DNS.
+func TestStatusSitesLetsEncryptCloudflare(t *testing.T) {
+	r := newCertRig(t)
+	cf := &fakeCloudflare{records: map[string]string{}, refuse: "tunnel.example.com"}
+	r.s.UseCloudflare(cf)
+	r.s.UseStatusSites(func(context.Context) ([]string, int, error) {
+		return []string{"friends.example.com", "tunnel.example.com"}, 8080, nil
+	})
+	st := Settings{Target: remote.Target{Host: "203.0.113.7", User: "root"}, Upstream: "10.77.77.2", UpstreamSource: "wireguard",
+		StatusPage: true, StatusTLS: TLSLetsEncryptCloudflare}
+	res := r.s.applyStatus(context.Background(), st)
+	if res.Error != "" || cf.records["friends.example.com"] != "dns-only 203.0.113.7" {
+		t.Fatalf("result = %+v, records %v", res, cf.records)
+	}
+	if len(res.HTTPS) != 1 || res.HTTPS[0] != "friends.example.com" || r.files["friends.example.com"] == "" {
+		t.Errorf("https %v, files %v", res.HTTPS, r.files)
+	}
+	// One whose name has the tunnel's record: said, and served over HTTP.
+	if !strings.Contains(res.Failed["tunnel.example.com"], "Cloudflare Tunnel") || len(r.issued) != 1 {
+		t.Errorf("failed %v, issued %v", res.Failed, r.issued)
+	}
+	last := r.configs[len(r.configs)-1]
+	if !strings.Contains(last, "ssl_certificate /etc/nginx/hlm-certs/friends.example.com.crt;") ||
+		!strings.Contains(last, "return 301 https://$host$request_uri;") {
+		t.Errorf("config:\n%s", last)
+	}
+	// Applied again: the certificate kept, not got again.
+	r.s.applyStatus(context.Background(), st)
+	if len(r.issued) != 1 {
+		t.Errorf("issued again: %v", r.issued)
+	}
+	// Another HTTPS option: the records and certificates go.
+	st.StatusTLS = ""
+	r.s.applyStatus(context.Background(), st)
+	if _, ok := cf.records["friends.example.com"]; ok || len(r.s.siteCerts()) != 0 {
+		t.Errorf("left behind: records %v, certs %v", cf.records, r.s.siteCerts())
+	}
+}
