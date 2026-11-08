@@ -41,7 +41,7 @@ func parseMethods(s string) ([]Settings, error) {
 			return nil, fmt.Errorf("bad method %q", p)
 		}
 		switch proto {
-		case ProtoA2S, ProtoMinecraft, ProtoBedrock, ProtoTCP:
+		case ProtoA2S, ProtoMinecraft, ProtoBedrock, ProtoTCP, ProtoHTTPStatus:
 		default:
 			return nil, fmt.Errorf("unknown protocol %q", proto)
 		}
@@ -54,7 +54,7 @@ func parseMethods(s string) ([]Settings, error) {
 }
 
 var probes = map[string]func(context.Context, string) (Result, error){
-	ProtoA2S: A2S, ProtoMinecraft: Minecraft, ProtoBedrock: Bedrock, ProtoTCP: TCP,
+	ProtoA2S: A2S, ProtoMinecraft: Minecraft, ProtoBedrock: Bedrock, ProtoTCP: TCP, ProtoHTTPStatus: HTTPStatus,
 }
 
 // ProbeMain runs the probe command: it prints a ProbeOutput and returns

@@ -182,15 +182,17 @@ var expected = map[string]string{
 
 	"POST /api/servers": "deployer",
 
-	"PUT /api/servers/{id}/config":           "manager",
-	"PUT /api/servers/{id}/files/content":    "manager",
-	"PUT /api/servers/{id}/autostart":        "manager",
-	"PUT /api/servers/{id}/ports":            "manager",
-	"POST /api/servers/{id}/portforward":     "manager",
-	"DELETE /api/servers/{id}/portforward":   "manager",
-	"PUT /api/servers/{id}/backups/plan":     "manager",
-	"POST /api/servers/{id}/backups/restore": "manager",
-	"DELETE /api/servers/{id}/backups":       "manager",
+	"PUT /api/servers/{id}/config":                  "manager",
+	"GET /api/servers/{id}/launch-options":          "viewer",
+	"PUT /api/servers/{id}/launch-options/{option}": "manager",
+	"PUT /api/servers/{id}/files/content":           "manager",
+	"PUT /api/servers/{id}/autostart":               "manager",
+	"PUT /api/servers/{id}/ports":                   "manager",
+	"POST /api/servers/{id}/portforward":            "manager",
+	"DELETE /api/servers/{id}/portforward":          "manager",
+	"PUT /api/servers/{id}/backups/plan":            "manager",
+	"POST /api/servers/{id}/backups/restore":        "manager",
+	"DELETE /api/servers/{id}/backups":              "manager",
 }
 
 // fakeDocker answers enough of Docker's API for looking up containers. Like

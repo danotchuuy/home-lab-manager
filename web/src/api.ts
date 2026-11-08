@@ -112,6 +112,7 @@ import type {
   MigratePreview,
   AgentEnrolment,
   HostsList,
+  LaunchOption,
   DockerHost,
   PasskeyInfo,
   DockerHostInput,
@@ -937,6 +938,16 @@ export const api = {
     json<{ status: string; digest?: string }>("/api/registries/test", { method: "POST", body: JSON.stringify(f) }),
   gameStatuses: () => json<Record<string, GameSummary>>("/api/query"),
   gameStatus: (id: string) => json<GameStatus>(`/api/servers/${encodeURIComponent(id)}/query`),
+  /** The server's game's launch options (from its game profile). */
+  launchOptions: (id: string) =>
+    json<{ options: LaunchOption[] }>(`/api/servers/${encodeURIComponent(id)}/launch-options`).then((r) => r.options),
+  /** Turns one of them on or off, recreating the server; streams the progress. */
+  setLaunchOption: (id: string, option: string, on: boolean, onEvent: (e: DeployEvent) => void) =>
+    stream(
+      `/api/servers/${encodeURIComponent(id)}/launch-options/${encodeURIComponent(option)}`,
+      { method: "PUT", body: JSON.stringify({ on }) },
+      onEvent,
+    ),
   setQuerySettings: (id: string, set: QuerySettings) =>
     json<GameStatus>(`/api/servers/${encodeURIComponent(id)}/query/settings`, { method: "PUT", body: JSON.stringify(set) }),
   /** Queries with these settings without saving them; automatic settings say what was found. */
