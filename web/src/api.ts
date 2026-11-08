@@ -794,7 +794,8 @@ export const api = {
   jobs: () => json<Job[]>("/api/jobs"),
 
   updateInfo: () => json<UpdateCheckInfo>("/api/updates"),
-  checkUpdates: () => json<UpdateCheckInfo>("/api/updates/check", { method: "POST" }),
+  /** Starts checking every server for updates in the background; updateInfo shows the progress. */
+  checkUpdates: () => json<UpdateCheckInfo>("/api/updates/check?background=1", { method: "POST" }),
   /** Updates every server that has an update available. */
   updateAll: (onEvent: (e: DeployEvent) => void) => stream("/api/updates/apply", { method: "POST" }, onEvent),
 

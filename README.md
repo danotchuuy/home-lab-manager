@@ -2759,7 +2759,7 @@ when the `HLM_*` one isn't set.
 | `POST /api/servers/{id}/query/test`            | Queries with the given settings without saving them; with an empty protocol, says what it found (a manager). |
 | `GET /api/updates/auto`                        | Which of the servers you can see update automatically, and what their updates are waiting for. |
 | `GET/PUT /api/system/update-policy`            | The default policy, `checkHours`, and hlm's own (`self: {auto, windowStart?, windowEnd?}`); admins only. |
-| `POST /api/updates/check`                      | Check every server for image updates now.                                         |
+| `POST /api/updates/check`                      | Check every server for image updates now; `?background=1` returns at once, and `GET /api/updates` shows `done`/`total` while it runs.|
 | `POST /api/updates/apply`                      | Update every server that has an update. Streams NDJSON; events carry `target`.    |
 | `GET /api/connections`                        | The containers hlm runs for connections (`hlm-wireguard`, `hlm-cloudflared`), with their update status. Their usage is in `GET /api/stats`. |
 | `GET /api/connections/{id}`                   | One connection container, by name or ID.                                         |

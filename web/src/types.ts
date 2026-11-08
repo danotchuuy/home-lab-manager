@@ -745,6 +745,9 @@ export interface UpdateCheckInfo {
   checking: boolean;
   lastCheck?: string;
   available: number;
+  /** While checking: how many of the check's images have been looked up, of how many. */
+  done?: number;
+  total?: number;
 }
 
 export interface DeployEvent {

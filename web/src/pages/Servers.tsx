@@ -225,7 +225,17 @@ export function ServersPage() {
   async function checkUpdates() {
     setChecking(true);
     try {
-      setUpdateInfo(await api.checkUpdates());
+      // It runs in the background: follow it, showing each server's status
+      // as its image is looked up.
+      let info = await api.checkUpdates();
+      setUpdateInfo(info);
+      while (info.checking) {
+        await new Promise((r) => setTimeout(r, 1000));
+        info = await api.updateInfo();
+        setUpdateInfo(info);
+        if (!info.checking) break;
+        setServers(await api.servers());
+      }
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -329,7 +339,7 @@ export function ServersPage() {
         <div className="update-bar">
           <span className="muted small">
             {checkingNow ? (
-              "Checking for updates…"
+              `Checking for updates…${updateInfo?.total ? ` ${updateInfo.done ?? 0} of ${updateInfo.total} images` : ""}`
             ) : (
               <>
                 Updates last checked <Ago iso={updateInfo?.lastCheck} />

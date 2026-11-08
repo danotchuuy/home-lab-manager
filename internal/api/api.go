@@ -1660,6 +1660,13 @@ func (s *server) updateInfo(w http.ResponseWriter, r *http.Request) {
 // checkUpdates checks every server for image updates and waits for the
 // result.
 func (s *server) checkUpdates(w http.ResponseWriter, r *http.Request) {
+	// ?background=1 returns at once; GET /api/updates then shows the
+	// progress, and the servers their statuses as they're found.
+	if r.URL.Query().Get("background") != "" {
+		s.Manager.StartCheckUpdates()
+		writeJSON(w, http.StatusOK, s.Manager.UpdateInfo())
+		return
+	}
 	if err := s.Manager.CheckUpdates(r.Context()); err != nil {
 		writeError(w, http.StatusBadGateway, err)
 		return
