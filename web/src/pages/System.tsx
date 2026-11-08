@@ -1,5 +1,7 @@
 import { DiscordSettings } from "../components/DiscordSettings";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useLocation, useSearchParams } from "react-router-dom";
+import { sectionInfo, systemSection, SYSTEM_TABS as TABS, type SystemSection, type SystemTab as TabID } from "../systemSections";
 import { StatusPageSettings } from "../components/StatusPageSettings";
 import { useAdmin } from "../access";
 import { api } from "../api";
@@ -35,6 +37,22 @@ const RESTART_TIMEOUT = 3 * 60 * 1000;
 const JUST_UPDATED = "hlm.justUpdated";
 /** Set instead by the page of a version from before the short name changed from gsh to hlm. */
 const LEGACY_JUST_UPDATED = "gsh.justUpdated";
+
+/** A card on the System page: where it is and what's in it. */
+interface Section extends SystemSection {
+  body: ReactNode;
+  className?: string;
+}
+
+/** Sections whose title or keywords match every word typed. */
+function findSections(sections: Section[], query: string): Section[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [];
+  return sections.filter((s) => {
+    const text = `${s.title} ${s.keywords}`.toLowerCase();
+    return words.every((w) => text.includes(w));
+  });
+}
 
 export function SystemPage() {
   const admin = useAdmin();
@@ -79,11 +97,34 @@ export function SystemPage() {
     return () => clearInterval(t);
   }, []);
 
-  // Links like /system#linode jump to their section once the page is shown.
+  // The tab is in the address (?tab=), so it can be linked to and Back works.
+  const [params, setParams] = useSearchParams();
+  const [query, setQuery] = useState("");
+  // A section to scroll to once its tab is shown.
+  const [jumpTo, setJumpTo] = useState<string>();
   const loaded = !!info;
+  // Links like /system#linode open their section's tab and scroll to it.
+  const { hash } = useLocation();
   useEffect(() => {
-    if (loaded && window.location.hash) document.getElementById(window.location.hash.slice(1))?.scrollIntoView();
-  }, [loaded]);
+    const id = hash.slice(1);
+    const t = sectionInfo(id)?.tab;
+    if (!loaded || !t) return;
+    setParams(t === "overview" ? {} : { tab: t }, { replace: true });
+    setJumpTo(id);
+  }, [loaded, hash, setParams]);
+  // On a narrow screen the tabs scroll sideways: keep the chosen one in view.
+  const tabParamNow = params.get("tab");
+  useEffect(() => {
+    document.querySelector(".system-nav .tabs button.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [tabParamNow, loaded]);
+  useEffect(() => {
+    if (!jumpTo) return;
+    const el = document.getElementById(jumpTo);
+    if (el) {
+      el.scrollIntoView({ block: "start" });
+      setJumpTo(undefined);
+    }
+  });
 
   // After an update, wait for hlm to come back (on a new version, or on the
   // old one if the update was rolled back), then reload to get the new UI.
@@ -177,23 +218,11 @@ export function SystemPage() {
   const u = info.update;
   const last = u.lastResult;
 
-  return (
-    <div className="page system-page">
-      <h1>System</h1>
-
-      {last && (
-        <div className={`alert ${last.ok ? "success" : "error"}`}>
-          {last.ok
-            ? `Updated from ${last.from} to ${last.to} ${timeAgo(last.at)}.`
-            : `Updating from ${last.from} to ${last.to} failed ${timeAgo(last.at)}, and ${last.from} was restored: ${last.error}`}{" "}
-          <button className="link-button" onClick={dismiss}>
-            Dismiss
-          </button>
-        </div>
-      )}
-
-      <section className="card">
-        <h2>Home Lab Manager</h2>
+  const sections: Section[] = [
+    {
+      ...systemSection("version"),
+      body: (
+        <>
         <dl className="facts">
           <dt>Version</dt>
           <dd>
@@ -269,105 +298,135 @@ export function SystemPage() {
             )}
           </div>
         )}
-      </section>
+        </>
+      ),
+    },
+    ...(u.latest?.notes
+      ? [
+          {
+            ...systemSection("release-notes"),
+            title: `What's new in ${u.latest.version}`,
+            className: "release-notes",
+            body: <Overview text={u.latest.notes} />,
+          },
+        ]
+      : []),
+    {
+      ...systemSection("updates"),
+      body: <SystemUpdateSettings timezone={timezone} />,
+    },
+    { ...systemSection("time"), body: <TimeSettings /> },
 
-      <section className="card" id="backup">
-        <h2>Backup storage</h2>
-        <BackupSettings onChange={() => setStorageVersion((v) => v + 1)} />
-        <BackupTargets version={storageVersion} onChange={() => setStorageVersion((v) => v + 1)} />
-      </section>
+    { ...systemSection("sign-in"), body: <SignInSettings /> },
+    { ...systemSection("sso"), body: <SSOSettings /> },
+    { ...systemSection("https"), body: <HTTPSSettings /> },
+    { ...systemSection("api-keys"), body: <APIKeys /> },
+    { ...systemSection("server-groups"), body: <ServerGroups /> },
 
-      <section className="card" id="config-backup">
-        <h2>Backups of hlm&apos;s configuration</h2>
-        <ConfigBackups storageVersion={storageVersion} />
-      </section>
+    {
+      ...systemSection("backup"),
+      body: (
+        <>
+          <BackupSettings onChange={() => setStorageVersion((v) => v + 1)} />
+          <BackupTargets version={storageVersion} onChange={() => setStorageVersion((v) => v + 1)} />
+        </>
+      ),
+    },
+    { ...systemSection("config-backup"), body: <ConfigBackups storageVersion={storageVersion} /> },
 
-      <section className="card" id="activity">
-        <h2>Activity</h2>
-        <SystemActivity />
-      </section>
+    { ...systemSection("game-profiles"), body: <GameProfiles /> },
+    { ...systemSection("registries"), body: <RegistrySettings /> },
 
-      <section className="card" id="updates">
-        <h2>Automatic updates</h2>
-        <SystemUpdateSettings timezone={timezone} />
-      </section>
+    { ...systemSection("status-page"), body: <StatusPageSettings /> },
+    { ...systemSection("discord"), body: <DiscordSettings /> },
 
-      <section className="card" id="registries">
-        <h2>Registries</h2>
-        <RegistrySettings />
-      </section>
+    { ...systemSection("unifi"), body: <UnifiSettings /> },
+    { ...systemSection("linode"), body: <LinodeSettings /> },
 
-      <section className="card" id="game-profiles">
-        <h2>Game profiles</h2>
-        <GameProfiles />
-      </section>
+    { ...systemSection("notifications"), body: <NotificationSettings /> },
+    { ...systemSection("activity"), body: <SystemActivity /> },
+    { ...systemSection("prometheus"), body: <PrometheusSettings /> },
+  ];
+  const tabParam = params.get("tab");
+  const tab: TabID = TABS.some((t) => t.id === tabParam) ? (tabParam as TabID) : "overview";
+  const showTab = (t: TabID) => setParams(t === "overview" ? {} : { tab: t });
+  const showSection = (id: string) => {
+    const sec = sections.find((x) => x.id === id);
+    if (!sec) return;
+    showTab(sec.tab);
+    setJumpTo(id);
+  };
+  const found = findSections(sections, query);
 
-      <section className="card" id="prometheus">
-        <h2>Prometheus</h2>
-        <PrometheusSettings />
-      </section>
+  return (
+    <div className="page system-page">
+      <h1>System</h1>
 
-      <section className="card" id="time">
-        <h2>Time zone and schedule</h2>
-        <TimeSettings />
-      </section>
-
-      <section className="card" id="notifications">
-        <h2>Notifications</h2>
-        <NotificationSettings />
-      </section>
-
-      <section className="card" id="sign-in">
-        <h2>Sign-in</h2>
-        <SignInSettings />
-      </section>
-
-      <section className="card" id="https">
-        <h2>HTTPS</h2>
-        <HTTPSSettings />
-      </section>
-
-      <section className="card" id="server-groups">
-        <h2>Server groups</h2>
-        <ServerGroups />
-      </section>
-
-      <section className="card" id="sso">
-        <h2>Single sign-on (Authelia, OpenID Connect)</h2>
-        <SSOSettings />
-      </section>
-
-      <section className="card" id="api-keys">
-        <h2>API keys</h2>
-        <APIKeys />
-      </section>
-
-      <section className="card" id="status-page">
-        <h2>Status page</h2>
-        <StatusPageSettings />
-      </section>
-
-      <section className="card" id="discord">
-        <h2>Discord</h2>
-        <DiscordSettings />
-      </section>
-
-      <section className="card">
-        <h2>UniFi port forwarding</h2>
-        <UnifiSettings />
-      </section>
-
-      <section className="card" id="linode">
-        <h2>Linode firewall</h2>
-        <LinodeSettings />
-      </section>
-
-      {u.latest?.notes && (
-        <section className="card release-notes">
-          <h2>What's new in {u.latest.version}</h2>
-          <Overview text={u.latest.notes} />
-        </section>
+      {last && (
+        <div className={`alert ${last.ok ? "success" : "error"}`}>
+          {last.ok
+            ? `Updated from ${last.from} to ${last.to} ${timeAgo(last.at)}.`
+            : `Updating from ${last.from} to ${last.to} failed ${timeAgo(last.at)}, and ${last.from} was restored: ${last.error}`}{" "}
+          <button className="link-button" onClick={dismiss}>
+            Dismiss
+          </button>
+        </div>
       )}
+
+      <div className="system-nav">
+        <div className="tabs" role="tablist">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={tab === t.id}
+              className={tab === t.id ? "active" : ""}
+              onClick={() => showTab(t.id)}
+            >
+              {t.label}
+              {t.id === "overview" && u.available && <span className="tab-dot" title="An update is available" />}
+            </button>
+          ))}
+        </div>
+        <div className="system-find">
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Find a setting…"
+            aria-label="Find a setting"
+          />
+          {query.trim() && (
+            <ul className="system-find-results">
+              {found.length === 0 && <li className="muted small">Nothing matches.</li>}
+              {found.map((f) => (
+                <li key={f.id}>
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={() => {
+                      setQuery("");
+                      showSection(f.id);
+                    }}
+                  >
+                    {f.title}
+                  </button>{" "}
+                  <span className="muted small">{TABS.find((t) => t.id === f.tab)?.label}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+
+      {sections
+        .filter((sec) => sec.tab === tab)
+        .map((sec) => (
+          <section key={sec.id} className={`card${sec.className ? " " + sec.className : ""}`} id={sec.id}>
+            <h2>{sec.title}</h2>
+            {sec.body}
+          </section>
+        ))}
     </div>
   );
 }

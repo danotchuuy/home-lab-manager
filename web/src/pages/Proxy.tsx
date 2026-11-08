@@ -453,7 +453,7 @@ export function ProxyPage() {
             </label>
             {!unifiReady && (
               <span className="field-help">
-                Set up UniFi under <Link to="/system">System</Link> to look up your address from the gateway.
+                Set up UniFi under <Link to="/system#unifi">System</Link> to look up your address from the gateway.
               </span>
             )}
             {fromTunnel ? (
