@@ -62,13 +62,19 @@ func TestSample(t *testing.T) {
 		t.Errorf("first sample has no rates, so no history point; got %d", len(s.History))
 	}
 
-	// Double every counter after a second.
+	// Double every counter after a second (plus however long sampling
+	// takes, which rates are divided by too: slow CI runners take tens of
+	// milliseconds).
 	c.mu.Lock()
 	c.prevAt = c.prevAt.Add(-time.Second)
+	before := c.prevAt
 	c.mu.Unlock()
 	fakeProc(t, dir, 2)
 	c.sample(context.Background())
 	s = c.Snapshot()
+	c.mu.Lock()
+	elapsed := c.prevAt.Sub(before).Seconds()
+	c.mu.Unlock()
 
 	// Busy 400 of 1000 jiffies in the interval.
 	if math.Abs(s.CPU.Percent-40) > 0.01 {
@@ -80,10 +86,10 @@ func TestSample(t *testing.T) {
 	if len(s.Network) != 1 || s.Network[0].Name != "eth0" {
 		t.Fatalf("network = %+v (lo and veth should be skipped)", s.Network)
 	}
-	if r := s.Network[0].RxRate; math.Abs(r-5000) > 50 {
-		t.Errorf("rx rate = %.0f, want ~5000", r)
+	if r, want := s.Network[0].RxRate, 5000/elapsed; math.Abs(r-want) > 1 {
+		t.Errorf("rx rate = %.0f, want %.0f", r, want)
 	}
-	if len(s.DiskIO) != 1 || s.DiskIO[0].Device != "sda" || math.Abs(s.DiskIO[0].ReadRate-20*512) > 100 {
+	if len(s.DiskIO) != 1 || s.DiskIO[0].Device != "sda" || math.Abs(s.DiskIO[0].ReadRate-20*512/elapsed) > 1 {
 		t.Errorf("disk io = %+v (partitions and loop devices should be skipped)", s.DiskIO)
 	}
 	if len(s.Disks) != 1 || s.Disks[0].Mount != "/" || s.Disks[0].Total == 0 {
