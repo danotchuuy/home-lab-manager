@@ -334,7 +334,8 @@ export const api = {
     json<NetworkInfo>(`/api/networks${hostQuery(host)}`, { method: "POST", body: JSON.stringify(req) }),
   removeNetwork: (name: string, host?: string) =>
     json<void>(`/api/networks/${encodeURIComponent(name)}${hostQuery(host)}`, { method: "DELETE" }),
-  hostInterfaces: () => json<HostInterface[]>("/api/networks/interfaces"),
+  /** A Docker host's interfaces and subnets, for suggesting LAN network settings there. */
+  hostInterfaces: (host?: string) => json<HostInterface[]>(`/api/networks/interfaces${hostQuery(host)}`),
 
   servers: () => json<Server[]>("/api/servers"),
   server: (id: string) => json<Server>(`/api/servers/${encodeURIComponent(id)}`),

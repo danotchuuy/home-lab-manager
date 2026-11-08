@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api } from "../api";
+import { exampleIP, ipToInt, nextFreeIP, parseCidr, suggestRange } from "../netaddr";
 import type { HostInterface, IPCheck, NetworkInfo, NetworkRequest } from "../types";
 
 const BUILTIN = ["bridge", "host", "none"];
@@ -59,6 +60,32 @@ export function NetworkSection({ serverName, host, templateNetwork, network, ipA
   const freeIP = staticAllowed ? nextFreeIP(selected!, serverName) : undefined;
 
   const check = useIPCheck(selected?.directIp ? ipAddress : "", selected, serverName);
+
+  // A new server on a LAN network gets the next free address filled in, so
+  // servers there are numbered in order. It follows the chosen network until
+  // the user types an address or clears it; a server being edited keeps its
+  // own. A cloned server's address that's taken is replaced.
+  const touched = useRef(false);
+  const autoFilled = useRef<string | undefined>(undefined);
+  const isNew = serverName === undefined;
+  useEffect(() => {
+    if (!isNew || touched.current || creating || networks.length === 0) return;
+    const cur = ipAddress.trim();
+    const mine = cur === "" || cur === autoFilled.current;
+    if (!selected?.directIp || !freeIP) {
+      // Off a LAN network, don't leave its address behind.
+      if (cur !== "" && cur === autoFilled.current) {
+        autoFilled.current = undefined;
+        onIPAddress("");
+      }
+      return;
+    }
+    const takenByOther = cur !== "" && selected.usedIps.some((u) => u.ip === cur);
+    if ((mine || takenByOther) && cur !== freeIP) {
+      autoFilled.current = freeIP;
+      onIPAddress(freeIP);
+    }
+  }, [isNew, creating, networks.length, selected, freeIP, ipAddress, onIPAddress]);
 
   async function removeSelected() {
     if (!selected || !confirm(`Delete the network ${selected.name}?`)) return;
@@ -138,7 +165,10 @@ export function NetworkSection({ serverName, host, templateNetwork, network, ipA
           <span className="field-label">Fixed IP address</span>
           <input
             value={ipAddress}
-            onChange={(e) => onIPAddress(e.target.value)}
+            onChange={(e) => {
+              touched.current = true;
+              onIPAddress(e.target.value);
+            }}
             disabled={!staticAllowed}
             placeholder={
               creating
@@ -153,18 +183,31 @@ export function NetworkSection({ serverName, host, templateNetwork, network, ipA
             {check && <IPCheckResult check={check} />}
             {staticAllowed && freeIP && freeIP !== ipAddress.trim() && (
               <>
-                <button type="button" className="link-button" onClick={() => onIPAddress(freeIP)}>
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={() => {
+                    touched.current = true;
+                    onIPAddress(freeIP);
+                  }}
+                >
                   Use the next free address, {freeIP}
                 </button>{" "}
               </>
             )}
             {staticAllowed ? (
               <>
-                Leave empty for an automatic address.{" "}
+                {isNew && selected!.directIp && autoFilled.current === ipAddress.trim() && ipAddress.trim() !== ""
+                  ? "Filled in with the next free address, in order; change it or clear it for an automatic one. "
+                  : "Leave empty for an automatic address. "}
                 Subnet {selected!.subnets.join(", ")}
                 {selected!.gateways.length > 0 && `, gateway ${selected!.gateways.join(", ")}`}.
                 {selected!.usedIps.length > 0 && (
-                  <> In use: {selected!.usedIps.map((u) => `${u.ip} (${u.container})`).join(", ")}.</>
+                  <>
+                    {" "}
+                    In use:{" "}
+                    {selected!.usedIps.map((u) => `${u.ip} (${u.container}${u.stopped ? ", stopped" : ""})`).join(", ")}.
+                  </>
                 )}
                 {selected!.directIp && " Use an address no other device on your LAN has (outside your router's DHCP range)."}
               </>
@@ -204,64 +247,6 @@ export function NetworkSection({ serverName, host, templateNetwork, network, ipA
   );
 }
 
-// --- IPv4 helpers for suggestions ---
-
-function ipToInt(ip: string): number {
-  return ip.split(".").reduce((n, o) => (n << 8) + Number(o), 0) >>> 0;
-}
-
-function intToIp(n: number): string {
-  return [n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join(".");
-}
-
-function parseCidr(cidr: string): { base: number; bits: number } | undefined {
-  const m = /^(\d+\.\d+\.\d+\.\d+)\/(\d+)$/.exec(cidr.trim());
-  if (!m) return undefined;
-  const bits = Number(m[2]);
-  if (bits < 0 || bits > 32) return undefined;
-  const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
-  return { base: (ipToInt(m[1]) & mask) >>> 0, bits };
-}
-
-/**
- * The first address in the network's first IPv4 subnet that isn't its
- * network address, a gateway, broadcast or used by another container. Only
- * running containers are known, so a stopped server's fixed address can
- * still clash; Docker reports that when the server starts.
- */
-function nextFreeIP(n: NetworkInfo, server?: string): string | undefined {
-  const c = n.subnets.map(parseCidr).find((x) => x);
-  if (!c || c.bits > 30) return undefined;
-  const taken = new Set([...n.gateways, ...n.usedIps.filter((u) => u.container !== server).map((u) => u.ip)]);
-  const size = 2 ** (32 - c.bits);
-  // A LAN network's DHCP pool is usually at the bottom, so start near the top there.
-  const order = n.directIp ? [...Array(size - 2).keys()].map((i) => size - 2 - i) : [...Array(size - 2).keys()].map((i) => i + 1);
-  for (const i of order.slice(0, 4096)) {
-    const ip = intToIp(c.base + i);
-    if (!taken.has(ip)) return ip;
-  }
-  return undefined;
-}
-
-/** An address near the top of the network's subnet, as a placeholder. */
-function exampleIP(n: NetworkInfo): string {
-  const c = n.subnets[0] && parseCidr(n.subnets[0]);
-  if (!c || c.bits > 30) return "192.168.1.200";
-  const size = 2 ** (32 - c.bits);
-  return intToIp(c.base + size - 10);
-}
-
-/**
- * Suggests a block at the top of a subnet for Docker's automatic addresses:
- * routers usually hand out DHCP addresses from the bottom.
- */
-function suggestRange(subnet: string): string {
-  const c = parseCidr(subnet);
-  if (!c || c.bits > 27) return "";
-  const size = 2 ** (32 - c.bits);
-  return `${intToIp(c.base + size - 32)}/27`;
-}
-
 function CreateNetwork({
   existing,
   host,
@@ -271,7 +256,7 @@ function CreateNetwork({
   onCancel,
 }: {
   existing: NetworkInfo[];
-  /** The Docker host it's made on; another host's interfaces can't be read. */
+  /** The Docker host it's made on, whose interfaces are suggested. */
   host?: string;
   /** The kind of network, kept by the parent so its dropdown can name it. */
   kind: NetworkKind;
@@ -280,6 +265,8 @@ function CreateNetwork({
   onCancel: () => void;
 }) {
   const [ifaces, setIfaces] = useState<HostInterface[]>([]);
+  const [ifaceError, setIfaceError] = useState<string>();
+  const [reading, setReading] = useState(true);
   const [name, setName] = useState("");
   const [parent, setParent] = useState("");
   const [subnet, setSubnet] = useState("");
@@ -289,8 +276,15 @@ function CreateNetwork({
   const [error, setError] = useState<string>();
 
   useEffect(() => {
-    if (host && host !== "local") return;
-    api.hostInterfaces().then(setIfaces, () => setIfaces([]));
+    setReading(true);
+    setIfaceError(undefined);
+    api
+      .hostInterfaces(host)
+      .then(setIfaces, (e: Error) => {
+        setIfaces([]);
+        setIfaceError(e.message);
+      })
+      .finally(() => setReading(false));
   }, [host]);
 
   // Fill in suggestions for the chosen type and interface.
@@ -302,7 +296,8 @@ function CreateNetwork({
       setIPRange("");
       return;
     }
-    setName((n) => n || (existing.some((x) => x.name === "lan") ? "" : "lan"));
+    // Unraid's name, so templates that ask for br0 use it.
+    setName((n) => n || (existing.some((x) => x.name === "br0") ? "" : "br0"));
     const iface = ifaces.find((i) => i.name === parent) ?? ifaces[0];
     if (!iface) return;
     if (!parent) setParent(iface.name);
@@ -404,6 +399,13 @@ function CreateNetwork({
         )}
       </div>
 
+      {kind === "macvlan" && reading && <p className="muted small">Reading the host&apos;s network interfaces…</p>}
+      {kind === "macvlan" && ifaceError && (
+        <p className="muted small">
+          hlm couldn&apos;t read this host&apos;s interfaces ({ifaceError}), so fill them in: <code>ip route</code> on
+          the host shows them.
+        </p>
+      )}
       {kind === "macvlan" && (
         <p className="muted small">
           On a LAN network, the server's ports are reachable at its own address from other devices, but not from this
@@ -485,5 +487,52 @@ function IPCheckResult({ check }: { check: CheckState }) {
       <span className="ip-check good">✓ Not in use on your network{r.network ? ` (${r.network})` : ""}, according to UniFi.</span>
       {r.warning && <span className="ip-check warn">⚠ {r.warning}.</span>}
     </>
+  );
+}
+
+/**
+ * Sets up a LAN network (macvlan, named br0 like Unraid's) on a Docker host,
+ * with its interface, subnet and gateway read from that host; or says it's
+ * there already.
+ */
+export function LANNetworkSetup({ host, onClose }: { host: string; onClose: () => void }) {
+  const [networks, setNetworks] = useState<NetworkInfo[]>();
+  const [error, setError] = useState<string>();
+  const [kind, setKind] = useState<NetworkKind>("macvlan");
+  const [created, setCreated] = useState<NetworkInfo>();
+
+  useEffect(() => {
+    api.networks(host).then(setNetworks, (e: Error) => setError(e.message));
+  }, [host]);
+
+  if (error) return <div className="alert error small">{error}</div>;
+  if (!networks) return <p className="muted small">Loading the host&apos;s networks…</p>;
+  const lan = created ?? networks.find((n) => n.name === "br0") ?? networks.find((n) => n.directIp);
+  if (lan) {
+    return (
+      <div className="lan-network-setup">
+        <div className={`alert ${created ? "success" : "info"} small`}>
+          {created ? "Created" : "This host has"} the LAN network <strong>{lan.name}</strong> ({lan.driver}
+          {lan.parent ? ` on ${lan.parent}` : ""}, {lan.subnets.join(", ")}
+          {lan.gateways.length > 0 ? `, gateway ${lan.gateways.join(", ")}` : ""}). Choose it in a server&apos;s Network
+          section to give the server its own address on your LAN.
+        </div>
+        <div className="btn-row">
+          <button className="btn small" onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="lan-network-setup">
+      <p className="small no-margin">
+        A LAN network gives each server on it its own address on your network, like Unraid&apos;s <code>br0</code>{" "}
+        (Docker&apos;s macvlan driver). hlm read the host&apos;s interfaces to suggest the settings; nothing else on
+        the host changes.
+      </p>
+      <CreateNetwork host={host} kind={kind} onKind={setKind} existing={networks} onCancel={onClose} onCreated={setCreated} />
+    </div>
   );
 }

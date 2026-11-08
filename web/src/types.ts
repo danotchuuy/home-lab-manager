@@ -143,7 +143,10 @@ export interface NetworkInfo {
   staticIp: boolean;
   /** macvlan/ipvlan: containers get their own LAN address instead of publishing ports. */
   directIp: boolean;
-  usedIps: { ip: string; container: string }[];
+  /** Blocks Docker hands out automatic addresses from (--ip-range). */
+  ipRanges?: string[];
+  /** Taken by running containers, and stopped containers' fixed addresses. */
+  usedIps: { ip: string; container: string; stopped?: boolean }[];
   /** Host interface of a macvlan/ipvlan network. */
   parent?: string;
   /** Created in hlm, so it can be deleted here. */

@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useState, type FormEvent } from "react";
 import { api, ApiError } from "../api";
 import type {
   AgentEnrolment,
@@ -12,6 +12,7 @@ import type {
 } from "../types";
 import { Ago, Spinner } from "./common";
 import { CopyButton } from "./ConnectInfo";
+import { LANNetworkSetup } from "./NetworkSection";
 
 const EMPTY: DockerHostInput = {
   id: "",
@@ -37,6 +38,8 @@ export function DockerHosts() {
   const [error, setError] = useState<string>();
   // The host being edited; "" for a new one.
   const [editing, setEditing] = useState<string>();
+  // The host whose LAN network (br0) is being set up.
+  const [lanFor, setLanFor] = useState<string>();
   const [checked, setChecked] = useState<Record<string, string>>({});
 
   const load = () =>
@@ -119,11 +122,23 @@ export function DockerHosts() {
                     <code className="small">{local.appdataRoot}</code>
                   </td>
                   <td />
-                  <td />
+                  <td className="row-actions">
+                    <button className="btn small ghost" onClick={() => setLanFor(lanFor === local.id ? undefined : local.id)}>
+                      LAN network (br0)
+                    </button>
+                  </td>
+                </tr>
+              )}
+              {local && lanFor === local.id && (
+                <tr>
+                  <td colSpan={5}>
+                    <LANNetworkSetup host={local.id} onClose={() => setLanFor(undefined)} />
+                  </td>
                 </tr>
               )}
               {others.map((h) => (
-                <tr key={h.id}>
+                <Fragment key={h.id}>
+                <tr>
                   <td>
                     <strong>{h.name}</strong> <span className="muted small">({h.id})</span>
                     {h.address && <div className="muted small">at {h.address}</div>}
@@ -169,11 +184,27 @@ export function DockerHosts() {
                     <button className="btn small ghost" onClick={() => setEditing(h.id)}>
                       Edit
                     </button>
+                    <button
+                      className="btn small ghost"
+                      onClick={() => setLanFor(lanFor === h.id ? undefined : h.id)}
+                      disabled={h.status ? !h.status.ok : false}
+                      title="Give servers there their own LAN address, like Unraid's br0"
+                    >
+                      LAN network (br0)
+                    </button>
                     <button className="btn small ghost danger" onClick={() => remove(h)}>
                       Remove
                     </button>
                   </td>
                 </tr>
+                {lanFor === h.id && (
+                  <tr>
+                    <td colSpan={5}>
+                      <LANNetworkSetup host={h.id} onClose={() => setLanFor(undefined)} />
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>

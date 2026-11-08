@@ -1780,10 +1780,18 @@ Each server can join any Docker network, chosen in the **Network** section of th
 Docker only allows a static IP on a user-defined network that was created with a subnet. You can create one from the
 form: click **+ New network** (or **Create a network for fixed IPs**) in the Network section and pick:
 
-- **LAN network** (macvlan): each server gets its own address on your network, like Unraid's `br0`. hlm suggests the
-  host interface, subnet and gateway from the host's routing table, and a block at the top of the subnet for automatic
-  addresses (keep it outside your router's DHCP pool).
+- **LAN network** (macvlan): each server gets its own address on your network, like Unraid's `br0`, and it's named
+  `br0` by default, so Unraid templates that ask for `br0` use it. hlm suggests the host interface, subnet and gateway
+  from that host's routing table, and a block at the top of the subnet for automatic addresses (keep it outside your
+  router's DHCP pool).
 - **Private network** (bridge): fixed addresses on this host only; ports are still published as usual.
+
+To set one up on a host without installing a server, use **LAN network (br0)** next to the host under **Host → Docker
+hosts**: it shows the host's LAN network if it has one, or the same form, filled in for that host. This works for
+[other Docker hosts](#more-docker-hosts) too, whether hlm reaches them over SSH, TLS or the agent: hlm reads their
+routing table through Docker, with a throwaway busybox container on the host's network that only reads
+`/proc/net/route` (no extra privileges) and is removed straight away. (For this host, hlm reads its own `/proc` when it
+can see the host's.) Only a Docker network is made: the host's own network settings don't change.
 
 Networks created in hlm can be deleted from the same place once no server uses them. The equivalent commands, for
 reference:
@@ -1803,7 +1811,15 @@ docker network create -d macvlan \
 
 Unraid templates that ask for `br0` use a network with that name if one exists; otherwise they fall back to `bridge`
 with a warning. hlm checks that a static IP is inside the network's subnet, isn't the gateway, and isn't used by another
-container. It can't see other devices on your LAN, so keep macvlan addresses outside your DHCP pool.
+container, running or stopped (a stopped server takes its fixed address back when it starts).
+
+**Addresses in order.** When you install, clone or import a server onto a LAN network (`br0`), its fixed IP is filled in
+with the next free address, so servers there are numbered in order: from the start of the network's automatic range
+(the block hlm suggests when it makes the network, say `192.168.1.224/27`, so `.224`, `.225`, `.226`, …), or the top
+/27 of the subnet if the network has no range, then downwards from the top of the subnet. Gaps left by deleted servers
+are filled first. The address follows the network you choose until you type one or clear the field (for an automatic
+address); a cloned server's address that the original still uses is replaced. Changing a server's settings never
+changes its address. It can't see other devices on your LAN, so keep macvlan addresses outside your DHCP pool.
 
 With macvlan, the Docker host itself can't reach the containers (a Linux kernel limitation); other machines on the LAN
 can. Web UI links for macvlan servers use the server's own IP.
@@ -2520,7 +2536,7 @@ when the `HLM_*` one isn't set.
 | `GET /api/servers/{id}/stats`                  | CPU, memory, network and disk usage.                                              |
 | `POST /api/networks`                           | Create a network: `{name, driver: bridge\|macvlan\|ipvlan, parent?, subnet, gateway?, ipRange?}`. |
 | `DELETE /api/networks/{name}`                  | Delete a network created in hlm that no container uses.                           |
-| `GET /api/networks/interfaces`                 | The host's interfaces with their subnets and default gateway, for suggestions.    |
+| `GET /api/networks/interfaces?host=`           | A Docker host's interfaces with their subnets and default gateway, for suggestions (another host's are read through Docker). |
 | `GET /api/stats`                               | Usage of every running server, keyed by container ID.                             |
 | `GET /api/game-profiles`                       | Every [game profile](#game-profiles) in use, with your own profiles' `origin` (`url`, `sha256`, `fetched`, `index`, `checked`, `update`, `updateError`, `changedLocally`), and files that couldn't be used (admins). |
 | `GET /api/game-profiles/{id}/yaml`             | A profile as written (`?builtin=1`: the built-in one). |

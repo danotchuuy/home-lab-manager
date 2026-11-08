@@ -451,8 +451,20 @@ func (s *server) removeNetwork(w http.ResponseWriter, r *http.Request) {
 
 // hostInterfaces lists the Docker host's interfaces and subnets, to suggest
 // settings for a LAN network.
+// hostInterfaces lists a Docker host's network interfaces (?host=), for
+// suggesting LAN network settings there.
 func (s *server) hostInterfaces(w http.ResponseWriter, r *http.Request) {
-	ifaces := s.Manager.HostInterfaces()
+	host, ok := s.hostParam(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
+	defer cancel()
+	ifaces, err := s.Manager.HostInterfacesOn(ctx, host)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
 	if ifaces == nil {
 		ifaces = []hostmetrics.HostInterface{}
 	}

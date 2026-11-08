@@ -131,6 +131,31 @@ func (m *Manager) RemoveNetwork(ctx context.Context, host, name string) error {
 	return m.docker.RemoveNetwork(ctx, host, n.ID)
 }
 
+// HostInterfacesOn lists a Docker host's network interfaces and their
+// subnets, for suggesting LAN network settings there. hlm's own host's are
+// read from its /proc when it can; any other's (or this one's, when hlm
+// can't see the host's /proc) through Docker, from a throwaway container on
+// the host's network that reads the routing table. That works the same over
+// SSH, TLS or the agent, and changes nothing.
+func (m *Manager) HostInterfacesOn(ctx context.Context, host string) ([]hostmetrics.HostInterface, error) {
+	if !m.KnownHost(host) {
+		return nil, errNoHost(host)
+	}
+	if host == LocalHost {
+		if ifaces := m.HostInterfaces(); len(ifaces) > 0 {
+			return ifaces, nil
+		}
+	}
+	code, out, err := m.runHelperWith(ctx, host, docker.HostConfig{NetworkMode: "host"}, "all", "cat", "/proc/net/route")
+	if err != nil {
+		return nil, err
+	}
+	if code != 0 {
+		return nil, fmt.Errorf("read the host's routing table: %s", strings.TrimSpace(out))
+	}
+	return hostmetrics.ParseRoutes(strings.NewReader(out))
+}
+
 // HostInterfaces lists the Docker host's network interfaces and their
 // subnets, for suggesting LAN network settings. It returns nil when the host
 // can't be read (e.g. a remote Docker host).
@@ -144,4 +169,33 @@ func (m *Manager) HostInterfaces() []hostmetrics.HostInterface {
 		return nil
 	}
 	return ifaces
+}
+
+// checkStoppedIP refuses a fixed address that a stopped container on the
+// same network has: Docker only checks running ones, so the two couldn't
+// run at the same time. own is the container being recreated, if any.
+func (m *Manager) checkStoppedIP(ctx context.Context, host string, spec *deploy.Spec, own string) error {
+	nc := spec.Create.NetworkingConfig
+	if nc == nil {
+		return nil
+	}
+	for netName, want := range nc.EndpointsConfig {
+		if want.IPAMConfig == nil || want.IPAMConfig.IPv4Address == "" {
+			continue
+		}
+		ip := want.IPAMConfig.IPv4Address
+		list, err := m.docker.ListContainersOn(ctx, host)
+		if err != nil {
+			return err
+		}
+		for _, c := range list {
+			ep, ok := c.NetworkSettings.Networks[netName]
+			if !ok || c.State == "running" || c.ID == own || ep.IPAMConfig == nil || ep.IPAMConfig.IPv4Address != ip {
+				continue
+			}
+			_, name := SplitID(strings.TrimPrefix(firstOr(c.Names, c.ID), "/"))
+			return fmt.Errorf("%s is the fixed address of %s (stopped) on %s, so they couldn't run at the same time; choose another address", ip, name, netName)
+		}
+	}
+	return nil
 }

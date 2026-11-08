@@ -4536,3 +4536,11 @@ pre .muted {
   margin: 0.35rem 0 0.35rem 1.1rem;
   padding: 0;
 }
+
+/* Setting up a host's LAN network (br0) from the Hosts page */
+.lan-network-setup {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.25rem 0 0.5rem;
+  white-space: normal;
+}
