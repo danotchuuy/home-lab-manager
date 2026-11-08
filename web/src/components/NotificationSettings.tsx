@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { MultiSelect } from "./MultiSelect";
 import { api } from "../api";
 import type {
   NotifyDelivery,
@@ -538,27 +539,31 @@ function TargetForm({ initial, saved, kinds, servers, groups, busy, onSave, onTe
           Only these servers and groups (alerts that aren&apos;t about a server, like a full disk, are always sent)
         </label>
         {someServers && (
-          <div className="notify-servers">
-            {groups.map((g) => (
-              <label key={g.id} className="radio small">
-                <input
-                  type="checkbox"
-                  checked={!!t.groups?.includes(g.id)}
-                  onChange={(e) => set("groups", toggle(t.groups, g.id, e.target.checked))}
+          <div className="notify-servers field-grid">
+            {groups.length > 0 && (
+              <label className="field">
+                <span className="field-label">Server groups</span>
+                <MultiSelect
+                  label="Server groups"
+                  options={groups.map((g) => ({ value: g.id, label: g.name }))}
+                  value={t.groups ?? []}
+                  onChange={(ids) => set("groups", ids)}
+                  placeholder="Add a group…"
+                  empty="None"
                 />
-                Group: {g.name}
               </label>
-            ))}
-            {servers.map((s) => (
-              <label key={s.id} className="radio small">
-                <input
-                  type="checkbox"
-                  checked={!!t.servers?.includes(s.name)}
-                  onChange={(e) => set("servers", toggle(t.servers, s.name, e.target.checked))}
-                />
-                {s.name}
-              </label>
-            ))}
+            )}
+            <label className="field">
+              <span className="field-label">Servers</span>
+              <MultiSelect
+                label="Servers"
+                options={servers.map((s) => ({ value: s.name, label: s.name, hint: s.app }))}
+                value={t.servers ?? []}
+                onChange={(names) => set("servers", names)}
+                placeholder="Add a server…"
+                empty="None"
+              />
+            </label>
           </div>
         )}
       </fieldset>

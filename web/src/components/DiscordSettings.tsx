@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { MultiSelect } from "./MultiSelect";
 import { api } from "../api";
 import type {
   DiscordAction,
@@ -317,7 +318,6 @@ function GuildEditor({
   // A rule can narrow to the groups this Discord server sees.
   const ruleGroups = guild.groups.length ? groups.filter((g) => guild.groups.includes(g.id)) : groups;
   const unusedRoles = (roles?.roles ?? []).filter((r) => !guild.rules.some((x) => x.roleId === r.id));
-  const toggle = (list: string[], id: string, on: boolean) => (on ? [...list, id] : list.filter((x) => x !== id));
 
   return (
     <div className="discord-guild">
@@ -348,22 +348,16 @@ function GuildEditor({
         </label>
       </div>
 
-      <div className="discord-checks small">
-        <span className="muted">Sees:</span>
-        <label className="checkbox">
-          <input type="checkbox" checked={guild.groups.length === 0} onChange={() => onChange({ groups: [] })} /> every
-          server on the status page
-        </label>
-        {groups.map((g) => (
-          <label key={g.id} className="checkbox">
-            <input
-              type="checkbox"
-              checked={guild.groups.includes(g.id)}
-              onChange={(e) => onChange({ groups: toggle(guild.groups, g.id, e.target.checked) })}
-            />{" "}
-            {g.name}
-          </label>
-        ))}
+      <div className="field">
+        <span className="field-label">Sees</span>
+        <MultiSelect
+          label="Server groups this Discord server sees"
+          options={groups.map((g) => ({ value: g.id, label: g.name }))}
+          value={guild.groups}
+          onChange={(ids) => onChange({ groups: ids })}
+          placeholder="Limit to server groups…"
+          empty="Every server on the status page"
+        />
       </div>
       <label className="checkbox small">
         <input type="checkbox" checked={guild.details} onChange={(e) => onChange({ details: e.target.checked })} /> Show
@@ -396,22 +390,16 @@ function GuildEditor({
               </label>
             ))}
           </div>
-          <div className="discord-checks small">
-            <span className="muted">On:</span>
-            <label className="checkbox">
-              <input type="checkbox" checked={r.groups.length === 0} onChange={() => setRule(i, { groups: [] })} />{" "}
-              every server it sees
-            </label>
-            {ruleGroups.map((g) => (
-              <label key={g.id} className="checkbox">
-                <input
-                  type="checkbox"
-                  checked={r.groups.includes(g.id)}
-                  onChange={(e) => setRule(i, { groups: toggle(r.groups, g.id, e.target.checked) })}
-                />{" "}
-                {g.name}
-              </label>
-            ))}
+          <div className="field">
+            <span className="field-label">On</span>
+            <MultiSelect
+              label={`Server groups ${roleName(r.roleId)} may act on`}
+              options={ruleGroups.map((g) => ({ value: g.id, label: g.name }))}
+              value={r.groups}
+              onChange={(ids) => setRule(i, { groups: ids })}
+              placeholder="Limit to server groups…"
+              empty="Every server it sees"
+            />
           </div>
         </div>
       ))}

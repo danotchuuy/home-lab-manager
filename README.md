@@ -1968,6 +1968,11 @@ can. Web UI links for macvlan servers use the server's own IP.
   activity, Prometheus). The tab is in the page's address (`/system?tab=network`), links to a setting
   (`/system#linode`) open its tab, and **Find a setting** searches every tab by name or by words like "passkey" or
   "webhook". The command palette finds settings the same way (`Ctrl K`, then `linode`).
+- **Choosing servers, groups and hosts** (a server group's servers, a site's or a notification's groups, the
+  proxy's relays, Discord's groups…) is one box: what's chosen shows as chips (× removes one), and typing lists the
+  rest to add, by name or app; arrows and Enter pick, Backspace removes the last, and **All** and **None** are at the
+  top of the list. Ones chosen some other way (a server through its whole host's group) show dashed and can't be
+  removed there. On the Proxy page, **ports** on a relayed server opens its ports.
 - **The same everywhere.** A server's page has what its card on the list has: its update status (with **Check now**,
   and **Update image** asking first while it's running), **Start on boot** and its ☆. Its settings files can be pinned
   and unpinned from the Settings tab as from the Files tab; its group picker shows groups it's in through its host; its

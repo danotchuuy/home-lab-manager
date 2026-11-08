@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { MultiSelect } from "./MultiSelect";
 import { api } from "../api";
 import type {
   AddressSuggestion,
@@ -640,22 +641,14 @@ function SiteFields({
             There are no server groups yet (System → Server groups), so it shows every server on the page.
           </span>
         ) : (
-          <div className="status-site-groups">
-            {groups.map((g) => (
-              <label key={g.id} className="radio small">
-                <input
-                  type="checkbox"
-                  checked={site.groups.includes(g.id)}
-                  onChange={(e) =>
-                    onChange({
-                      groups: e.target.checked ? [...site.groups, g.id] : site.groups.filter((x) => x !== g.id),
-                    })
-                  }
-                />
-                {g.name}
-              </label>
-            ))}
-          </div>
+          <MultiSelect
+            label={`Server groups ${site.hostname || "the site"} shows`}
+            options={groups.map((g) => ({ value: g.id, label: g.name }))}
+            value={site.groups}
+            onChange={(ids) => onChange({ groups: ids })}
+            placeholder="Add a group…"
+            empty="Every server on the page"
+          />
         )}
         <span className="field-help">
           {site.groups.length === 0
