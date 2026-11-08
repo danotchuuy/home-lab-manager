@@ -91,6 +91,12 @@ export function StatusPageSettings() {
 
   if (!set) return error ? <div className="alert error small">{error}</div> : <Spinner />;
 
+  // Puts the sites on the proxy as they are now (after a site leaves the tunnel, say).
+  async function applyStatusOnProxy() {
+    const a = await api.applyProxyStatus();
+    setProxy((p) => (p ? { ...p, result: a.status ?? null } : p));
+  }
+
   const setProxyField = <K extends keyof ProxySettings>(k: K, v: ProxySettings[K]) =>
     setProxyForm((f) => (f ? { ...f, [k]: v } : f));
 
@@ -335,6 +341,8 @@ export function StatusPageSettings() {
                 saved={savedHosts.includes(site.hostname)}
                 tunnel={tunnel}
                 onChange={setTunnel}
+                onProxy={!!proxy?.configured && (proxy.on || proxyTurnOn) && !site.noProxy}
+                onMoved={applyStatusOnProxy}
               />
               <SiteProxy site={site} proxy={proxy} turningOn={proxyTurnOn} onChange={(on) => setSiteProxy(i, on)} />
             </>
@@ -731,16 +739,73 @@ function SiteCloudflare({
   saved,
   tunnel,
   onChange,
+  onProxy,
+  onMoved,
 }: {
   hostname: string;
   saved: boolean;
   tunnel?: TunnelRoutes;
   onChange: (t: TunnelRoutes) => void;
+  /** The proxy server serves it: its DNS record has to point there, not at the tunnel. */
+  onProxy: boolean;
+  /** After its tunnel route is removed, so the proxy can make its record. */
+  onMoved: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const host = hostname.trim().toLowerCase().replace(/\.+$/, "");
   if (!host) return null;
+  const tunnelRoute = tunnel?.routes.find((r) => r.hostname === host);
+  if (onProxy) {
+    // One DNS record per name: through the tunnel, or at the proxy.
+    if (!tunnelRoute) return null;
+    if (!tunnelRoute.hlm)
+      return (
+        <div className="alert warn small">
+          {host} goes to {tunnelRoute.server || tunnelRoute.address} through the Cloudflare Tunnel (the{" "}
+          <Link to="/tunnel">Tunnel page</Link>), so its DNS record points there, not at the proxy server.
+        </div>
+      );
+    const moveToProxy = async () => {
+      if (!tunnel) return;
+      setBusy(true);
+      setError(undefined);
+      try {
+        // The routes as they are, without this one (its DNS record goes with it).
+        await api.setTunnelRoutes(
+          tunnel.routes
+            .filter((r) => r.hostname !== host)
+            .map((r) => ({
+              hostname: r.hostname,
+              zoneId: r.zoneId,
+              server: r.server,
+              address: r.address,
+              port: r.port,
+              scheme: r.scheme,
+              noTLSVerify: r.noTLSVerify,
+              hlm: r.hlm,
+            })),
+        );
+        onChange(await api.tunnelRoutes());
+        await onMoved();
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setBusy(false);
+      }
+    };
+    return (
+      <div className="alert warn small">
+        {host} is also published through the Cloudflare Tunnel, so its DNS record points at the tunnel and visitors
+        don&apos;t reach the proxy server.{" "}
+        <button type="button" className="btn small" onClick={moveToProxy} disabled={busy}>
+          {busy ? "Moving…" : "Move it to the proxy"}
+        </button>
+        <span className="muted"> (removes its tunnel route and record; the proxy&apos;s HTTPS option then points it at the proxy)</span>
+        {error && <div className="form-error">{error}</div>}
+      </div>
+    );
+  }
   if (!tunnel || !tunnel.tunnel) {
     return (
       <p className="muted small no-margin">

@@ -37,6 +37,14 @@ func TestProxyRecords(t *testing.T) {
 			t.Errorf("to %s: %+v", tt.target, recs)
 		}
 	}
+	// DNS only, for the proxy's own certificate: the same record, no longer
+	// through Cloudflare's proxy.
+	if err := s.DNSRecord(ctx, "status.example.com", "203.0.113.9"); err != nil {
+		t.Fatal(err)
+	}
+	if recs := fake.Records("z1"); len(recs) != 1 || recs[0].Type != "A" || recs[0].Content != "203.0.113.9" || recs[0].Proxied {
+		t.Errorf("DNS only: %+v", recs)
+	}
 	// Someone else's record, and the tunnel's, are left alone.
 	fake.AddRecord("z1", cloudflare.DNSRecord{ID: "theirs", Name: "mine.example.com", Type: "A", Content: "192.0.2.1"})
 	fake.AddRecord("z1", cloudflare.DNSRecord{ID: "tun", Name: "tunnel.example.com", Type: "CNAME", Content: "x.cfargotunnel.com", Comment: RecordComment})
@@ -45,6 +53,9 @@ func TestProxyRecords(t *testing.T) {
 	}
 	if err := s.ProxyRecord(ctx, "tunnel.example.com", "203.0.113.9"); err == nil || !strings.Contains(err.Error(), "Tunnel") {
 		t.Errorf("the tunnel's: %v", err)
+	}
+	if err := s.DNSRecord(ctx, "tunnel.example.com", "203.0.113.9"); err == nil || !strings.Contains(err.Error(), "Tunnel") {
+		t.Errorf("the tunnel's, DNS only: %v", err)
 	}
 	if err := s.ProxyRecord(ctx, "status.other.net", "203.0.113.9"); err == nil || !strings.Contains(err.Error(), "isn't in any") {
 		t.Errorf("not in a zone: %v", err)
