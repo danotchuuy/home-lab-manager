@@ -103,9 +103,21 @@ func (s *Service) StatusSites() (*StatusSiteResult, error) {
 	return &r, nil
 }
 
-// UseStatusSites says which domains the status page's sites use, and the
-// port hlm is reached on at the Docker host.
-func (s *Service) UseStatusSites(f func(ctx context.Context) (domains []string, port int, err error)) {
+// StatusOrigin is where the proxy finds the status page: the sites'
+// domains, and hlm's port at the tunnel's end on the Docker host, or, when
+// hlm has its own LAN address (a macvlan network like br0, which the host
+// can't reach), that address and hlm's own port.
+type StatusOrigin struct {
+	Domains []string
+	Port    int
+	// Address is hlm's own LAN address, if it has one; the proxy reaches it
+	// through the end of the tunnel that reaches its LAN.
+	Address string
+}
+
+// UseStatusSites says which domains the status page's sites use, and
+// where hlm is reached.
+func (s *Service) UseStatusSites(f func(ctx context.Context) (StatusOrigin, error)) {
 	s.statusSites = f
 }
 
@@ -348,7 +360,7 @@ ip -o addr show scope global 2>/dev/null | awk '$2 != "gsh0" { split($4, a, "/")
 command -v certbot >/dev/null 2>&1 && echo "hlm:certbot"
 while IFS= read -r d; do
   [ -n "$d" ] || continue
-  [ -f "/etc/letsencrypt/live/$d/fullchain.pem" ] && echo "hlm:cert:$d"
+  [ -f "/etc/letsencrypt/live/$d/fullchain.pem" ] && [ -f "/etc/letsencrypt/live/$d/privkey.pem" ] && echo "hlm:cert:$d"
   o=` + originDir + `/$d
   if [ -f "$o.crt" ] && [ -f "$o.key" ]; then
     if ! command -v openssl >/dev/null 2>&1 || openssl x509 -checkend 2592000 -noout -in "$o.crt" >/dev/null 2>&1; then
@@ -397,8 +409,18 @@ if ! command -v certbot >/dev/null 2>&1; then
   fi
 fi
 if [ -n "$2" ]; then account="-m $2"; else account="--register-unsafely-without-email"; fi
-certbot certonly --webroot -w ` + acmeRoot + ` -d "$1" --non-interactive --agree-tos $account \
-  --deploy-hook "nginx -s reload" --keep-until-expiring 2>&1 | tail -n 5`
+# The certificate is named after the domain, so it's where nginx is told to
+# look (not domain-0001 next to an old one); certbot's own exit status counts,
+# and so does the file being there.
+out=$(certbot certonly --webroot -w ` + acmeRoot + ` -d "$1" --cert-name "$1" --non-interactive --agree-tos $account \
+  --deploy-hook "nginx -s reload" --keep-until-expiring 2>&1)
+rc=$?
+printf '%s\n' "$out" | tail -n 5
+if [ $rc -ne 0 ]; then exit $rc; fi
+if [ ! -f "/etc/letsencrypt/live/$1/fullchain.pem" ] || [ ! -f "/etc/letsencrypt/live/$1/privkey.pem" ]; then
+  echo "certbot finished, but there's no certificate in /etc/letsencrypt/live/$1" >&2
+  exit 3
+fi`
 
 // originInstallScript installs a domain's Origin CA certificate and key,
 // read from stdin as one base64 line each, readable by root alone.
@@ -521,11 +543,19 @@ func (s *Service) applyStatus(ctx context.Context, st Settings) *StatusSiteResul
 	if s.statusSites == nil {
 		return fail(errors.New("hlm can't tell the status page's sites here"))
 	}
-	domains, port, err := s.statusSites(ctx)
+	origin, err := s.statusSites(ctx)
 	if err != nil {
 		return fail(err)
 	}
-	for _, d := range domains {
+	port, upstream := origin.Port, st.Upstream
+	if origin.Address != "" {
+		// hlm on its own LAN address: through the end of the tunnel on its LAN.
+		if why := s.tunnelReaches(origin.Address); why != "" {
+			return fail(errors.New(why))
+		}
+		upstream = origin.Address
+	}
+	for _, d := range origin.Domains {
 		d = strings.ToLower(d)
 		if statusDomain.MatchString(d) && !slices.Contains(res.Domains, d) {
 			res.Domains = append(res.Domains, d)
@@ -577,7 +607,7 @@ func (s *Service) applyStatus(ctx context.Context, st Settings) *StatusSiteResul
 		// nothing has to reach the proxy for them.
 		cloudflared = s.cloudflareDNSSites(ctx, st, res, certs)
 	}
-	render := func() string { return RenderStatus(res.Domains, certs, st.Upstream, port, probe.ipv6, addr) }
+	render := func() string { return RenderStatus(res.Domains, certs, upstream, port, probe.ipv6, addr) }
 	if res.Output, err = s.writeStatus(ctx, render()); err != nil {
 		res.Address = ""
 		return fail(err)
@@ -597,7 +627,7 @@ func (s *Service) applyStatus(ctx context.Context, st Settings) *StatusSiteResul
 	// Let's Encrypt certificates for the domains without one, now that
 	// nginx answers their challenges; then HTTPS for those.
 	if st.StatusTLS == TLSLetsEncrypt {
-		got := false
+		var got []string
 		for _, d := range res.Domains {
 			if probe.certs[d] {
 				continue
@@ -609,12 +639,21 @@ func (s *Service) applyStatus(ctx context.Context, st Settings) *StatusSiteResul
 			case out.ExitCode != 0:
 				res.setFailed(d, lastLine(out.Output()))
 			default:
-				certs[d], got = letsEncryptCert(d), true
+				certs[d] = letsEncryptCert(d)
+				got = append(got, d)
 			}
 		}
-		if got {
-			if res.Output, err = s.writeStatus(ctx, render()); err != nil {
-				return fail(err)
+		if len(got) > 0 {
+			if out, err := s.writeStatus(ctx, render()); err != nil {
+				// nginx kept the configuration without them, serving them over
+				// HTTP: say so for those, rather than failing them all.
+				for _, d := range got {
+					delete(certs, d)
+					res.setFailed(d, "nginx couldn't use its new certificate, so it's served over HTTP: "+err.Error())
+				}
+				res.Output += "\n" + out
+			} else {
+				res.Output = out
 			}
 		}
 	}
@@ -785,6 +824,30 @@ func (s *Service) ApplyStatus(ctx context.Context) (*StatusSiteResult, error) {
 		return nil, err
 	}
 	return s.applyStatusRecorded(ctx, st, servers), nil
+}
+
+// tunnelReaches says why the WireGuard tunnel can't reach a LAN address, if
+// it can't: one of its ends has to reach that LAN ("Reach servers with their
+// own LAN address").
+func (s *Service) tunnelReaches(address string) string {
+	a, err := netip.ParseAddr(address)
+	if err != nil {
+		return fmt.Sprintf("hlm's own LAN address %q isn't an IP address", address)
+	}
+	wg, ok, err := s.tunnel()
+	if err != nil || !ok {
+		return "the WireGuard tunnel isn't set up"
+	}
+	subnets := []string{wg.LANSubnet}
+	for _, e := range wg.Hosts {
+		subnets = append(subnets, e.LANSubnet)
+	}
+	for _, sub := range subnets {
+		if p, err := netip.ParsePrefix(sub); err == nil && p.Contains(a) {
+			return ""
+		}
+	}
+	return fmt.Sprintf("hlm has its own LAN address %s (a macvlan network like br0), which the WireGuard tunnel doesn't reach, so the proxy can't pass the status page to it: on the Proxy page, set up \"Reach servers with their own LAN address\" with hlm's network for this host's end of the tunnel", address)
 }
 
 // applyStatusRecorded is applyStatus, keeping its outcome. servers are
