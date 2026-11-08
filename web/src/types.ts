@@ -2051,7 +2051,20 @@ export interface AutoUpdates {
   states: Record<string, AutoUpdateState>;
 }
 
-export type QueryProtocol = "" | "a2s" | "minecraft" | "bedrock" | "rcon" | "tcp" | "off";
+export type QueryProtocol = "" | "a2s" | "minecraft" | "bedrock" | "http-status" | "rcon" | "tcp" | "off";
+
+/** One of a server's game's launch options (from its game profile), and whether it's on. */
+export interface LaunchOption {
+  id: string;
+  name: string;
+  description?: string;
+  args: string;
+  port?: number;
+  proto?: string;
+  on: boolean;
+  /** Where its arguments go: "the variable GAME_PARAMS", or "its post arguments". */
+  where: string;
+}
 
 /** How a server is asked for its status; empty finds a way. */
 export interface QuerySettings {

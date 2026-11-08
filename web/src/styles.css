@@ -4551,3 +4551,16 @@ pre .muted {
   max-height: calc(100vh - 2rem);
   overflow-y: auto;
 }
+
+/* A server's game's launch options */
+.launch-options .launch-option {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.5rem 0;
+}
+.launch-options .launch-option + .launch-option {
+  border-top: 1px solid var(--border);
+}
+.launch-options code {
+  overflow-wrap: anywhere;
+}

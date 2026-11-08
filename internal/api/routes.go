@@ -224,6 +224,8 @@ func (s *server) routes() []route {
 		{"POST /api/servers/{id}/update", serverRole(rbac.Operator), s.updateServer},
 		{"GET /api/servers/{id}/config", serverRole(rbac.Operator), s.getServerConfig},
 		{"PUT /api/servers/{id}/config", serverRole(rbac.Manager), s.reconfigureServer},
+		{"GET /api/servers/{id}/launch-options", serverRole(rbac.Viewer), s.launchOptions},
+		{"PUT /api/servers/{id}/launch-options/{option}", serverRole(rbac.Manager), s.setLaunchOption},
 		{"GET /api/servers/{id}/logs", serverRole(rbac.Operator), s.serverLogs},
 		// Console commands can do whatever the game's admins can.
 		{"GET /api/servers/{id}/console", serverRole(rbac.Operator), s.consoleStatus},

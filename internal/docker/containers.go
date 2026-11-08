@@ -67,6 +67,7 @@ type ContainerJSON struct {
 	} `json:"State"`
 	Config struct {
 		Image        string              `json:"Image"`
+		Cmd          []string            `json:"Cmd"`
 		Env          []string            `json:"Env"`
 		Labels       map[string]string   `json:"Labels"`
 		Tty          bool                `json:"Tty"`

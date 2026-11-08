@@ -15,6 +15,7 @@ import (
 	"path"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -39,6 +40,13 @@ type Profile struct {
 	PlayerLists map[string]ListFile `yaml:"player_lists" json:"playerLists,omitempty"`
 	// Mods is how it takes mods.
 	Mods *Mods `yaml:"mods" json:"mods,omitempty"`
+	// LaunchOptions are launch arguments a server of the game can have
+	// turned on or off from its page, such as a status endpoint.
+	LaunchOptions []LaunchOption `yaml:"launch_options" json:"launchOptions,omitempty"`
+	// ArgsVars are the variables images of the game take launch arguments
+	// in (GAME_PARAMS, …), tried in order; without one of them, launch
+	// options go in the server's post arguments (its command).
+	ArgsVars []string `yaml:"args_vars" json:"argsVars,omitempty"`
 
 	// Source is where it came from (BuiltIn or Custom), File its file, and
 	// Replaces whether a custom profile takes a built-in one's place.
@@ -81,11 +89,17 @@ type Query struct {
 	// ConsoleFirst asks through the console (names and counts) before any
 	// query port.
 	ConsoleFirst bool `yaml:"console_first" json:"consoleFirst,omitempty"`
-	// Protocol, if set, is the game's own status protocol ("minecraft" or
-	// "bedrock") on Port, or on the port in the variable PortEnv.
+	// Protocol, if set, is the game's own status protocol ("minecraft",
+	// "bedrock", or "http-status" for a JSON status page like
+	// Nightingale's /status) on Port, or on the port in the variable
+	// PortEnv, or on the port a launch argument PortArg gives
+	// (-statusPort=7778).
 	Protocol string `yaml:"protocol" json:"protocol,omitempty"`
 	Port     int    `yaml:"port" json:"port,omitempty"`
 	PortEnv  string `yaml:"port_env" json:"portEnv,omitempty"`
+	PortArg  string `yaml:"port_arg" json:"portArg,omitempty"`
+	// MaxPlayers is the game's player limit, for protocols that don't say.
+	MaxPlayers int `yaml:"max_players" json:"maxPlayers,omitempty"`
 	// A2SPorts are the game's usual Steam query ports (container ports).
 	A2SPorts []int `yaml:"a2s_ports" json:"a2sPorts,omitempty"`
 }
@@ -258,15 +272,31 @@ func (p *Profile) Validate() error {
 	q := p.Query
 	switch q.Protocol {
 	case "":
-		if q.Port != 0 || q.PortEnv != "" {
-			return errors.New("query: port and port_env go with a protocol")
+		if q.Port != 0 || q.PortEnv != "" || q.PortArg != "" {
+			return errors.New("query: port, port_env and port_arg go with a protocol")
 		}
 	case "minecraft", "bedrock":
 		if !validPort(q.Port) {
 			return fmt.Errorf("query: %s needs its port", q.Protocol)
 		}
+	case "http-status":
+		if !validPort(q.Port) && q.PortArg == "" {
+			return errors.New("query: http-status needs its port, or the launch argument that sets it (port_arg)")
+		}
+		if q.Port != 0 && !validPort(q.Port) {
+			return fmt.Errorf("query: port %d", q.Port)
+		}
 	default:
-		return fmt.Errorf("query: unknown protocol %q (minecraft or bedrock)", q.Protocol)
+		return fmt.Errorf("query: unknown protocol %q (minecraft, bedrock or http-status)", q.Protocol)
+	}
+	if q.PortArg != "" && !argRE.MatchString(q.PortArg) {
+		return fmt.Errorf("query: port_arg %q should be a launch argument such as -statusPort", q.PortArg)
+	}
+	if q.MaxPlayers < 0 {
+		return errors.New("query: max_players can't be negative")
+	}
+	if err := p.validateLaunchOptions(); err != nil {
+		return err
 	}
 	if q.PortEnv != "" && !envRE.MatchString(q.PortEnv) {
 		return fmt.Errorf("query: port_env %q isn't a variable name", q.PortEnv)
@@ -532,3 +562,74 @@ func Use(s *Set) { current.Store(s) }
 
 // Match is Current().Match.
 func Match(image string) *Profile { return Current().Match(image) }
+
+// LaunchOption is a launch argument (or a few) that a server of the game
+// can have turned on or off, such as a status endpoint. Turning it on adds
+// Args to the server's launch arguments and, with a Port, gives the server
+// that port, which is never forwarded or relayed to the internet.
+type LaunchOption struct {
+	ID          string `yaml:"id" json:"id"`
+	Name        string `yaml:"name" json:"name"`
+	Description string `yaml:"description" json:"description,omitempty"`
+	// Args are added to the launch arguments; {port} is Port.
+	Args string `yaml:"args" json:"args"`
+	// Port, if set, is the port (in the container) it opens, over Proto
+	// (tcp unless udp).
+	Port  int    `yaml:"port" json:"port,omitempty"`
+	Proto string `yaml:"proto" json:"proto,omitempty"`
+}
+
+// argRE matches a launch argument's name, such as -statusPort or --port.
+var argRE = regexp.MustCompile(`^--?[A-Za-z][A-Za-z0-9_.:-]*$`)
+
+// Rendered is the option's arguments, with its port.
+func (o LaunchOption) Rendered() string {
+	return strings.ReplaceAll(o.Args, "{port}", strconv.Itoa(o.Port))
+}
+
+// Protocol is the option's port's protocol.
+func (o LaunchOption) Protocol() string {
+	if o.Proto == "udp" {
+		return "udp"
+	}
+	return "tcp"
+}
+
+// LaunchOption finds one of the profile's launch options by ID.
+func (p *Profile) LaunchOption(id string) (LaunchOption, bool) {
+	for _, o := range p.LaunchOptions {
+		if o.ID == id {
+			return o, true
+		}
+	}
+	return LaunchOption{}, false
+}
+
+func (p *Profile) validateLaunchOptions() error {
+	seen := map[string]bool{}
+	for _, o := range p.LaunchOptions {
+		switch {
+		case !idRE.MatchString(o.ID):
+			return fmt.Errorf("launch option id %q: use lower-case letters, digits and dashes", o.ID)
+		case seen[o.ID]:
+			return fmt.Errorf("launch option %q is there twice", o.ID)
+		case strings.TrimSpace(o.Name) == "":
+			return fmt.Errorf("launch option %q needs a name", o.ID)
+		case strings.TrimSpace(o.Args) == "":
+			return fmt.Errorf("launch option %q needs its args", o.ID)
+		case o.Port != 0 && !validPort(o.Port):
+			return fmt.Errorf("launch option %q: port %d", o.ID, o.Port)
+		case strings.Contains(o.Args, "{port}") && o.Port == 0:
+			return fmt.Errorf("launch option %q uses {port} but has no port", o.ID)
+		case o.Proto != "" && o.Proto != "tcp" && o.Proto != "udp":
+			return fmt.Errorf("launch option %q: proto %q (tcp or udp)", o.ID, o.Proto)
+		}
+		seen[o.ID] = true
+	}
+	for _, v := range p.ArgsVars {
+		if !envRE.MatchString(v) {
+			return fmt.Errorf("args_vars: %q isn't a variable name", v)
+		}
+	}
+	return nil
+}
