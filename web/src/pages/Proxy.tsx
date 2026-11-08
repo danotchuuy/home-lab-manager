@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { Ago, Spinner } from "../components/common";
+import { MultiSelect } from "../components/MultiSelect";
 import { ProxyFirewall } from "../components/ProxyFirewall";
 import { ServerForwarding } from "../components/ServerForwarding";
 import { StatusOnProxyFields, statusNote } from "../components/StatusOnProxy";
@@ -289,10 +290,6 @@ export function ProxyPage() {
       setImporting(false);
     });
 
-  function toggleServer(name: string, on: boolean) {
-    set("servers", on ? [...form.servers, name].sort() : form.servers.filter((s) => s !== name));
-  }
-
   if (!loaded && !error) return <div className="page"><Spinner /></div>;
 
   const authLine = key ? `mkdir -p ~/.ssh && echo ${JSON.stringify(key.public)} >> ~/.ssh/authorized_keys` : "";
@@ -522,27 +519,21 @@ export function ProxyPage() {
         <div className="field">
           <span className="field-label">Servers</span>
           {servers.length === 0 && <span className="muted small">No servers yet.</span>}
-          <div className="server-checks">
-            {servers.map((s) => (
-              <span key={s.id} className="server-check">
-                <label className="radio">
-                  <input type="checkbox" checked={form.servers.includes(s.name)} onChange={(e) => toggleServer(s.name, e.target.checked)} />
-                  {s.name}
-                  <span className="muted small">{s.app}</span>
-                </label>
-                <button
-                  type="button"
-                  className={`btn small ghost${portsOf === s.name ? " active" : ""}`}
-                  onClick={() => setPortsOf(portsOf === s.name ? undefined : s.name)}
-                  title={`${s.name}'s ports: internet ports, and which the proxy relays and its firewall opens`}
-                >
-                  Ports
-                </button>
-              </span>
-            ))}
-          </div>
+          <MultiSelect
+            label="Servers the proxy relays"
+            options={servers.map((s) => ({ value: s.name, label: s.name, hint: s.app }))}
+            value={form.servers}
+            onChange={(names) => set("servers", [...names].sort())}
+            placeholder="Add a server…"
+            empty="None yet"
+            chipAction={{
+              label: "ports",
+              title: (o) => `${o.label}'s ports: internet ports, and which the proxy relays and its firewall opens`,
+              onClick: (o) => setPortsOf(portsOf === o.value ? undefined : o.value),
+            }}
+          />
           <span className="field-help">
-            <strong>Ports</strong> shows a server&apos;s ports as on its Port forwarding tab: their internet ports, and
+            <strong>ports</strong> on a server shows its ports as on its Port forwarding tab: their internet ports, and
             which the proxy relays, its firewall opens and UniFi forwards.
           </span>
         </div>

@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
+import { MultiSelect } from "./MultiSelect";
 import { api } from "../api";
 import type { Account, APIKeyInfo, DockerHost, GroupRole, GrantKind, Server, ServerGroup } from "../types";
 import { Spinner } from "./common";
@@ -115,13 +116,7 @@ function GroupCard({ group, lists, busy, run }: { group: ServerGroup; lists: Lis
   // The host a server is on: after its @, or this one.
   const hostOf = (server: string) => (server.includes("@") ? server.slice(server.lastIndexOf("@") + 1) : "local");
 
-  function toggleHost(id: string, on: boolean) {
-    setDraft((d) => ({ ...d, hosts: on ? [...(d.hosts ?? []), id] : (d.hosts ?? []).filter((h) => h !== id) }));
-  }
 
-  function toggleServer(name: string, on: boolean) {
-    setDraft((d) => ({ ...d, servers: on ? [...d.servers, name] : d.servers.filter((s) => s !== name) }));
-  }
 
   function setGrant(i: number, change: (g: ServerGroup["grants"][number]) => ServerGroup["grants"][number]) {
     setDraft((d) => ({ ...d, grants: d.grants.map((g, n) => (n === i ? change(g) : g)) }));
@@ -147,36 +142,33 @@ function GroupCard({ group, lists, busy, run }: { group: ServerGroup; lists: Lis
         <>
           <span className="field-label">Whole Docker hosts</span>
           <p className="muted small no-margin">Every server on a host, including ones added there later.</p>
-          <div className="group-servers">
-            {lists.hosts.map((h) => (
-              <label key={h.id} className="small">
-                <input type="checkbox" checked={draftHosts.includes(h.id)} onChange={(e) => toggleHost(h.id, e.target.checked)} />{" "}
-                {h.name}
-                {h.local ? "" : ` (${h.id})`}
-              </label>
-            ))}
-          </div>
+          <MultiSelect
+            label="Whole Docker hosts"
+            options={lists.hosts.map((h) => ({ value: h.id, label: h.name, hint: h.local ? "this host" : h.id }))}
+            value={draftHosts}
+            onChange={(hosts) => setDraft((d) => ({ ...d, hosts }))}
+            placeholder="Add a host…"
+            empty="No whole hosts"
+          />
         </>
       )}
 
       <span className="field-label">Servers</span>
       {names.length === 0 && <p className="muted small no-margin">No servers yet.</p>}
-      <div className="group-servers">
-        {names.map((n) => {
-          const byHost = draftHosts.includes(hostOf(n));
-          return (
-            <label key={n} className="small" title={byHost ? "In the group with its whole host" : undefined}>
-              <input
-                type="checkbox"
-                checked={byHost || draft.servers.includes(n)}
-                disabled={byHost}
-                onChange={(e) => toggleServer(n, e.target.checked)}
-              />{" "}
-              {n}
-            </label>
-          );
-        })}
-      </div>
+      {names.length > 0 && (
+        <MultiSelect
+          label="Servers"
+          options={names.map((n) => ({
+            value: n,
+            label: n,
+            fixed: draftHosts.includes(hostOf(n)) ? "with its whole host" : undefined,
+          }))}
+          value={draft.servers}
+          onChange={(servers) => setDraft((d) => ({ ...d, servers }))}
+          placeholder="Add a server…"
+          empty="No servers yet"
+        />
+      )}
 
       <span className="field-label">Who has access</span>
       {draft.grants.map((g, i) => (
@@ -274,12 +266,11 @@ export function ServerGroupPicker({ server, onChanged }: { server: Server; onCha
   // The host it's on: after its @, or this one, as groups name hosts.
   const serverHost = server.name.includes("@") ? server.name.slice(server.name.lastIndexOf("@") + 1) : "local";
 
-  async function toggle(id: string, on: boolean) {
-    const current = groups!.filter((g) => g.servers.includes(server.name)).map((g) => g.id);
+  async function saveGroups(ids: string[]) {
     setBusy(true);
     setError(undefined);
     try {
-      await api.setServerGroups(server.name, on ? [...current, id] : current.filter((g) => g !== id));
+      await api.setServerGroups(server.name, ids);
       await load();
       onChanged();
     } catch (e) {
@@ -298,24 +289,22 @@ export function ServerGroupPicker({ server, onChanged }: { server: Server; onCha
       {error && <div className="alert error">{error}</div>}
       {!groups && !error && <Spinner />}
       {groups?.length === 0 && <p className="muted small">There are no groups yet.</p>}
-      <div className="group-servers">
-        {groups?.map((g) => {
-          // In the group with every server on its host: set under System → Server groups.
-          const viaHost = (g.hosts ?? []).includes(serverHost);
-          return (
-            <label key={g.id} className="small" title={viaHost ? "Every server on its host is in this group (System → Access → Server groups)" : undefined}>
-              <input
-                type="checkbox"
-                checked={viaHost || g.servers.includes(server.name)}
-                disabled={busy || viaHost}
-                onChange={(e) => toggle(g.id, e.target.checked)}
-              />{" "}
-              {g.name}
-              {viaHost && <span className="muted"> (through its host)</span>}
-            </label>
-          );
-        })}
-      </div>
+      {groups && groups.length > 0 && (
+        <MultiSelect
+          label="Server groups"
+          options={groups.map((g) => ({
+            value: g.id,
+            label: g.name,
+            // In the group with every server on its host: set under System → Server groups.
+            fixed: (g.hosts ?? []).includes(serverHost) ? "through its host" : undefined,
+          }))}
+          value={groups.filter((g) => g.servers.includes(server.name)).map((g) => g.id)}
+          onChange={saveGroups}
+          disabled={busy}
+          placeholder="Add to a group…"
+          empty="In no group: only admins can use it"
+        />
+      )}
     </>
   );
 }
