@@ -133,3 +133,14 @@ func TestSiteGroupsWithHosts(t *testing.T) {
 		}
 	}
 }
+
+func TestProxyDomains(t *testing.T) {
+	set := Settings{Enabled: true, Sites: []Site{{Hostname: "friends.example.com"}, {Hostname: "cf.example.com", NoProxy: true}, {Hostname: "public.example.com"}}}
+	if got := set.ProxyDomains(); len(got) != 2 || got[0] != "friends.example.com" || got[1] != "public.example.com" {
+		t.Errorf("domains = %v", got)
+	}
+	set.Enabled = false
+	if got := set.ProxyDomains(); len(got) != 0 {
+		t.Errorf("page off: %v", got)
+	}
+}

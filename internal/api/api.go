@@ -1280,6 +1280,22 @@ func (s *server) previewProxy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"config": config, "servers": servers, "path": proxy.ConfigPath})
 }
 
+// applyProxyStatus puts the status page's sites (and the proxy's own
+// address) on the proxy as they now are, without applying the relays: after
+// the status page's sites change.
+func (s *server) applyProxyStatus(w http.ResponseWriter, r *http.Request) {
+	// Getting a certificate can take a few minutes.
+	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Minute)
+	defer cancel()
+	s.Proxy.RetryCert()
+	res, err := s.Proxy.ApplyStatus(ctx)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": res})
+}
+
 func (s *server) applyProxy(w http.ResponseWriter, r *http.Request) {
 	// Getting the status page's certificate can take a few minutes.
 	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Minute)

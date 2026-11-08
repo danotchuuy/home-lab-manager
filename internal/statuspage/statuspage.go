@@ -80,10 +80,28 @@ type Site struct {
 	// none shows every server on the page.
 	Groups []string `json:"groups"`
 	// Title and Message replace the page's, if set.
-	Title       string `json:"title,omitempty"`
-	Message     string `json:"message,omitempty"`
+	Title   string `json:"title,omitempty"`
+	Message string `json:"message,omitempty"`
+	// NoProxy keeps the site off the proxy server, while it serves the
+	// status page (published through Cloudflare Tunnel instead, say).
+	NoProxy     bool   `json:"noProxy,omitempty"`
 	ViewHash    string `json:"viewHash,omitempty"`
 	DetailsHash string `json:"detailsHash,omitempty"`
+}
+
+// ProxyDomains are the sites' domains the proxy server serves, while the
+// page is on: every site's but those kept off it (NoProxy).
+func (set Settings) ProxyDomains() []string {
+	var out []string
+	if !set.Enabled {
+		return out
+	}
+	for _, site := range set.Sites {
+		if !site.NoProxy {
+			out = append(out, site.Hostname)
+		}
+	}
+	return out
 }
 
 // siteFor is the site a request's Host is for, or nil for the page on any

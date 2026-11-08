@@ -696,6 +696,19 @@ func (s *Service) forgetCloudflare(ctx context.Context, keep []string) {
 	}
 }
 
+// ApplyStatus serves the status page on the proxy as its settings and the
+// status page's sites say, without applying the relays again: for a site
+// added, changed or removed.
+func (s *Service) ApplyStatus(ctx context.Context) (*StatusSiteResult, error) {
+	s.applyMu.Lock()
+	defer s.applyMu.Unlock()
+	st, servers, err := s.Plan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.applyStatusRecorded(ctx, st, servers), nil
+}
+
 // applyStatusRecorded is applyStatus, keeping its outcome. servers are
 // the relayed servers, whose ports the status page can't also have.
 func (s *Service) applyStatusRecorded(ctx context.Context, st Settings, servers []Proxied) *StatusSiteResult {

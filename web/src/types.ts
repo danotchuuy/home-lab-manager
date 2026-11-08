@@ -2409,6 +2409,8 @@ export interface StatusSite {
   groups: string[];
   title?: string;
   message?: string;
+  /** Kept off the proxy server while it serves the status page. */
+  noProxy?: boolean;
   hasViewPassword?: boolean;
   hasDetailsPassword?: boolean;
   /** On save: a new password, "" to remove it, or left out to keep it. */

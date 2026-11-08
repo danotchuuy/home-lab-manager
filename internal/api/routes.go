@@ -118,6 +118,7 @@ func (s *server) routes() []route {
 		{"POST /api/proxy/install", admin, s.installProxy},
 		{"GET /api/proxy/preview", admin, s.previewProxy},
 		{"POST /api/proxy/apply", admin, s.applyProxy},
+		{"POST /api/proxy/status/apply", admin, s.applyProxyStatus},
 		{"POST /api/proxy/remove", admin, s.removeProxy},
 		{"POST /api/proxy/wan-check", admin, s.checkProxyWAN},
 		{"GET /api/proxy/adopt", admin, s.planAdoption},
