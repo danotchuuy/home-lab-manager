@@ -46,6 +46,18 @@ function toRow(r: TunnelRouteState, zones: CloudflareZone[]): Row {
   };
 }
 
+/** What a route to hlm shows: a status page site, or the page-wide status page. */
+function hlmRouteShows(host: string, sites: { hostname: string; title?: string }[]): string {
+  const site = sites.find((s) => s.hostname.toLowerCase() === host);
+  return site ? `the ${site.title || site.hostname} site` : "the status page";
+}
+
+function hlmRouteHelp(host: string, sites: { hostname: string }[]): string {
+  return sites.some((s) => s.hostname.toLowerCase() === host)
+    ? "A status page site: its servers and passwords (System → Status page)."
+    : "Only the status page reaches through it, with every server on the page and the page-wide passwords; add it as a site under System → Status page for its own servers and passwords.";
+}
+
 function hostname(row: Row, zones: CloudflareZone[]): string {
   const zone = zones.find((z) => z.id === row.zoneId)?.name ?? "";
   const sub = row.sub.trim().toLowerCase().replace(/\.+$/, "");
@@ -123,6 +135,11 @@ export function HostnamesEditor({
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
+  // The status page's sites, to say what a route to hlm shows.
+  const [sites, setSites] = useState<{ hostname: string; title?: string }[]>([]);
+  useEffect(() => {
+    api.statusPageSettings().then((r) => setSites(r.sites), () => {});
+  }, []);
 
   const load = async () => {
     const d = await api.tunnelRoutes();
@@ -281,7 +298,9 @@ export function HostnamesEditor({
                     </td>
                     <td>
                       {row.hlm ? (
-                        <span className="muted small">hlm&apos;s own</span>
+                        <span className="muted small" title={hlmRouteHelp(hostname(row, zones), sites)}>
+                          hlm&apos;s own: {hlmRouteShows(hostname(row, zones), sites)}
+                        </span>
                       ) : row.other ? (
                         <input
                           type="number"

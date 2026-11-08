@@ -8,6 +8,7 @@ import type {
   StatusPageEntry,
   StatusPageSettings as Settings,
   StatusSite,
+  ProxySettings,
   ProxyStatusSites,
   TunnelRoute,
   TunnelRoutes,
@@ -15,6 +16,7 @@ import type {
 import { bareName } from "../util";
 import { Spinner } from "./common";
 import { RouteBadge } from "./Hostnames";
+import { StatusOnProxyFields, statusNote } from "./StatusOnProxy";
 import { CopyButton } from "./ConnectInfo";
 
 const SOURCE: Record<AddressSuggestion["source"], string> = { proxy: "proxy server", unifi: "UniFi port forward" };
@@ -47,6 +49,10 @@ export function StatusPageSettings() {
     host: string;
     result?: ProxyStatusSites | null;
   }>();
+  // The proxy's settings, to serve the page there from here too.
+  const [proxyForm, setProxyForm] = useState<ProxySettings>();
+  const [proxyBusy, setProxyBusy] = useState(false);
+  const [proxyNote, setProxyNote] = useState<{ ok: boolean; text: string }>();
   const [groups, setGroups] = useState<ServerGroup[]>([]);
 
   useEffect(() => {
@@ -64,18 +70,43 @@ export function StatusPageSettings() {
     api.groups().then(setGroups, () => {});
     api.tunnelRoutes().then(setTunnel, () => setTunnel(undefined));
     api.proxy().then(
-      (p) =>
+      (p) => {
         setProxy({
           configured: p.configured,
           on: !!p.settings.statusPage,
           host: p.settings.host,
           result: p.statusSites,
-        }),
+        });
+        setProxyForm(p.settings);
+      },
       () => setProxy(undefined),
     );
   }, []);
 
   if (!set) return error ? <div className="alert error small">{error}</div> : <Spinner />;
+
+  const setProxyField = <K extends keyof ProxySettings>(k: K, v: ProxySettings[K]) =>
+    setProxyForm((f) => (f ? { ...f, [k]: v } : f));
+
+  // Saves the proxy's settings and applies them (its relays as well, as the
+  // Proxy page's Save & apply does).
+  async function applyOnProxy() {
+    if (!proxyForm) return;
+    setProxyBusy(true);
+    setProxyNote(undefined);
+    try {
+      const saved = await api.saveProxy(proxyForm);
+      setProxyForm(saved);
+      const r = await api.applyProxy();
+      setProxy((p) => (p ? { ...p, on: !!saved.statusPage, result: r.status ?? null } : p));
+      const note = statusNote(r.status).trim();
+      setProxyNote({ ok: !r.status?.error, text: note || "Applied: the status page isn't served on the proxy server." });
+    } catch (e) {
+      setProxyNote({ ok: false, text: (e as Error).message });
+    } finally {
+      setProxyBusy(false);
+    }
+  }
 
   const change = (c: Partial<Settings>) => {
     setSet({ ...set, ...c });
@@ -293,6 +324,29 @@ export function StatusPageSettings() {
           Add a site
         </button>
       </div>
+
+      <h3>On the proxy server</h3>
+      {!proxy?.configured || !proxyForm ? (
+        <p className="muted small no-margin">
+          With a <Link to="/proxy">proxy server</Link> (nginx on a VPS, say) and its WireGuard tunnel set up, the page
+          and its sites can be served there too, beside the game servers, without opening hlm&apos;s port.
+        </p>
+      ) : (
+        <fieldset className="config-section">
+          <legend>Proxy server ({proxyForm.host})</legend>
+          <StatusOnProxyFields form={proxyForm} set={setProxyField} where="status" />
+          <div className="btn-row">
+            <button type="button" className="btn small" onClick={applyOnProxy} disabled={proxyBusy}>
+              {proxyBusy ? "Applying…" : "Save & apply on the proxy"}
+            </button>
+            <span className="muted small">
+              Saves these with the <Link to="/proxy">proxy&apos;s settings</Link> and applies its configuration (its
+              game relays too, as they are).
+            </span>
+          </div>
+          {proxyNote && <div className={`alert ${proxyNote.ok ? "success" : "error"} small`}>{proxyNote.text}</div>}
+        </fieldset>
+      )}
 
       <h3>Servers</h3>
       {set.servers.length === 0 && <p className="muted small">No servers on the page yet.</p>}
@@ -742,8 +796,8 @@ function SiteProxy({
   if (!proxy.on) {
     return (
       <p className="muted small no-margin">
-        Or serve it on the proxy server ({proxy.host}): turn on{" "}
-        <Link to="/proxy">status page sites on the Proxy page</Link> and point {host}&apos;s DNS at it.
+        Or serve it on the proxy server ({proxy.host}): turn that on under <strong>On the proxy server</strong> below,
+        and point {host}&apos;s DNS at it.
       </p>
     );
   }
@@ -754,7 +808,7 @@ function SiteProxy({
       <span className="form-error">{r.error}</span>
     ) : (
       <>
-        not applied yet: apply on the <Link to="/proxy">Proxy page</Link>
+        not applied yet: <strong>Save &amp; apply on the proxy</strong> below
       </>
     );
   } else if (r.https.includes(host)) {

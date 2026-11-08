@@ -115,9 +115,31 @@ func (s *Service) IsSiteHost(host string) bool {
 const OnlyHeader = "X-Hlm-Status-Only"
 
 // StatusOnly reports whether a request may reach only the status page: for
-// a site's domain, or marked with OnlyHeader.
+// a site's domain, one of the other status-only hostnames (UseStatusHosts),
+// or marked with OnlyHeader.
 func (s *Service) StatusOnly(r *http.Request) bool {
-	return r.Header.Get(OnlyHeader) != "" || s.IsSiteHost(r.Host)
+	return r.Header.Get(OnlyHeader) != "" || s.IsSiteHost(r.Host) || s.isStatusHost(r.Host)
+}
+
+// UseStatusHosts gives hostnames that, like a site's domain, reach only
+// the status page, but show the page-wide one: Cloudflare Tunnel routes to
+// hlm that aren't a site's.
+func (s *Service) UseStatusHosts(f func() []string) { s.statusHosts = f }
+
+func (s *Service) isStatusHost(host string) bool {
+	if s.statusHosts == nil {
+		return false
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(host, ".")
+	for _, h := range s.statusHosts() {
+		if strings.EqualFold(h, host) {
+			return true
+		}
+	}
+	return false
 }
 
 // DefaultTitle is the page's title when none is set.
@@ -210,6 +232,10 @@ type Service struct {
 	page     *Page
 	names    []string // the server behind each of page.Servers
 	built    time.Time
+
+	// statusHosts are other hostnames that reach only the status page; see
+	// UseStatusHosts.
+	statusHosts func() []string
 }
 
 // New creates the service.
