@@ -344,6 +344,10 @@ func (s *Service) Wants(info docker.ContainerJSON, cfg Config, ports []Mapping) 
 	if direct {
 		if req, ok := deploy.RequestFromLabels(info.Config.Labels); ok && req.IPAddress != "" {
 			target = req.IPAddress
+		} else if ep, ok := info.NetworkSettings.Networks[network]; ok && ep.IPAMConfig != nil && ep.IPAMConfig.IPv4Address != "" {
+			// A fixed address set outside hlm (Unraid's template, say), which
+			// Docker keeps while it's stopped.
+			target = ep.IPAMConfig.IPv4Address
 		} else if ep, ok := info.NetworkSettings.Networks[network]; ok && ep.IPAddress != "" {
 			target = ep.IPAddress
 			note = "This server has no fixed IP, so its address may change when it restarts; set a fixed IP in its settings."
@@ -484,6 +488,18 @@ func (s *Service) status(ctx context.Context, cl *unifi.Client, cfg Config, info
 			st.Rules = append(st.Rules, RuleStatus{Want: w, State: "unknown"})
 		}
 		return st
+	}
+	// A server with its own LAN address that Docker chose forgets it while
+	// it's stopped (asleep, with its wake listener there): its rules keep
+	// going where they went.
+	if target == "" && !info.State.Running && info.Config.Labels[deploy.LabelDirectIP] == "true" && len(forwarded) > 0 {
+		for _, pf := range existing {
+			if ownedBy(pf, name) && pf.Fwd != "" {
+				wants, target = groupPorts(forwarded, pf.Fwd), pf.Fwd
+				st.Target, st.Note = target, ""
+				break
+			}
+		}
 	}
 	used := map[string]bool{}
 	for _, w := range wants {

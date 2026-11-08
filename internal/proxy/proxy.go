@@ -654,6 +654,13 @@ func (s *Service) relayed(ctx context.Context, st Settings) []Proxied {
 			// A container with its own (macvlan/ipvlan) LAN address is
 			// reached by whichever end of the tunnel is on its LAN.
 			addr, _, err := wg.lanReach(info, host)
+			if err != nil && !info.State.Running {
+				// Stopped (asleep, with its wake listener at its address), with
+				// an address Docker chose and forgot: where it was relayed to.
+				if last, perr := netip.ParseAddr(s.lastRelayAddress(name)); perr == nil {
+					addr, err = last, nil
+				}
+			}
 			if err != nil {
 				p.Error = err.Error()
 				out = append(out, p)

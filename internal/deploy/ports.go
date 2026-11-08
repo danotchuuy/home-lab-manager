@@ -2,8 +2,10 @@ package deploy
 
 import (
 	"fmt"
+	"maps"
 	"net/netip"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -159,6 +161,30 @@ func DeclaredPorts(exposed map[string]struct{}, env []string) map[string]struct{
 	}
 	for _, k := range UnraidPorts(env) {
 		out[k] = struct{}{}
+	}
+	return out
+}
+
+// ContainerAddresses are a container's addresses on its networks: the ones
+// Docker gave it while it runs, and while it's stopped (asleep, say), the
+// fixed ones it keeps (the network's IPAMConfig, or hlm's request), so what
+// reaches it doesn't lose it then.
+func ContainerAddresses(info docker.ContainerJSON) []netip.Addr {
+	var out []netip.Addr
+	add := func(s string) {
+		if a, err := netip.ParseAddr(strings.TrimSpace(s)); err == nil && !slices.Contains(out, a) {
+			out = append(out, a)
+		}
+	}
+	for _, n := range slices.Sorted(maps.Keys(info.NetworkSettings.Networks)) {
+		ep := info.NetworkSettings.Networks[n]
+		add(ep.IPAddress)
+		if ep.IPAMConfig != nil {
+			add(ep.IPAMConfig.IPv4Address)
+		}
+	}
+	if req, ok := RequestFromLabels(info.Config.Labels); ok {
+		add(req.IPAddress)
 	}
 	return out
 }
