@@ -41,7 +41,7 @@ func TestCompareContainers(t *testing.T) {
 	same.HostConfig.Binds = []string{"/mnt/user/appdata/plex:/config", strings.Repeat("a", 64) + ":/transcode"}
 	same.NetworkingConfig = &docker.NetworkingConfig{EndpointsConfig: map[string]docker.EndpointSettings{
 		"br0": {IPAMConfig: &docker.EndpointIPAMConfig{IPv4Address: "192.168.1.50"}, MacAddress: "02:42:c0:a8:01:32"}}}
-	if got := compareContainers(cur, same, img, info, extras); len(got) != 2 {
+	if got := compareContainers(cur, same, img, info, extras, false); len(got) != 2 {
 		// The same container still can't keep its second network or
 		// --volumes-from.
 		t.Errorf("same container:\n%s", strings.Join(got, "\n"))
@@ -56,7 +56,7 @@ func TestCompareContainers(t *testing.T) {
 		},
 		NetworkingConfig: &docker.NetworkingConfig{EndpointsConfig: map[string]docker.EndpointSettings{"br0": {MacAddress: "02:00:00:00:00:01"}}},
 	}
-	got := strings.Join(compareContainers(cur, want, img, info, extras), "\n")
+	got := strings.Join(compareContainers(cur, want, img, info, extras, false), "\n")
 	for _, w := range []string{
 		"stop publishing port 32400/tcp on 32400", "publish port 32400/tcp on 32401",
 		"/config would be /mnt/user/appdata/plex (read-only), not /mnt/user/appdata/plex",
@@ -90,5 +90,54 @@ func TestFromContainerArgs(t *testing.T) {
 		if err != nil || strings.Join(spec.Create.Cmd, "\x00") != strings.Join(tt.in, "\x00") {
 			t.Errorf("%q -> %s -> %q %v", tt.in, joined, spec.Create.Cmd, err)
 		}
+	}
+}
+
+// On br0, an Unraid container's port variables (and ports it exposes
+// beyond its image's) become its ports, so they're declared again.
+func TestFromContainerUnraidPorts(t *testing.T) {
+	var img docker.Image
+	img.Config.ExposedPorts = map[string]struct{}{"27015/udp": {}}
+	cur := docker.CreateRequest{
+		Image: "nodiaque/steamcmd:enshrouded", Env: []string{"UDP_PORT_15637=15637", "TCP_PORT_8080=8081"},
+		ExposedPorts: map[string]struct{}{"27015/udp": {}, "9000/tcp": {}},
+		HostConfig:   docker.HostConfig{NetworkMode: "br0"},
+	}
+	var info docker.ContainerJSON
+	info.ID = "abc"
+	app, req := fromContainer(LocalHost, "enshrouded", info, cur, img, true)
+	ports := map[string]string{}
+	for _, c := range app.Config {
+		if c.Type == catalog.TypePort {
+			ports[c.Target+"/"+c.Mode] = req.Values[c.ID]
+		}
+	}
+	// The image's own port isn't repeated; Unraid's value is kept.
+	if len(ports) != 3 || ports["15637/udp"] != "15637" || ports["8080/tcp"] != "8081" || ports["9000/tcp"] != "9000" {
+		t.Errorf("ports %v", ports)
+	}
+	// The variables stay too.
+	vars := 0
+	for _, c := range app.Config {
+		if c.Type == catalog.TypeVariable && strings.Contains(c.Target, "_PORT_") {
+			vars++
+		}
+	}
+	if vars != 2 {
+		t.Errorf("port variables kept: %d", vars)
+	}
+	// On a bridge network they'd be published, so they aren't made ports.
+	cur.HostConfig.NetworkMode = "bridge"
+	app, _ = fromContainer(LocalHost, "enshrouded", info, cur, img, false)
+	for _, c := range app.Config {
+		if c.Type == catalog.TypePort {
+			t.Errorf("bridge: port %+v", c)
+		}
+	}
+
+	// A new container that wouldn't declare them is reported.
+	got := strings.Join(compareContainers(cur, docker.CreateRequest{Image: cur.Image}, img, info, containerExtras{}, true), "\n")
+	if !strings.Contains(got, "no longer declare port 15637/udp") || !strings.Contains(got, "no longer declare port 9000/tcp") || strings.Contains(got, "27015") {
+		t.Errorf("changes:\n%s", got)
 	}
 }

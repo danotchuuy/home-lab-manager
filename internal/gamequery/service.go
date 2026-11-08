@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/catalog"
 	"github.com/danotchuuy/home-lab-manager/internal/deploy"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
+	"github.com/danotchuuy/home-lab-manager/internal/gameprofile"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
 	"github.com/danotchuuy/home-lab-manager/internal/notify"
 	"github.com/danotchuuy/home-lab-manager/internal/reach"
@@ -147,9 +149,7 @@ func New(o Options) *Service {
 		o.HostAddresses = func(string) []string { return []string{"127.0.0.1"} }
 	}
 	if o.Probes == nil {
-		o.Probes = map[string]func(context.Context, string) (Result, error){
-			ProtoA2S: A2S, ProtoMinecraft: Minecraft, ProtoBedrock: Bedrock, ProtoTCP: TCP,
-		}
+		o.Probes = maps.Clone(probes) // the same as the probe command's
 	}
 	return &Service{opts: o, boot: o.Now(), servers: map[string]*server{}}
 }
@@ -160,7 +160,7 @@ func (s *Service) allSettings() (map[string]Settings, error) {
 	return m, err
 }
 
-var protocols = []string{ProtoAuto, ProtoA2S, ProtoMinecraft, ProtoBedrock, ProtoRCON, ProtoTCP, ProtoOff}
+var protocols = []string{ProtoAuto, ProtoA2S, ProtoMinecraft, ProtoBedrock, ProtoHTTPStatus, ProtoRCON, ProtoTCP, ProtoOff}
 
 func (set Settings) check() (Settings, error) {
 	if !slices.Contains(protocols, set.Protocol) {
@@ -387,9 +387,12 @@ func (s *Service) poll(ctx context.Context, name string) {
 		return
 	}
 	if sv.started != info.State.StartedAt {
-		// Started (again) since last time: forget what was seen before.
+		// Started (again) since last time: forget what was seen before, and
+		// look for a way to ask it again now (it may have been recreated
+		// with another port, or a status page turned on).
 		sv.started, sv.answered, sv.fails, sv.result = info.State.StartedAt, false, 0, nil
 		sv.status, sv.since = StatusStarting, s.opts.Now()
+		sv.detected = time.Time{}
 	}
 	set, method, last, detected := sv.settings, sv.method, sv.last, sv.detected
 	prefer := ""
@@ -410,6 +413,14 @@ func (s *Service) poll(ctx context.Context, name string) {
 	// and then while it doesn't.
 	if method == nil {
 		method = last
+	}
+	if method == nil {
+		// The way its game's profile names (its status page, say) is right
+		// even before the game answers it: keep asking that way while it
+		// loads, rather than giving up on it until the next look around.
+		if c, ok := gameCandidate(info, gameprofile.Match(info.Config.Image)); ok {
+			method = &Settings{Protocol: c.Protocol, Port: c.Port}
+		}
 	}
 	if method != nil {
 		res, err = s.query(ctx, info, *method, prefer)
@@ -438,7 +449,7 @@ func (s *Service) query(ctx context.Context, info docker.ContainerJSON, m Settin
 		return Result{}, fmt.Errorf("unknown protocol %q", m.Protocol)
 	}
 	proto := "udp"
-	if m.Protocol == ProtoMinecraft || m.Protocol == ProtoTCP {
+	if m.Protocol == ProtoMinecraft || m.Protocol == ProtoTCP || m.Protocol == ProtoHTTPStatus {
 		proto = "tcp"
 	}
 	addrs := reach.Addresses(info, m.Port, proto, s.opts.HostAddresses(info.ID))
@@ -456,7 +467,16 @@ func (s *Service) query(ctx context.Context, info docker.ContainerJSON, m Settin
 		res, err := probe(cctx, a)
 		cancel()
 		if err == nil {
+			// Protocols that don't say the player limit: the game's usual.
+			if res.MaxPlayers == 0 && res.HasPlayers {
+				if g := gameprofile.Match(info.Config.Image); g != nil {
+					res.MaxPlayers = g.Query.MaxPlayers
+				}
+			}
 			return res, nil
+		}
+		if errors.Is(err, ErrLoading) {
+			return Result{}, err // it's there, just not ready
 		}
 		errs = append(errs, a+": "+shortError(err))
 	}

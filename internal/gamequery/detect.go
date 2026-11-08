@@ -1,11 +1,13 @@
 package gamequery
 
 import (
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/danotchuuy/home-lab-manager/internal/catalog"
+	"github.com/danotchuuy/home-lab-manager/internal/deploy"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/gameprofile"
 )
@@ -20,17 +22,6 @@ type candidate struct {
 // first: from its game, its template's ports, and its ports.
 func candidates(info docker.ContainerJSON, app *catalog.App, consoleReplies bool) []candidate {
 	game := gameprofile.Match(info.Config.Image)
-	env := map[string]string{}
-	for _, kv := range info.Config.Env {
-		k, v, _ := strings.Cut(kv, "=")
-		env[k] = v
-	}
-	envPort := func(name string, def int) int {
-		if n, err := strconv.Atoi(env[name]); name != "" && err == nil && n > 0 && n < 65536 {
-			return n
-		}
-		return def
-	}
 	var out []candidate
 	add := func(c candidate) {
 		if (c.Port > 0 || c.Protocol == ProtoRCON) && !slices.Contains(out, c) && len(out) < 16 {
@@ -45,13 +36,8 @@ func candidates(info docker.ContainerJSON, app *catalog.App, consoleReplies bool
 		add(candidate{ProtoRCON, 0})
 	}
 	// The game's own status protocol.
-	if game != nil {
-		switch game.Query.Protocol {
-		case "bedrock":
-			add(candidate{ProtoBedrock, envPort(game.Query.PortEnv, game.Query.Port)})
-		case "minecraft":
-			add(candidate{ProtoMinecraft, envPort(game.Query.PortEnv, game.Query.Port)})
-		}
+	if c, ok := gameCandidate(info, game); ok {
+		add(c)
 	}
 
 	// The template's ports, with Steam query ports first.
@@ -73,7 +59,7 @@ func candidates(info docker.ContainerJSON, app *catalog.App, consoleReplies bool
 			ports = append(ports, port{n, strings.ToLower(cmpOr(c.Mode, "tcp")), strings.ToLower(c.Name)})
 		}
 	}
-	for key := range info.Config.ExposedPorts {
+	for key := range deploy.DeclaredPorts(info.Config.ExposedPorts, info.Config.Env) {
 		n, proto, _ := strings.Cut(key, "/")
 		if p, err := strconv.Atoi(n); err == nil {
 			ports = append(ports, port{p, cmpOr(proto, "tcp"), ""})
@@ -125,4 +111,54 @@ func consoleGame(image string) *gameprofile.Profile {
 		return p
 	}
 	return nil
+}
+
+// argPort finds the port a launch argument sets (-statusPort=7778, or
+// -statusPort 7778) in a container's command or its variables (where many
+// images take the game's arguments); 0 if it isn't there.
+func argPort(info docker.ContainerJSON, arg string) int {
+	re := regexp.MustCompile(`(?:^|[\s"'=])` + regexp.QuoteMeta(arg) + `[=\s]+(\d{1,5})\b`)
+	texts := append([]string{strings.Join(info.Config.Cmd, " ")}, info.Config.Env...)
+	for _, t := range texts {
+		if m := re.FindStringSubmatch(t); m != nil {
+			if n, err := strconv.Atoi(m[1]); err == nil && n > 0 && n < 65536 {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
+// gameCandidate is the way a server's game profile says to ask it, if it
+// names one (and, for a port set by a launch argument, the server has it).
+func gameCandidate(info docker.ContainerJSON, game *gameprofile.Profile) (candidate, bool) {
+	if game == nil {
+		return candidate{}, false
+	}
+	env := map[string]string{}
+	for _, kv := range info.Config.Env {
+		k, v, _ := strings.Cut(kv, "=")
+		env[k] = v
+	}
+	envPort := func(name string, def int) int {
+		if n, err := strconv.Atoi(env[name]); name != "" && err == nil && n > 0 && n < 65536 {
+			return n
+		}
+		return def
+	}
+	var c candidate
+	switch game.Query.Protocol {
+	case "bedrock":
+		c = candidate{ProtoBedrock, envPort(game.Query.PortEnv, game.Query.Port)}
+	case "minecraft":
+		c = candidate{ProtoMinecraft, envPort(game.Query.PortEnv, game.Query.Port)}
+	case ProtoHTTPStatus:
+		// Its status page is on when the server is started with it.
+		port := game.Query.Port
+		if game.Query.PortArg != "" {
+			port = argPort(info, game.Query.PortArg)
+		}
+		c = candidate{ProtoHTTPStatus, envPort(game.Query.PortEnv, port)}
+	}
+	return c, c.Protocol != "" && c.Port > 0
 }

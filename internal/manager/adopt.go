@@ -240,7 +240,11 @@ func (m *Manager) AdoptPlan(ctx context.Context, id string) (AdoptPlan, error) {
 	}
 	// A container with its own address on the LAN keeps it.
 	keepIP := ""
+	// On the host's network or its own LAN address, a container is reached
+	// on the ports it declares, rather than ports published for it.
+	direct := cur.HostConfig.NetworkMode == "host"
 	if n, ok := networks[cur.HostConfig.NetworkMode]; ok {
+		direct = direct || n.Driver == "macvlan" || n.Driver == "ipvlan"
 		if ep, ok := info.NetworkSettings.Networks[n.Name]; ok {
 			if ep.IPAMConfig != nil && ep.IPAMConfig.IPv4Address != "" {
 				keepIP = ep.IPAMConfig.IPv4Address
@@ -274,7 +278,7 @@ func (m *Manager) AdoptPlan(ctx context.Context, id string) (AdoptPlan, error) {
 			tries = append(tries, candidate{AdoptUnraid, &app, requestFromUnraid(&app, ut, "", bare), true})
 		}
 	}
-	app, req := fromContainer(host, bare, info, cur, img)
+	app, req := fromContainer(host, bare, info, cur, img, direct)
 	tries = append(tries, candidate{AdoptContainer, app, req, true})
 
 	for i, t := range tries {
@@ -311,7 +315,7 @@ func (m *Manager) AdoptPlan(ctx context.Context, id string) (AdoptPlan, error) {
 		} else {
 			plan.TemplateID = t.app.ID
 		}
-		plan.Changes = compareContainers(cur, spec.Create, img, info, extras)
+		plan.Changes = compareContainers(cur, spec.Create, img, info, extras, direct)
 		for _, w := range spec.Warnings {
 			plan.Notes = append(plan.Notes, w)
 		}

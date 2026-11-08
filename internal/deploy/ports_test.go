@@ -114,3 +114,20 @@ func TestExtraParamsPublishRange(t *testing.T) {
 		t.Error("-p 9000 not exposed")
 	}
 }
+
+func TestUnraidPorts(t *testing.T) {
+	env := []string{"UDP_PORT_15637=15637", "TCP_PORT_8080=8081", "SERVER_PORT=1", "UDP_PORT_99999=1", "udp_port_5=5", "TZ=UTC"}
+	got := UnraidPorts(env)
+	if strings.Join(got, ",") != "15637/udp,8080/tcp" {
+		t.Errorf("UnraidPorts = %v", got)
+	}
+	all := DeclaredPorts(map[string]struct{}{"27015/udp": {}}, env)
+	if len(all) != 3 {
+		t.Errorf("DeclaredPorts = %v", all)
+	}
+	for _, k := range []string{"27015/udp", "15637/udp", "8080/tcp"} {
+		if _, ok := all[k]; !ok {
+			t.Errorf("no %s in %v", k, all)
+		}
+	}
+}

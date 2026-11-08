@@ -27,6 +27,7 @@ const PROTOCOL_LABEL: Record<QueryProtocol, string> = {
   a2s: "Steam server query (A2S, UDP)",
   minecraft: "Minecraft Java server list ping (TCP)",
   bedrock: "Minecraft Bedrock ping (UDP)",
+  "http-status": "HTTP status page (Nightingale's /status, TCP)",
   rcon: "Player list through the console (RCON, Palworld's REST API or exec)",
   tcp: "Only check a TCP port is open",
   off: "Don't check",

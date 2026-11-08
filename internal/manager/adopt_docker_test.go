@@ -312,3 +312,46 @@ func TestDockerAdoptUnraid(t *testing.T) {
 		t.Fatalf("plan without Unraid's template: %+v %v", plan, err)
 	}
 }
+
+// A container Unraid made on the host's network (or br0) declares no ports
+// of its own; Unraid passes them as variables. Adopting it declares them,
+// with nothing reported as changing.
+func TestDockerAdoptUnraidPortVariables(t *testing.T) {
+	ctx, d, m := adoptTestSetup(t, "")
+	name := "hlm-test-unraidports-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	removeAfter(t, d, name)
+	id, _, err := d.CreateContainer(ctx, name, docker.CreateRequest{
+		Image: "busybox:1.37", Cmd: []string{"sleep", "3600"},
+		Env:        []string{"UDP_PORT_15637=15637", "TCP_PORT_18099=18099"},
+		HostConfig: docker.HostConfig{NetworkMode: "host"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.StartContainer(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := m.AdoptPlan(ctx, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Changes) != 0 {
+		t.Fatalf("changes:\n%s", strings.Join(plan.Changes, "\n"))
+	}
+	srv, err := m.Adopt(ctx, name, func(Event) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := d.InspectContainer(ctx, srv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"15637/udp", "18099/tcp"} {
+		if _, ok := info.Config.ExposedPorts[p]; !ok {
+			t.Errorf("%s not declared: %v", p, info.Config.ExposedPorts)
+		}
+	}
+	if !slices.Contains(info.Config.Env, "UDP_PORT_15637=15637") {
+		t.Errorf("variable dropped: %v", info.Config.Env)
+	}
+}

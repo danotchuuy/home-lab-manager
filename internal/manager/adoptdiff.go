@@ -18,7 +18,7 @@ import (
 // devices as the template's items, and the rest as docker run flags
 // (ExtraParams) and arguments (PostArgs). Every item's value is in the
 // request too, so localizing the template doesn't move its folders.
-func fromContainer(host, name string, info docker.ContainerJSON, cur docker.CreateRequest, img docker.Image) (*catalog.App, deploy.Request) {
+func fromContainer(host, name string, info docker.ContainerJSON, cur docker.CreateRequest, img docker.Image, direct bool) (*catalog.App, deploy.Request) {
 	app := &catalog.App{
 		ID: adoptedID("container", host, name), Name: name, Repository: cur.Image,
 		Icon: cur.Labels["net.unraid.docker.icon"], WebUI: cur.Labels["net.unraid.docker.webui"],
@@ -58,6 +58,39 @@ func fromContainer(host, name string, info docker.ContainerJSON, cur docker.Crea
 				continue
 			}
 			seen[k+v] = true
+			add(catalog.Config{ID: "port:" + port + "/" + proto, Name: strings.ToUpper(proto) + " port " + port, Type: catalog.TypePort, Target: port, Value: v, Mode: proto})
+		}
+	}
+
+	// On the host's network or its own LAN address it's reached on the
+	// ports it declares: those it exposes beyond its image's, and those
+	// Unraid passes it as variables (UDP_PORT_15637=15637). They become its
+	// ports, so they're declared again, and port forwarding and status
+	// queries know them. (On a bridge network, a port would be published.)
+	if direct {
+		unraid := map[string]string{} // port → the value Unraid passed
+		for _, kv := range cur.Env {
+			if ps := deploy.UnraidPorts([]string{kv}); len(ps) == 1 {
+				_, v, _ := strings.Cut(kv, "=")
+				unraid[ps[0]] = strings.TrimSpace(v)
+			}
+		}
+		for _, key := range sortedKeys(deploy.DeclaredPorts(cur.ExposedPorts, cur.Env)) {
+			if _, fromImage := img.Config.ExposedPorts[key]; fromImage {
+				continue // the image declares it itself
+			}
+			port, proto, _ := strings.Cut(key, "/")
+			if proto == "" {
+				proto = "tcp"
+			}
+			v := port
+			if u, err := strconv.Atoi(unraid[key]); err == nil && u > 0 && u < 65536 {
+				v = strconv.Itoa(u)
+			}
+			if seen[key+v] {
+				continue
+			}
+			seen[key+v] = true
 			add(catalog.Config{ID: "port:" + port + "/" + proto, Name: strings.ToUpper(proto) + " port " + port, Type: catalog.TypePort, Target: port, Value: v, Mode: proto})
 		}
 	}
@@ -301,7 +334,7 @@ func quoteArg(a string) string {
 
 // compareContainers says what a container made from want would do
 // differently from the container cur (info, extras) is, in words.
-func compareContainers(cur, want docker.CreateRequest, img docker.Image, info docker.ContainerJSON, extras containerExtras) []string {
+func compareContainers(cur, want docker.CreateRequest, img docker.Image, info docker.ContainerJSON, extras containerExtras, direct bool) []string {
 	var out []string
 	say := func(format string, a ...any) { out = append(out, fmt.Sprintf(format, a...)) }
 
@@ -336,6 +369,19 @@ func compareContainers(cur, want docker.CreateRequest, img docker.Image, info do
 		for _, p := range sortedKeys(wp) {
 			if !cp[p] {
 				say("It would publish port %s.", p)
+			}
+		}
+	}
+	// On the host's network or its own LAN address, the ports it declares
+	// are what port forwarding and status queries go by.
+	if direct {
+		have := deploy.DeclaredPorts(want.ExposedPorts, want.Env)
+		for k := range img.Config.ExposedPorts {
+			have[k] = struct{}{}
+		}
+		for _, k := range sortedKeys(deploy.DeclaredPorts(cur.ExposedPorts, cur.Env)) {
+			if _, ok := have[k]; !ok {
+				say("It would no longer declare port %s, so port forwarding and status queries wouldn't know about it.", k)
 			}
 		}
 	}

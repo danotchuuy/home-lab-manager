@@ -543,6 +543,7 @@ hang while its container keeps running. So hlm asks each running server how it's
 | **Steam server query** (A2S, UDP) | Most Steam games: Valheim, Enshrouded, ARK, Rust, Counter-Strike 2, 7 Days to Die, V Rising, Conan Exiles… |
 | **Minecraft Java server list ping** (TCP) | Minecraft Java, modded or not |
 | **Minecraft Bedrock ping** (UDP) | Minecraft Bedrock |
+| **HTTP status page** (TCP) | Nightingale (`/status`, once its **Status endpoint** [game option](#game-options) is on): ready or still loading, and the players' count and names |
 | **Player list through the [console](#sending-commands-to-a-server)** | Palworld (through its REST API, with the player limit, server name and version too; or `ShowPlayers` over RCON), Minecraft (`list`), ARK (`ListPlayers`): needs the console set up with RCON, Palworld's REST API, or a command run in the container |
 | **TCP port check** | Anything else: only whether the port is open, no players |
 
@@ -613,10 +614,19 @@ name: My Game
 match: [[mygame], [my, game, server]]
 query:
   console_first: false      # ask through the console (names, counts) before query ports
-  protocol: minecraft       # optional: minecraft or bedrock, on port (or the port in port_env)
+  protocol: minecraft       # optional: minecraft, bedrock or http-status, on port (or the port in port_env)
   port: 25565
   port_env: SERVER_PORT
+  port_arg: -statusPort     # or the port a launch argument sets (-statusPort=7778), in its command or a variable
+  max_players: 6            # the player limit, for protocols that don't say it
   a2s_ports: [27015]        # Steam query ports to try (container ports)
+launch_options:             # arguments a server can have turned on or off on its page (see Game options)
+  - id: status
+    name: Status endpoint
+    description: What it's for, shown with the switch.
+    args: -statusPort={port} -ini:Engine:[HTTPServer.Listeners]:+ListenerOverrides=(Port={port},BindAddress=0.0.0.0)
+    port: 7778              # a port it opens (in the container), and its proto (tcp unless udp)
+args_vars: [GAME_PARAMS]    # variables images take the game's arguments in; else the post arguments
 console:
   rcon_port: 27015          # when the image doesn't say
   stdin: false              # the server reads commands from its console
@@ -662,6 +672,23 @@ mods:                       # installing mods from Modrinth (see Mods and plugin
 
 Every field but `id`, `name` and `match` is optional. The built-in profiles are good examples: **View** shows each
 one.
+
+#### Game options
+
+A game's profile can have **launch options**: arguments a server of that game can have turned on or off, under **Game
+options** on its page (managers of the server can switch them; the arguments come from the profile, which only admins
+write or import). Turning one on recreates the server (restarting it, if it runs) with the arguments added where its
+image takes the game's arguments: the first variable of the profile's `args_vars` the server has (most SteamCMD images
+take them in one, like `GAME_PARAMS`), or else its post arguments (its command). An option with a port gives the server
+that port too (published on a free host port, or declared on a LAN network), and that port is only for your network:
+it's never forwarded, relayed or opened in the proxy server's firewall. Turning it off takes them out again. The card
+says exactly which arguments go where.
+
+The built-in one is Nightingale's **Status endpoint**. Nightingale has no Steam query; its dedicated server has an HTTP
+status page instead, off unless it's started with `-statusPort` (and, to be reachable from outside its container, a
+listener override). With it on, hlm asks `/status` on port 7778: Starting while it answers that it's still loading,
+then Online with the players' count and names (of 6, Nightingale's limit). A game whose profile names its status
+protocol is asked that way on every check while it starts, not only when hlm looks around for a way.
 
 #### Sharing profiles
 
@@ -1301,6 +1328,12 @@ apart: the game listens on 2456 in each container, and you publish one on host p
 host networking the container port is used on the host directly. On a LAN (macvlan/ipvlan) network nothing is published
 and the field is ignored.
 
+With host networking or a LAN network, the server's ports are the ones its container declares, and port forwarding,
+status queries and port checks go by those. Containers Unraid made on such a network (`br0`, say) don't declare their
+template's ports: Unraid passes them as variables instead, `UDP_PORT_15637=15637` and `TCP_PORT_…`, and hlm counts those
+as ports too, so a server made by Unraid (or [adopted](#adopting-containers-hlm-didnt-make) from it) is forwarded and
+queried on them.
+
 On bridge and host networks, hlm checks those host ports as you edit and refuses to install or save if one is already
 taken by another container (running or stopped, since a stopped one takes its ports back when it starts) or, when the
 Docker host is this machine, by another program listening on it. The port's field shows what uses it. Docker's own
@@ -1787,6 +1820,10 @@ Where its settings come from:
   variables (those the image doesn't set itself), labels and devices as the template's settings, and the rest
   (volumes, capabilities, limits, health check, user, entrypoint, …) as extra `docker run` parameters, with its command
   as post arguments.
+
+On the host's network or a LAN network like `br0`, a container is reached on the ports it declares, so those (beyond
+its image's own) and Unraid's port variables (`UDP_PORT_15637`) become the adopted server's ports, declared again, for
+port forwarding and status queries; the variables stay too.
 
 Either way, hlm builds the new container and compares it with the running one first, and lists anything that would
 differ: a port, folder or variable that would change, settings hlm's servers can't have (`--pid`, `--ipc`, `--link`,
@@ -2505,6 +2542,8 @@ when the `HLM_*` one isn't set.
 | `POST /api/servers/{id}/update`                | Pull the latest image and recreate. Streams NDJSON.                               |
 | `GET /api/servers/{id}/config`                 | Template plus the saved settings, for an edit form.                               |
 | `PUT /api/servers/{id}/config`                 | Recreate with new settings. Streams NDJSON.                                       |
+| `GET /api/servers/{id}/launch-options`         | The server's game's [launch options](#game-options) (`options`: id, name, description, args, port, proto, `on`, `where`). Viewers. |
+| `PUT /api/servers/{id}/launch-options/{option}` | `{on}`: turn one on or off, recreating the server (its port kept off the internet). Streams NDJSON. Managers of the server. |
 | `GET /api/servers/{id}/logs?tail=500`          | Server-sent events, one log line per event.                                       |
 | `GET/PUT /api/servers/{id}/console`            | How the server takes [console commands](#sending-commands-to-a-server): `{mode, host?, port?, password?, passwordVar?, exec?, quickCommands?}` (`mode` is `stdin`, `rcon`, `exec` or empty), plus whether it's ready, what was detected, and quick commands. The password is never returned; `PUT` with it empty keeps it, and with `clearPassword` removes it. `PUT` takes a manager. |
 | `POST /api/servers/{id}/console/test`          | Checks console settings as given, without saving them (a manager).               |
