@@ -112,6 +112,7 @@ func (m *fakeManager) CopyData(_ context.Context, from, to string, folders []str
 	m.call("copy " + from + " " + to + " " + strings.Join(folders, ","))
 	return files.ArchiveStats{Files: 3, Bytes: 2048}, m.copyFail
 }
+func (m *fakeManager) DataSize(context.Context, string, []string) (int64, error) { return 4096, nil }
 func (m *fakeManager) HostPortsInUse(_ context.Context, host string) (map[string]bool, error) {
 	if host != manager.LocalHost {
 		return map[string]bool{}, nil

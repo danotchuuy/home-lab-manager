@@ -441,6 +441,19 @@ type Event struct {
 	Target   string               `json:"target,omitempty"`
 	Progress *docker.PullProgress `json:"progress,omitempty"`
 	Server   *Server              `json:"server,omitempty"`
+	// Copy is how far copying a server's data has got.
+	Copy *CopyProgress `json:"copy,omitempty"`
+}
+
+// CopyProgress is how far a copy of a server's data has got.
+type CopyProgress struct {
+	Files int   `json:"files"`
+	Bytes int64 `json:"bytes"`
+	// Total is how much there is to copy, 0 while it's being measured (or
+	// if it can't be).
+	Total int64 `json:"total,omitempty"`
+	// Rate is the recent speed, in bytes a second.
+	Rate float64 `json:"rate"`
 }
 
 // Install pulls the image for req and creates and starts the container.

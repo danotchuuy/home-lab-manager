@@ -1249,7 +1249,8 @@ For its data, choose:
 - **Copy the data folders as they are now.** The data folders, and Docker volumes made for the image's `VOLUME` paths,
   are copied through Docker, the way a backup is made and restored, but without storing anything in between. **Stop the
   original while copying** (on by default) keeps a game from being caught halfway through a save. The original is
-  started again as soon as the copy is done.
+  started again as soon as the copy is done. A progress bar shows how much is copied of how much, the speed and about
+  how long is left.
 - **Copy one of its backups:** restores that backup into the copy.
 - **Settings only:** the copy starts with empty data folders.
 
@@ -1270,7 +1271,9 @@ it would copy and what follows the server, then the settings form, to change any
 
 1. the server is made on the other host, stopped;
 2. the original is stopped (if it runs) and its data folders, and the Docker volumes made for the image's `VOLUME`
-   paths, are copied across, as for a clone;
+   paths, are copied across, as for a clone. A progress bar shows how much is copied of how much, how much is left,
+   the speed (over the last few seconds) and about how long to go. The total is measured on the old host while the
+   copy runs (by file size, as the copy counts it), so the bar starts moving straight away;
 3. the moved server is started there, if the original was running. Until it runs, any failure removes it and starts the
    original again, as it was;
 4. everything kept by the server's name moves to its new one: server groups (and so Discord), scheduled tasks, backup
