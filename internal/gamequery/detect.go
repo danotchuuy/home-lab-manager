@@ -35,9 +35,17 @@ func candidates(info docker.ContainerJSON, app *catalog.App, consoleReplies bool
 	if consoleReplies && game != nil && game.Query.ConsoleFirst {
 		add(candidate{ProtoRCON, 0})
 	}
-	// The game's own status protocol.
+	// The game's own status protocol, then on the other ports it may
+	// answer on (an image's own, say).
 	if c, ok := gameCandidate(info, game); ok {
 		add(c)
+	}
+	if game != nil {
+		if proto := gameProtocol(game.Query.Protocol); proto != "" {
+			for _, port := range game.Query.Ports {
+				add(candidate{proto, port})
+			}
+		}
 	}
 
 	// The template's ports, with Steam query ports first.
@@ -127,6 +135,19 @@ func argPort(info docker.ContainerJSON, arg string) int {
 		}
 	}
 	return 0
+}
+
+// gameProtocol is the query protocol for a profile's protocol name.
+func gameProtocol(p string) string {
+	switch p {
+	case "bedrock":
+		return ProtoBedrock
+	case "minecraft":
+		return ProtoMinecraft
+	case ProtoHTTPStatus:
+		return ProtoHTTPStatus
+	}
+	return ""
 }
 
 // gameCandidate is the way a server's game profile says to ask it, if it

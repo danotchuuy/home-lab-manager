@@ -22,7 +22,7 @@ func nightingale(t *testing.T) (*gameprofile.Profile, gameprofile.LaunchOption) 
 	return g, o
 }
 
-const statusArgs = "-statusPort=7778 -ini:Engine:[HTTPServer.Listeners]:+ListenerOverrides=(Port=7778,BindAddress=0.0.0.0)"
+const statusArgs = "-statusPort=7778 -ini:Engine:[HTTPServer.Listeners]:+ListenerOverrides=(Port=7778,BindAddress=0.0.0.0) -ini:Engine:[HTTPServer.Listeners]:DefaultBindAddress=0.0.0.0"
 
 // In the variable the image takes the game's arguments in, with the
 // server's own arguments kept; the port as an extra one; and back out.
@@ -91,7 +91,18 @@ func TestLaunchOptionInPostArgs(t *testing.T) {
 	}
 	// The arguments split as Build reads them.
 	spec, err := deploy.Build(&catalog.App{ID: "n", Repository: "x"}, deploy.Request{Name: "ng", PostArgs: on.PostArgs}, deploy.Env{})
-	if err != nil || len(spec.Create.Cmd) != 3 || !strings.HasPrefix(spec.Create.Cmd[2], "-ini:Engine:[HTTPServer.Listeners]") {
+	if err != nil || len(spec.Create.Cmd) != 4 || !strings.HasPrefix(spec.Create.Cmd[2], "-ini:Engine:[HTTPServer.Listeners]") ||
+		spec.Create.Cmd[3] != "-ini:Engine:[HTTPServer.Listeners]:DefaultBindAddress=0.0.0.0" {
 		t.Errorf("cmd %q %v", spec.Create.Cmd, err)
+	}
+	// A server with the option's older arguments: still on, and turning it
+	// on again brings them up to date without doubling any.
+	old := "-log -statusPort=7778 -ini:Engine:[HTTPServer.Listeners]:+ListenerOverrides=(Port=7778,BindAddress=0.0.0.0)"
+	if !optionOn(old, o) {
+		t.Error("older arguments not seen as on")
+	}
+	again, _ := applyLaunchOption(app, deploy.Request{TemplateID: "n", Name: "ng", PostArgs: &old}, g, o, true, 7778)
+	if *again.PostArgs != "-log "+statusArgs {
+		t.Errorf("updated: %q", *again.PostArgs)
 	}
 }
