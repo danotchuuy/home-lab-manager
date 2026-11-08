@@ -210,6 +210,8 @@ func (s *server) routes() []route {
 		{"GET /api/servers/{id}/export", serverRole(rbac.Operator), s.exportServer},
 		{"POST /api/servers/{id}/clone/preview", admin, s.previewClone},
 		{"POST /api/servers/{id}/clone", admin, s.cloneServer},
+		{"POST /api/servers/{id}/migrate/preview", admin, s.previewMigrate},
+		{"POST /api/servers/{id}/migrate", admin, s.migrateServer},
 		{"POST /api/servers/check-ports", signedIn, s.checkServerPorts},
 		{"GET /api/servers/{id}", serverRole(rbac.Viewer), s.getServer},
 		{"PUT /api/servers/{id}/tags", serverRole(rbac.Manager), s.setServerTags},

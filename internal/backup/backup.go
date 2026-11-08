@@ -38,7 +38,10 @@ import (
 const (
 	secretSettings = "backup-s3"
 	secretPlans    = "backup-plans"
-	defaultPrefix  = "hlm"
+	// secretSeries maps servers that moved to another Docker host to the
+	// name their backups are kept under (the one they had before).
+	secretSeries  = "backup-series"
+	defaultPrefix = "hlm"
 	// legacyDefaultPrefix was defaultPrefix before the short name changed
 	// from gsh to hlm. Settings saved then without a prefix still use it.
 	legacyDefaultPrefix = "gsh"
@@ -534,6 +537,46 @@ func (s *Service) plans() (map[string]Plan, error) {
 	return plans, err
 }
 
+// seriesName is the name a server's backups are kept under: its own, or,
+// for a server that moved to another Docker host, the one it had before.
+func (s *Service) seriesName(name string) string {
+	var m map[string]string
+	if _, err := s.secrets.Get(secretSeries, &m); err == nil && m[name] != "" {
+		return m[name]
+	}
+	return name
+}
+
+// RenameServer moves a server's backup plan to its new name, when it moves
+// to another Docker host. Its backups stay where they are, under the name
+// they were taken under, and new ones go with them, so the history carries
+// on without copying anything.
+func (s *Service) RenameServer(from, to string) error {
+	s.plansMu.Lock()
+	defer s.plansMu.Unlock()
+	if _, err := s.secrets.MoveKey(secretPlans, from, to); err != nil {
+		return err
+	}
+	m := map[string]string{}
+	if _, err := s.secrets.Get(secretSeries, &m); err != nil {
+		return err
+	}
+	if m == nil {
+		m = map[string]string{}
+	}
+	series := m[from]
+	if series == "" {
+		series = from
+	}
+	delete(m, from)
+	if series == to {
+		delete(m, to)
+	} else {
+		m[to] = series
+	}
+	return s.secrets.Set(secretSeries, m)
+}
+
 // Plans returns every server's backup plan and last results, by name.
 func (s *Service) Plans() (map[string]Plan, error) { return s.plans() }
 
@@ -633,7 +676,7 @@ func (s *Service) Overview(ctx context.Context, id string) (Overview, error) {
 		if err != nil {
 			return nil, err
 		}
-		objs, err := serverSeries(st.t.Settings, name).list(ctx, st.cl)
+		objs, err := serverSeries(st.t.Settings, s.seriesName(name)).list(ctx, st.cl)
 		return newestFirst(objs), err
 	}
 	if o.Backups, err = list(""); err != nil {
@@ -967,7 +1010,7 @@ func (s *Service) run(ctx context.Context, name string, plan Plan, prog *Progres
 	}
 	if plan.keeping().prunes() {
 		s.setStage(prog, "cleaning")
-		if err := prune(ctx, st, serverSeries(st.t.Settings, name), plan.keeping(), s.loc()); err != nil {
+		if err := prune(ctx, st, serverSeries(st.t.Settings, s.seriesName(name)), plan.keeping(), s.loc()); err != nil {
 			run.Warnings = append(run.Warnings, "couldn't delete old backups: "+err.Error())
 		}
 	}
@@ -1037,7 +1080,7 @@ func (s *Service) copyTo(ctx context.Context, from *store, name, key string, cp 
 		res.Error = "unexpected key " + key
 		return res
 	}
-	r := serverSeries(to.t.Settings, name)
+	r := serverSeries(to.t.Settings, s.seriesName(name))
 	dst := r.newKey(t)
 	rc, _, err := from.open(ctx, key)
 	if err != nil {
@@ -1109,7 +1152,7 @@ func (s *Service) pause(ctx context.Context, name string, prog *Progress, run *R
 // checksum, counts and warnings.
 func (s *Service) upload(ctx context.Context, st *store, name string, folders, exclude []string, prog *Progress, run *Run) error {
 	s.setStage(prog, "uploading")
-	key := serverSeries(st.t.Settings, name).newKey(time.Now())
+	key := serverSeries(st.t.Settings, s.seriesName(name)).newKey(time.Now())
 	pr, pw := io.Pipe()
 	type result struct {
 		stats files.ArchiveStats
@@ -1265,7 +1308,7 @@ func (s *Service) restore(ctx context.Context, src *store, name, key string, pla
 // IsBackupOf reports whether key is one of server name's backups.
 func (s *Service) IsBackupOf(name, key string) bool {
 	t, err := s.target("")
-	return err == nil && serverSeries(t.Settings, name).has(key)
+	return err == nil && serverSeries(t.Settings, s.seriesName(name)).has(key)
 }
 
 // RestoreInto extracts one of server from's backups into another server's
@@ -1277,7 +1320,7 @@ func (s *Service) RestoreInto(ctx context.Context, from, key, toID string, progr
 	if err != nil {
 		return Run{}, err
 	}
-	if !serverSeries(src.t.Settings, from).has(key) {
+	if !serverSeries(src.t.Settings, s.seriesName(from)).has(key) {
 		return Run{}, ErrBadKey
 	}
 	_, to, err := s.serverName(ctx, toID)
@@ -1367,7 +1410,7 @@ func (s *Service) backupKey(ctx context.Context, id, key, target string) (*store
 	if err != nil {
 		return nil, "", err
 	}
-	if !serverSeries(st.t.Settings, name).has(key) {
+	if !serverSeries(st.t.Settings, s.seriesName(name)).has(key) {
 		return nil, "", ErrBadKey
 	}
 	return st, name, nil

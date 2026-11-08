@@ -751,3 +751,15 @@ func (s *Service) ProbeCopy(ctx context.Context, server string, info docker.Cont
 	}
 	return Result{}, lastErr
 }
+
+// RenameServer moves a server's status query settings to its new name, when it moves to
+// another Docker host (its name gains or changes its @host).
+func (s *Service) RenameServer(from, to string) error {
+	s.mu.Lock()
+	delete(s.servers, from)
+	s.mu.Unlock()
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
+	_, err := s.opts.Secrets.MoveKey(secretName, from, to)
+	return err
+}

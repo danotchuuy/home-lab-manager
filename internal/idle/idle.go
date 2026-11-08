@@ -579,3 +579,22 @@ func (s *Service) BeforeStart(ctx context.Context, name string) {
 	}
 	s.setAsleep(name, nil)
 }
+
+// RenameServer moves a server's idle settings to its new name, when it moves to
+// another Docker host (its name gains or changes its @host).
+// Being asleep was the old container's state, so it's dropped, as when a
+// server is deleted.
+func (s *Service) RenameServer(from, to string) error {
+	if m, err := s.asleepAll(); err == nil {
+		if a, ok := m[from]; ok && a.Listener != "" {
+			s.removeListener(context.Background(), from, a.Listener)
+		}
+	}
+	if err := s.setAsleep(from, nil); err != nil {
+		return err
+	}
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
+	_, err := s.opts.Secrets.MoveKey(settingsName, from, to)
+	return err
+}

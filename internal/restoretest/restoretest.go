@@ -604,3 +604,29 @@ func lastLine(s string) string {
 	lines := strings.Split(strings.TrimSpace(s), "\n")
 	return strings.TrimSpace(lines[len(lines)-1])
 }
+
+// RenameServer moves a server's restore test settings and results to its new name, when it moves to
+// another Docker host (its name gains or changes its @host).
+func (s *Service) RenameServer(from, to string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, err := s.load()
+	if err != nil {
+		return err
+	}
+	moved := false
+	if v, ok := st.Settings[from]; ok {
+		st.Settings[to] = v
+		delete(st.Settings, from)
+		moved = true
+	}
+	if v, ok := st.Results[from]; ok {
+		st.Results[to] = v
+		delete(st.Results, from)
+		moved = true
+	}
+	if !moved {
+		return nil
+	}
+	return s.opts.Secrets.Set(secretName, st)
+}

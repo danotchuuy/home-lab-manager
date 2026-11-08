@@ -536,3 +536,30 @@ func (s *Store) ForgetSubject(subject Subject) error {
 	}
 	return s.save(list)
 }
+
+// RenameServer moves a server's place in server groups to its new name, when it moves to
+// another Docker host (its name gains or changes its @host).
+func (s *Store) RenameServer(from, to string) error {
+	if !validServer.MatchString(to) {
+		return fmt.Errorf("%q isn't a server name", to)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	list, err := s.load()
+	if err != nil {
+		return err
+	}
+	moved := false
+	for i := range list {
+		if j := slices.Index(list[i].Servers, from); j >= 0 {
+			servers := slices.Clone(list[i].Servers)
+			servers[j] = to
+			list[i].Servers = slices.Compact(servers)
+			moved = true
+		}
+	}
+	if !moved {
+		return nil
+	}
+	return s.save(list)
+}

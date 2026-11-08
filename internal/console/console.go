@@ -872,3 +872,12 @@ func (s *Service) Run(ctx context.Context) {
 		}
 	}
 }
+
+// RenameServer moves a server's console settings to its new name, when it moves to
+// another Docker host (its name gains or changes its @host).
+func (s *Service) RenameServer(from, to string) error {
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
+	_, err := s.opts.Secrets.MoveKey(secretName, from, to)
+	return err
+}

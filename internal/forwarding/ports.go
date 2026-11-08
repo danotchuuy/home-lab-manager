@@ -196,3 +196,23 @@ func (s *Service) ForgetServer(name string) error {
 	delete(all, name)
 	return s.saveOptions(all)
 }
+
+// RenameServer moves a server's port forwarding choices to its new name, when it moves to
+// another Docker host (its name gains or changes its @host).
+// Its rules on the router are named after the server: remove the old
+// name's (Remove) and add the new one's (Sync) once it runs there.
+func (s *Service) RenameServer(from, to string) error {
+	s.portsMu.Lock()
+	defer s.portsMu.Unlock()
+	all, err := s.allOptions()
+	if err != nil {
+		return err
+	}
+	v, ok := all[from]
+	if !ok {
+		return nil
+	}
+	all[to] = v
+	delete(all, from)
+	return s.saveOptions(all)
+}

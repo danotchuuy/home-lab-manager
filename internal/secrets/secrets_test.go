@@ -85,3 +85,29 @@ func TestTamperingIsDetected(t *testing.T) {
 		t.Errorf("tampered file: err = %v", err)
 	}
 }
+
+func TestMoveKey(t *testing.T) {
+	s, err := Open(t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := s.MoveKey("plans", "a", "b"); ok || err != nil {
+		t.Fatalf("no secret: %v %v", ok, err)
+	}
+	s.Set("plans", map[string]int{"a": 1, "b": 9, "c": 3})
+	if ok, err := s.MoveKey("plans", "a", "b"); !ok || err != nil {
+		t.Fatalf("move: %v %v", ok, err)
+	}
+	var got map[string]int
+	s.Get("plans", &got)
+	if len(got) != 2 || got["b"] != 1 || got["c"] != 3 {
+		t.Errorf("after: %v", got)
+	}
+	if ok, _ := s.MoveKey("plans", "missing", "x"); ok {
+		t.Error("moved a missing key")
+	}
+	s.Set("list", []int{1})
+	if _, err := s.MoveKey("list", "a", "b"); err == nil {
+		t.Error("moved a key in a list")
+	}
+}

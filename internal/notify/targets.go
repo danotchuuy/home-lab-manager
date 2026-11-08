@@ -485,3 +485,27 @@ func minutes(clock string) (int, bool) {
 	}
 	return tm.Hour()*60 + tm.Minute(), true
 }
+
+// RenameServer moves a server's place in notification targets to its new name, when it moves to
+// another Docker host (its name gains or changes its @host).
+func (s *Service) RenameServer(from, to string) error {
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
+	set, err := s.Settings()
+	if err != nil {
+		return err
+	}
+	moved := false
+	for i := range set.Targets {
+		if j := slices.Index(set.Targets[i].Servers, from); j >= 0 {
+			servers := slices.Clone(set.Targets[i].Servers)
+			servers[j] = to
+			set.Targets[i].Servers = servers
+			moved = true
+		}
+	}
+	if !moved {
+		return nil
+	}
+	return s.saveSettings(set)
+}

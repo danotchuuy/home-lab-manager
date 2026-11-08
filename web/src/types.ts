@@ -2404,3 +2404,25 @@ export interface AdoptPlan {
   /** It's running, so adopting restarts it. */
   restart: boolean;
 }
+
+/** Why a moved server's network or address has to be chosen again on the new host. */
+export interface NetworkChoice {
+  /** Its network, subnets and fixed address where it is now. */
+  network: string;
+  subnets: string[];
+  ipAddress?: string;
+  /** The network's subnets on the new host, if it has it. */
+  target?: string[];
+  reason: string;
+}
+
+/** How a server would move to another Docker host. */
+export interface MigratePreview extends TransferPreview {
+  /** Its name there (name@host). */
+  name: string;
+  /** It runs now: it's stopped while its data is copied, then started there. */
+  running: boolean;
+  network?: NetworkChoice;
+  /** Port forwards, web addresses and the like that are pointed at the new host. */
+  follows: string[];
+}

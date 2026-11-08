@@ -296,3 +296,12 @@ func or(v, def int) int {
 	}
 	return v
 }
+
+// RenameServer moves a server's health settings to its new name, when it moves to
+// another Docker host (its name gains or changes its @host).
+func (s *Store) RenameServer(from, to string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.secrets.MoveKey(secretName, from, to)
+	return err
+}

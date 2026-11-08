@@ -1753,3 +1753,55 @@ func (s *Service) RunSync(ctx context.Context, interval time.Duration) {
 		}
 	}
 }
+
+// RenameServer moves a server's web addresses to its new name, when it moves to
+// another Docker host (its name gains or changes its @host).
+// The routes are applied again, so its hostnames reach it on its new host
+// (through that host's own tunnel, if it has one).
+func (s *Service) RenameServer(ctx context.Context, from, to string) error {
+	s.mu.Lock()
+	rs, err := s.routes()
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	moved := false
+	for i := range rs {
+		if rs[i].Address == "" && rs[i].Server == from {
+			rs[i].Server = to
+			moved = true
+		}
+	}
+	if !moved {
+		s.mu.Unlock()
+		return nil
+	}
+	err = s.secrets.Set(secretRoutes, rs)
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if tunnels, _ := s.tunnels(); len(tunnels) == 0 {
+		return nil
+	}
+	_, err = s.Apply(ctx)
+	return err
+}
+
+// ServerHostnames lists the hostnames routed to a server, from the saved
+// routes.
+func (s *Service) ServerHostnames(name string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rs, err := s.routes()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, r := range rs {
+		if r.Address == "" && r.Server == name {
+			out = append(out, r.Hostname)
+		}
+	}
+	return out
+}

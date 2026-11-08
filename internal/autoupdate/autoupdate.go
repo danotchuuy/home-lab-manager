@@ -671,3 +671,20 @@ func (s *Service) audit(action, target, server string, r Result) {
 	}
 	s.opts.Audit.Record(e)
 }
+
+// RenameServer moves a server's update policy and results to its new name, when it moves to
+// another Docker host (its name gains or changes its @host).
+func (s *Service) RenameServer(from, to string) error {
+	s.clearState(from)
+	return s.update(func(set *Settings) error {
+		if v, ok := set.Servers[from]; ok {
+			set.Servers[to] = v
+			delete(set.Servers, from)
+		}
+		if v, ok := set.Results[from]; ok {
+			set.Results[to] = v
+			delete(set.Results, from)
+		}
+		return nil
+	})
+}

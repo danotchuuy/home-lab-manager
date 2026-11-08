@@ -4544,3 +4544,10 @@ pre .muted {
   padding: 0.25rem 0 0.5rem;
   white-space: normal;
 }
+
+/* Moving a server: the network dialog has a network form in it */
+.modal.wide {
+  width: min(640px, 100%);
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+}

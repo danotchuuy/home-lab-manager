@@ -229,3 +229,17 @@ func (s *Service) suggest(ctx context.Context, info docker.ContainerJSON) []File
 	s.mu.Unlock()
 	return found
 }
+
+// RenameServer moves a server's pinned settings files to its new name, when it moves to
+// another Docker host (its name gains or changes its @host).
+func (s *Service) RenameServer(from, to string) error {
+	list, err := s.Pinned(from)
+	if err != nil || len(list) == 0 {
+		return err
+	}
+	if _, err := s.SetPinned(to, list); err != nil {
+		return err
+	}
+	_, err = s.SetPinned(from, nil)
+	return err
+}
