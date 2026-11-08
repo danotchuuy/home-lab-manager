@@ -73,6 +73,9 @@ type ContainerJSON struct {
 		Tty          bool                `json:"Tty"`
 		OpenStdin    bool                `json:"OpenStdin"`
 		ExposedPorts map[string]struct{} `json:"ExposedPorts"`
+		// MacAddress is the MAC set for the container's network, on older
+		// Docker versions (newer ones keep it on the network's endpoint).
+		MacAddress string `json:"MacAddress,omitempty"`
 		// Healthcheck is the container's check: its own, or the image's.
 		Healthcheck *Healthcheck `json:"Healthcheck,omitempty"`
 	} `json:"Config"`

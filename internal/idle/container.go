@@ -2,6 +2,7 @@ package idle
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/danotchuuy/home-lab-manager/internal/deploy"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/gameprofile"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
@@ -34,37 +36,129 @@ func checkExecutable(path string) string {
 	return ""
 }
 
-// listenerPorts are the ports a wake listener takes over: the server's
-// published ones, which Docker frees while it's stopped.
-func listenerPorts(info docker.ContainerJSON) (map[string][]docker.PortBinding, error) {
-	switch mode := info.HostConfig.NetworkMode; {
-	case mode == "host":
-		return nil, errors.New("waking on a connection needs published ports, and this server uses the host's network")
-	case strings.HasPrefix(mode, "container:"):
-		return nil, errors.New("waking on a connection needs published ports, and this server uses another container's network")
+// listenerNet is where a wake listener takes a sleeping server's place.
+type listenerNet struct {
+	// ports are the ports it listens on ("25565/tcp").
+	ports []string
+	// bindings are the server's published ports, which Docker frees while
+	// it's stopped; nil for a server with its own LAN address.
+	bindings map[string][]docker.PortBinding
+	// network and endpoint are the server's macvlan/ipvlan network and its
+	// address there (with its MAC, so the LAN sees the same device), for a
+	// server with its own LAN address.
+	network  string
+	endpoint *docker.EndpointSettings
+}
+
+// lanAddressed says whether a server has its own address on the LAN (a
+// macvlan or ipvlan network, like Unraid's br0), rather than published
+// ports.
+func lanAddressed(info docker.ContainerJSON) bool {
+	mode := info.HostConfig.NetworkMode
+	if mode == "" || mode == "default" || mode == "bridge" || mode == "host" || mode == "none" || strings.HasPrefix(mode, "container:") {
+		return false
 	}
-	out := map[string][]docker.PortBinding{}
-	for port, b := range info.HostConfig.PortBindings {
+	if info.Config.Labels[deploy.LabelDirectIP] == "true" {
+		return true
+	}
+	// Not made by hlm (adopted from Unraid, say): a fixed address and
+	// nothing published.
+	for _, b := range info.HostConfig.PortBindings {
 		if len(b) > 0 {
-			out[port] = b
+			return false
 		}
 	}
-	if len(out) == 0 {
-		return nil, errors.New("waking on a connection needs published ports, and this server has none (on a macvlan " +
-			"network, say); it can still be woken from the status page")
+	ep, ok := info.NetworkSettings.Networks[mode]
+	return ok && ep.IPAMConfig != nil && ep.IPAMConfig.IPv4Address != ""
+}
+
+// listenerPlan works out where a wake listener listens for a server: on its
+// published ports, or, for a server with its own LAN address, on that
+// address. seen is the address hlm saw it on before stopping it, for a
+// server Docker gave an address to rather than having a fixed one.
+func listenerPlan(info docker.ContainerJSON, seen *Address) (listenerNet, error) {
+	switch mode := info.HostConfig.NetworkMode; {
+	case mode == "host":
+		return listenerNet{}, errors.New("waking on a connection needs published ports or an address of its own, and this server uses the host's network")
+	case strings.HasPrefix(mode, "container:"):
+		return listenerNet{}, errors.New("waking on a connection needs published ports or an address of its own, and this server uses another container's network")
 	}
+	if lanAddressed(info) {
+		return lanPlan(info, seen)
+	}
+	out := listenerNet{bindings: map[string][]docker.PortBinding{}}
+	for port, b := range info.HostConfig.PortBindings {
+		if len(b) > 0 {
+			out.bindings[port] = b
+			out.ports = append(out.ports, port)
+		}
+	}
+	if len(out.ports) == 0 {
+		return listenerNet{}, errors.New("waking on a connection needs published ports, and this server has none; it can still be woken from the status page")
+	}
+	slices.Sort(out.ports)
 	return out, nil
 }
 
-// listenerArgs are a listener's command line for a server.
-func (s *Service) listenerArgs(name string, info docker.ContainerJSON, bindings map[string][]docker.PortBinding) []string {
-	var tcp, udp []string
-	keys := make([]string, 0, len(bindings))
-	for k := range bindings {
-		keys = append(keys, k)
+// lanPlan is a listener on a sleeping server's own LAN address: the same
+// address, MAC and ports, which nothing has while the server is stopped.
+func lanPlan(info docker.ContainerJSON, seen *Address) (listenerNet, error) {
+	network := info.HostConfig.NetworkMode
+	ep := info.NetworkSettings.Networks[network]
+	var ip, mac string
+	if ep.IPAMConfig != nil {
+		ip = ep.IPAMConfig.IPv4Address
 	}
-	slices.Sort(keys)
-	for _, k := range keys {
+	if info.State.Running && ip == "" {
+		ip = ep.IPAddress
+	}
+	mac = cmp.Or(ep.MacAddress, info.Config.MacAddress)
+	if seen != nil && seen.Network == network {
+		if ip == "" {
+			ip = seen.IP
+		}
+		if mac == "" {
+			mac = seen.MAC
+		}
+	}
+	if ip == "" {
+		return listenerNet{}, fmt.Errorf("waking on a connection needs to know the server's address on %s, and it hasn't a fixed "+
+			"one (hlm only sees Docker's choice while it runs); give it a fixed address, or it can still be woken from the status page", network)
+	}
+	set := deploy.DeclaredPorts(info.Config.ExposedPorts, info.Config.Env)
+	for k := range info.HostConfig.PortBindings {
+		set[k] = struct{}{}
+	}
+	var ports []string
+	for k := range set {
+		port, proto, _ := strings.Cut(k, "/")
+		if n, err := strconv.Atoi(port); err != nil || n <= 0 || n > 65535 {
+			continue
+		}
+		switch proto {
+		case "", "tcp":
+			ports = append(ports, port+"/tcp")
+		case "udp":
+			ports = append(ports, port+"/udp")
+		}
+	}
+	if len(ports) == 0 {
+		return listenerNet{}, fmt.Errorf("waking on a connection needs to know the server's ports, and it declares none on %s; "+
+			"it can still be woken from the status page", network)
+	}
+	slices.Sort(ports)
+	ports = slices.Compact(ports)
+	return listenerNet{
+		ports:    ports,
+		network:  network,
+		endpoint: &docker.EndpointSettings{IPAMConfig: &docker.EndpointIPAMConfig{IPv4Address: ip}, MacAddress: mac},
+	}, nil
+}
+
+// listenerArgs are a listener's command line for a server.
+func (s *Service) listenerArgs(name string, info docker.ContainerJSON, ports []string) []string {
+	var tcp, udp []string
+	for _, k := range ports {
 		port, proto, _ := strings.Cut(k, "/")
 		if proto == "udp" {
 			udp = append(udp, port)
@@ -104,8 +198,10 @@ func (s *Service) listenerArgs(name string, info docker.ContainerJSON, bindings 
 // listen starts a sleeping server's wake listener, recording it or why it
 // couldn't.
 func (s *Service) listen(ctx context.Context, name string) {
-	id, err := s.startListener(ctx, name)
 	m, _ := s.asleepAll()
+	before := m[name]
+	id, err := s.startListener(ctx, name, before.Address)
+	m, _ = s.asleepAll()
 	a, ok := m[name]
 	if !ok {
 		if id != "" { // woken meanwhile
@@ -124,7 +220,7 @@ func (s *Service) listen(ctx context.Context, name string) {
 	}
 }
 
-func (s *Service) startListener(ctx context.Context, name string) (string, error) {
+func (s *Service) startListener(ctx context.Context, name string, seen *Address) (string, error) {
 	if s.listenerProblem != "" {
 		return "", errors.New(s.listenerProblem)
 	}
@@ -135,7 +231,7 @@ func (s *Service) startListener(ctx context.Context, name string) (string, error
 	if info.State.Running {
 		return "", errors.New("it's running")
 	}
-	bindings, err := listenerPorts(info)
+	plan, err := listenerPlan(info, seen)
 	if err != nil {
 		return "", err
 	}
@@ -158,16 +254,21 @@ func (s *Service) startListener(ctx context.Context, name string) (string, error
 		}
 	}
 	exposed := map[string]struct{}{}
-	for k := range bindings {
+	for _, k := range plan.ports {
 		exposed[k] = struct{}{}
 	}
 	network := info.HostConfig.NetworkMode
 	if network == "" || network == "default" {
 		network = "bridge"
 	}
+	var nc *docker.NetworkingConfig
+	if plan.endpoint != nil {
+		// The server's own address and MAC, while it's stopped.
+		nc = &docker.NetworkingConfig{EndpointsConfig: map[string]docker.EndpointSettings{plan.network: *plan.endpoint}}
+	}
 	pids, mem := int64(64), int64(64<<20)
 	hc := docker.HostConfig{
-		PortBindings:  bindings,
+		PortBindings:  plan.bindings,
 		NetworkMode:   network,
 		RestartPolicy: docker.RestartPolicy{Name: "no"},
 		CapDrop:       []string{"ALL"},
@@ -176,13 +277,14 @@ func (s *Service) startListener(ctx context.Context, name string) (string, error
 		PidsLimit:     &pids,
 	}
 	id, _, err := d.CreateContainer(ctx, "hlm-wake-"+bare, docker.CreateRequest{
-		Image:        info.Image,
-		User:         "65534:65534",
-		Entrypoint:   []string{listenerBinary},
-		Cmd:          s.listenerArgs(name, info, bindings),
-		Labels:       map[string]string{LabelListener: name},
-		ExposedPorts: exposed,
-		HostConfig:   hc,
+		Image:            info.Image,
+		User:             "65534:65534",
+		Entrypoint:       []string{listenerBinary},
+		Cmd:              s.listenerArgs(name, info, plan.ports),
+		Labels:           map[string]string{LabelListener: name},
+		ExposedPorts:     exposed,
+		HostConfig:       hc,
+		NetworkingConfig: nc,
 	})
 	if err != nil {
 		return "", fmt.Errorf("create the wake listener: %w", err)

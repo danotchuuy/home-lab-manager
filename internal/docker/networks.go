@@ -53,8 +53,8 @@ type NetworkingConfig struct {
 type EndpointSettings struct {
 	IPAMConfig *EndpointIPAMConfig `json:"IPAMConfig,omitempty"`
 	Aliases    []string            `json:"Aliases,omitempty"`
-	IPAddress  string              `json:"IPAddress,omitempty"`  // only set in inspect output
-	MacAddress string              `json:"MacAddress,omitempty"` // only set in inspect output
+	IPAddress  string              `json:"IPAddress,omitempty"` // only set in inspect output
+	MacAddress string              `json:"MacAddress,omitempty"`
 }
 
 // EndpointIPAMConfig requests specific addresses for an endpoint.

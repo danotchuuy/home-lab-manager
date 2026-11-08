@@ -955,8 +955,11 @@ playing** (managers) can stop it after a while without players, and start it aga
   or one of its scheduled tasks is running.
 - The server shows as **Asleep** in the server list, on its page and on the status page. Starting it in any way (its
   Start button, a scheduled task, Docker on boot) wakes it; hlm notices.
-- **Start it when someone connects to it.** While it's asleep, a small **wake listener** container takes its published
-  ports. It's made from the server's own image with hlm's binary copied in, so it works on [other Docker
+- **Start it when someone connects to it.** While it's asleep, a small **wake listener** container takes its place: its
+  published ports, or, for a server with its own LAN address (a macvlan or ipvlan network like Unraid's `br0`), that
+  address and MAC on the same network, listening on the server's ports (including Unraid's `UDP_PORT_15637`-style
+  variables), so the LAN, your router's port forwards and the WireGuard relay reach it as they reach the server. It's
+  made from the server's own image with hlm's binary copied in, so it works on [other Docker
   hosts](#more-docker-hosts) too, and it runs as nobody, with no capabilities, no mounts and 64 MB of memory. When
   someone really tries to play, it exits and hlm starts the server; they connect again a minute or two later.
   - **Minecraft (Java):** the server list shows **Asleep** with your MOTD. A player joining sees "The server is
@@ -965,8 +968,10 @@ playing** (managers) can stop it after a while without players, and start it aga
     clients send all the time don't.
   - **Other games:** any TCP connection that sends something, or any UDP packet, wakes it, except Steam's server
     queries (`A2S`), so server browsers refreshing don't start it. A port scan that only connects doesn't either.
-  - It needs published ports (not the host's network, or a macvlan address of its own), a static Linux build of hlm
-    (releases are) and an image for the same CPU architecture as hlm. The card says when one is missing.
+  - It needs published ports or an address of its own (not the host's network). An address Docker chose rather than a
+    fixed one is only known while the server runs, so hlm notes it as the server goes to sleep. It also needs a static
+    Linux build of hlm (releases are) and an image for the same CPU architecture as hlm. The card says when one is
+    missing.
   - With ports open to the internet, anyone who connects can start the server; that's all they can do.
 - **Let visitors start it from the status page.** A **Start it** button beside it on the [public status
   page](#public-status-page) while it's asleep (if it's on the page). Each address can start servers three times, then

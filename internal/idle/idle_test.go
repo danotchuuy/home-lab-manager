@@ -51,6 +51,11 @@ func (f *fakeServers) Stop(context.Context, string) error {
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, "stop")
 	f.info.State.Running = false
+	// Docker forgets the addresses it chose, and generated MACs.
+	for n, ep := range f.info.NetworkSettings.Networks {
+		ep.IPAddress, ep.MacAddress = "", ""
+		f.info.NetworkSettings.Networks[n] = ep
+	}
 	return nil
 }
 
@@ -398,4 +403,79 @@ func TestListenerUnavailable(t *testing.T) {
 	if got := checkExecutable(filepath.Join(t.TempDir(), "missing")); got == "" {
 		t.Error("a missing binary is fine?")
 	}
+}
+
+// onBr0 makes the rig's server an Unraid-style one on br0: its own LAN
+// address (chosen by Docker unless fixed), nothing published, and a port
+// only in an Unraid variable.
+func (r *rig) onBr0(fixed string) {
+	info := &r.servers.info
+	info.Config.Labels = map[string]string{"io.hlm.directip": "true"}
+	info.Config.ExposedPorts = map[string]struct{}{"25566/tcp": {}}
+	info.Config.Env = append(info.Config.Env, "UDP_PORT_15637=15637")
+	info.HostConfig.NetworkMode = "br0"
+	info.HostConfig.PortBindings = nil
+	ep := docker.EndpointSettings{IPAddress: "192.168.1.50", MacAddress: "02:00:c0:a8:01:32"}
+	if fixed != "" {
+		ep.IPAddress = fixed
+		ep.IPAMConfig = &docker.EndpointIPAMConfig{IPv4Address: fixed}
+	}
+	info.NetworkSettings.Networks = map[string]docker.EndpointSettings{"br0": ep}
+}
+
+func TestSleepOnLANAddress(t *testing.T) {
+	for _, fixed := range []string{"", "192.168.1.60"} {
+		t.Run("fixed="+fixed, func(t *testing.T) {
+			r := newRig(t)
+			r.onBr0(fixed)
+			ctx := context.Background()
+			st, err := r.s.Save(ctx, "mc", Settings{Minutes: 5, WakeOnConnect: true})
+			if err != nil || !st.CanListen {
+				t.Fatalf("save: %+v %v", st, err)
+			}
+			r.s.Check(ctx)
+			r.set(0, true, 5*time.Minute)
+			r.s.Check(ctx)
+			waitFor(t, "the listener", func() bool { st, _ := r.s.Status(ctx, "mc"); return st.Asleep != nil && st.Asleep.Listener != "" })
+			if st, _ := r.s.Status(ctx, "mc"); !st.CanListen {
+				t.Errorf("asleep status = %+v", st)
+			}
+			req := r.docker.created[0]
+			want := cmpOr(fixed, "192.168.1.50")
+			ep := req.NetworkingConfig.EndpointsConfig["br0"]
+			if req.HostConfig.NetworkMode != "br0" || len(req.HostConfig.PortBindings) != 0 || ep.IPAMConfig == nil ||
+				ep.IPAMConfig.IPv4Address != want || ep.MacAddress != "02:00:c0:a8:01:32" {
+				t.Errorf("listener network = %+v %+v", req.HostConfig, req.NetworkingConfig)
+			}
+			if got := strings.Join(req.Cmd, " "); got != "wake-listener --tcp 25566 --udp 15637 --minecraft 25566 --max 20" {
+				t.Errorf("args = %q", got)
+			}
+		})
+	}
+}
+
+func TestLANAddressUnknown(t *testing.T) {
+	r := newRig(t)
+	r.onBr0("")
+	r.servers.Stop(context.Background(), "mc") // stopped before hlm saw its address
+	st, _ := r.s.Status(context.Background(), "mc")
+	if st.CanListen || !strings.Contains(st.ListenWhy, "fixed") {
+		t.Errorf("status = %+v", st)
+	}
+	// Unraid's own br0 containers, without hlm's label: a fixed address
+	// and nothing published.
+	r = newRig(t)
+	r.onBr0("192.168.1.61")
+	r.servers.info.Config.Labels = nil
+	r.servers.Stop(context.Background(), "mc")
+	if st, _ := r.s.Status(context.Background(), "mc"); !st.CanListen {
+		t.Errorf("unlabelled br0 status = %+v", st)
+	}
+}
+
+func cmpOr(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
 }
