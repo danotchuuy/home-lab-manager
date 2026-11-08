@@ -709,18 +709,24 @@ func run(log *slog.Logger) error {
 	// Cloudflare Tunnel routes to hlm itself reach only the status page,
 	// as the sites' domains do.
 	statusPage.UseStatusHosts(tunnel.HlmHostnames)
-	relay.UseStatusSites(func(ctx context.Context) ([]string, int, error) {
+	relay.UseStatusSites(func(ctx context.Context) (proxy.StatusOrigin, error) {
 		set, err := statusPage.Settings()
 		if err != nil {
-			return nil, 0, err
+			return proxy.StatusOrigin{}, err
 		}
-		domains := set.ProxyDomains()
+		o := proxy.StatusOrigin{Domains: set.ProxyDomains()}
 		so, err := selfOrigin(ctx)
 		if err != nil {
-			return nil, 0, err
+			return o, err
 		}
-		port, err := hostPortOf(so)
-		return domains, port, err
+		// hlm with its own LAN address (on br0, say): the host can't reach
+		// it, so the proxy goes to that address, through the tunnel.
+		if addr := ownLANAddress(ctx, dc, so); addr != "" {
+			o.Address, o.Port = addr, so.Port
+			return o, nil
+		}
+		o.Port, err = hostPortOf(so)
+		return o, err
 	})
 	// Docker Compose stacks.
 	stacks := stack.New(store, func(host string) (stack.Docker, error) { return mgr.DockerFor(host) }, mgr, log)
@@ -1030,4 +1036,33 @@ func followHTTPS(ctx context.Context, certs *tlscert.Service, registry *hosts.Re
 		}
 		last = now
 	}
+}
+
+// ownLANAddress is hlm's address on a macvlan or ipvlan network (like
+// Unraid's br0), if its container is on one: there it has its own address on
+// the LAN, and its published ports (if any) aren't on the host.
+func ownLANAddress(ctx context.Context, dc *docker.Client, so cftunnel.SelfOrigin) string {
+	info := so.Container
+	if info == nil || dc == nil {
+		return ""
+	}
+	mode := info.HostConfig.NetworkMode
+	switch mode {
+	case "", "default", "bridge", "host", "none":
+		return ""
+	}
+	ep, ok := info.NetworkSettings.Networks[mode]
+	if !ok || ep.IPAddress == "" {
+		return ""
+	}
+	networks, err := dc.ListNetworks(ctx)
+	if err != nil {
+		return ""
+	}
+	for _, n := range networks {
+		if n.Name == mode && (n.Driver == "macvlan" || n.Driver == "ipvlan") {
+			return ep.IPAddress
+		}
+	}
+	return ""
 }

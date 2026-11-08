@@ -81,9 +81,7 @@ func TestRenderStatus(t *testing.T) {
 func TestApplyStatus(t *testing.T) {
 	store, _ := secrets.Open(t.TempDir(), "")
 	s := New(store, fakeServers{}, slog.New(slog.DiscardHandler))
-	s.UseStatusSites(func(context.Context) ([]string, int, error) {
-		return []string{"c.example.com", "a.example.com", "b.example.com", "not a domain", "a.example.com"}, 8080, nil
-	})
+	s.UseStatusSites(func(context.Context) (StatusOrigin, error) { return StatusOrigin{Domains: []string{"c.example.com", "a.example.com", "b.example.com", "not a domain", "a.example.com"}, Port: 8080}, nil })
 	var scripts, configs []string
 	s.run = func(_ context.Context, script string, stdin []byte, _ func(string)) (remote.Result, error) {
 		scripts = append(scripts, script)
@@ -228,7 +226,7 @@ func TestApplyStatusCloudflare(t *testing.T) {
 	store, _ := secrets.Open(t.TempDir(), "")
 	s := New(store, fakeServers{}, slog.New(slog.DiscardHandler))
 	domains := []string{"a.example.com", "b.example.com", "taken.example.com"}
-	s.UseStatusSites(func(context.Context) ([]string, int, error) { return domains, 8080, nil })
+	s.UseStatusSites(func(context.Context) (StatusOrigin, error) { return StatusOrigin{Domains: domains, Port: 8080}, nil })
 	cf := &fakeCloudflare{records: map[string]string{}, mode: "flexible", refuse: "taken.example.com"}
 	s.UseCloudflare(cf)
 	var configs, installs, removed []string
@@ -410,7 +408,7 @@ func TestStatusOnAddress(t *testing.T) {
 	// Applying: no sites needed, and the address the probe found.
 	store, _ := secrets.Open(t.TempDir(), "")
 	s := New(store, fakeServers{}, slog.New(slog.DiscardHandler))
-	s.UseStatusSites(func(context.Context) ([]string, int, error) { return nil, 8080, nil })
+	s.UseStatusSites(func(context.Context) (StatusOrigin, error) { return StatusOrigin{Domains: nil, Port: 8080}, nil })
 	var configs []string
 	s.run = func(_ context.Context, script string, stdin []byte, _ func(string)) (remote.Result, error) {
 		switch {
@@ -495,7 +493,7 @@ func TestStatusAddressNamesEdges(t *testing.T) {
 func TestLetsEncryptCertRefused(t *testing.T) {
 	store, _ := secrets.Open(t.TempDir(), "")
 	s := New(store, fakeServers{}, slog.New(slog.DiscardHandler))
-	s.UseStatusSites(func(context.Context) ([]string, int, error) { return []string{"lynx.example.com"}, 8080, nil })
+	s.UseStatusSites(func(context.Context) (StatusOrigin, error) { return StatusOrigin{Domains: []string{"lynx.example.com"}, Port: 8080}, nil })
 	writes := 0
 	s.run = func(_ context.Context, script string, stdin []byte, _ func(string)) (remote.Result, error) {
 		switch {
@@ -519,5 +517,42 @@ func TestLetsEncryptCertRefused(t *testing.T) {
 	if res.Error != "" || len(res.HTTPS) != 0 || writes != 2 ||
 		!strings.Contains(res.Failed["lynx.example.com"], "cannot load certificate") || !strings.Contains(res.Failed["lynx.example.com"], "served over HTTP") {
 		t.Errorf("result = %+v, %d writes", res, writes)
+	}
+}
+
+// hlm with its own LAN address (on br0): the proxy goes to that address
+// through the end of the tunnel on its LAN, or says it can't.
+func TestStatusOriginOnLAN(t *testing.T) {
+	store, _ := secrets.Open(t.TempDir(), "")
+	s := New(store, fakeServers{}, slog.New(slog.DiscardHandler))
+	s.UseStatusSites(func(context.Context) (StatusOrigin, error) {
+		return StatusOrigin{Domains: []string{"lynx.example.com"}, Port: 8080, Address: "192.168.11.5"}, nil
+	})
+	var configs []string
+	s.run = func(_ context.Context, script string, stdin []byte, _ func(string)) (remote.Result, error) {
+		switch {
+		case strings.Contains(script, "hlm:confd"):
+			return remote.Result{Stdout: "hlm:confd\n"}, nil
+		case strings.Contains(script, StatusConfigPath):
+			configs = append(configs, string(stdin))
+			return remote.Result{Stdout: "hlm:applied\n"}, nil
+		}
+		return remote.Result{}, nil
+	}
+	wg := testTunnel(t)
+	wg.Hosts = map[string]WireGuardEnd{"nas": {Address: "10.77.77.3", LANNetwork: "br0", LANSubnet: "192.168.12.0/24"}}
+	store.Set(secretWireGuard, wg)
+	st := Settings{Upstream: "10.77.77.2", UpstreamSource: "wireguard", StatusPage: true}
+	// No end of the tunnel reaches 192.168.11.0/24: said, and nothing written.
+	res := s.applyStatus(context.Background(), st)
+	if !strings.Contains(res.Error, "192.168.11.5") || !strings.Contains(res.Error, "Reach servers with their own LAN address") || len(configs) != 0 {
+		t.Errorf("unreached: %+v, %d configs", res, len(configs))
+	}
+	// This host's end reaches it: nginx goes to hlm's own address and port.
+	wg.LANNetwork, wg.LANSubnet = "br0", "192.168.11.0/24"
+	store.Set(secretWireGuard, wg)
+	res = s.applyStatus(context.Background(), st)
+	if res.Error != "" || len(configs) != 1 || !strings.Contains(configs[0], "proxy_pass http://192.168.11.5:8080;") {
+		t.Errorf("reached: %+v\n%s", res, strings.Join(configs, "\n"))
 	}
 }

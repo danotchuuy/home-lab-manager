@@ -119,7 +119,7 @@ type Service struct {
 	// see UseDockerHosts.
 	dockerFor func(host string) (Containers, error)
 	// statusSites finds the status page's sites; see UseStatusSites.
-	statusSites func(ctx context.Context) ([]string, int, error)
+	statusSites func(ctx context.Context) (StatusOrigin, error)
 	// issueCert gets a certificate through Cloudflare DNS; see
 	// UseCertIssuer.
 	issueCert CertIssuer

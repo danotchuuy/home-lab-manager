@@ -86,7 +86,7 @@ type certRig struct {
 func newCertRig(t *testing.T) *certRig {
 	store, _ := secrets.Open(t.TempDir(), "")
 	r := &certRig{s: New(store, fakeServers{}, slog.New(slog.DiscardHandler)), files: map[string]string{}, now: time.Now()}
-	r.s.UseStatusSites(func(context.Context) ([]string, int, error) { return nil, 8080, nil })
+	r.s.UseStatusSites(func(context.Context) (StatusOrigin, error) { return StatusOrigin{Domains: nil, Port: 8080}, nil })
 	r.s.UseCertIssuer(func(_ context.Context, domain, email string) (string, string, time.Time, time.Time, error) {
 		if r.fail != nil {
 			return "", "", time.Time{}, time.Time{}, r.fail
@@ -195,7 +195,7 @@ func TestStatusAddressCertFails(t *testing.T) {
 	}
 	// A site's domain has its own HTTPS.
 	r = newCertRig(t)
-	r.s.UseStatusSites(func(context.Context) ([]string, int, error) { return []string{"play.example.com"}, 8080, nil })
+	r.s.UseStatusSites(func(context.Context) (StatusOrigin, error) { return StatusOrigin{Domains: []string{"play.example.com"}, Port: 8080}, nil })
 	if res := r.s.applyStatus(context.Background(), st); !strings.Contains(res.AddressError, "also a status page site") || len(r.issued) != 0 {
 		t.Errorf("site's domain: %+v", res)
 	}
@@ -207,9 +207,7 @@ func TestStatusSitesLetsEncryptCloudflare(t *testing.T) {
 	r := newCertRig(t)
 	cf := &fakeCloudflare{records: map[string]string{}, refuse: "tunnel.example.com"}
 	r.s.UseCloudflare(cf)
-	r.s.UseStatusSites(func(context.Context) ([]string, int, error) {
-		return []string{"friends.example.com", "tunnel.example.com"}, 8080, nil
-	})
+	r.s.UseStatusSites(func(context.Context) (StatusOrigin, error) { return StatusOrigin{Domains: []string{"friends.example.com", "tunnel.example.com"}, Port: 8080}, nil })
 	st := Settings{Target: remote.Target{Host: "203.0.113.7", User: "root"}, Upstream: "10.77.77.2", UpstreamSource: "wireguard",
 		StatusPage: true, StatusTLS: TLSLetsEncryptCloudflare}
 	res := r.s.applyStatus(context.Background(), st)

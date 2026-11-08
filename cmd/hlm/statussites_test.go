@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/danotchuuy/home-lab-manager/internal/cftunnel"
@@ -73,5 +75,39 @@ func TestStatusSitesFirst(t *testing.T) {
 	h.ServeHTTP(w, r)
 	if w.Code != 200 {
 		t.Errorf("marked: %d", w.Code)
+	}
+}
+
+// hlm on a macvlan network has its own LAN address; on a bridge it doesn't.
+func TestOwnLANAddress(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/networks") {
+			w.Write([]byte(`[{"Name":"br0","Driver":"macvlan"},{"Name":"games","Driver":"bridge"}]`))
+			return
+		}
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	dc, err := docker.NewClient(docker.Config{Host: "tcp://" + strings.TrimPrefix(srv.URL, "http://")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	on := func(network, ip string) cftunnel.SelfOrigin {
+		var info docker.ContainerJSON
+		info.HostConfig.NetworkMode = network
+		info.NetworkSettings.Networks = map[string]docker.EndpointSettings{network: {IPAddress: ip}}
+		return cftunnel.SelfOrigin{Port: 8080, Container: &info}
+	}
+	ctx := context.Background()
+	if got := ownLANAddress(ctx, dc, on("br0", "192.168.11.5")); got != "192.168.11.5" {
+		t.Errorf("br0: %q", got)
+	}
+	for _, n := range []string{"games", "bridge", "host"} {
+		if got := ownLANAddress(ctx, dc, on(n, "172.18.0.5")); got != "" {
+			t.Errorf("%s: %q", n, got)
+		}
+	}
+	if got := ownLANAddress(ctx, dc, cftunnel.SelfOrigin{Port: 8080}); got != "" {
+		t.Errorf("not in a container: %q", got)
 	}
 }

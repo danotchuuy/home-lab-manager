@@ -103,9 +103,21 @@ func (s *Service) StatusSites() (*StatusSiteResult, error) {
 	return &r, nil
 }
 
-// UseStatusSites says which domains the status page's sites use, and the
-// port hlm is reached on at the Docker host.
-func (s *Service) UseStatusSites(f func(ctx context.Context) (domains []string, port int, err error)) {
+// StatusOrigin is where the proxy finds the status page: the sites'
+// domains, and hlm's port at the tunnel's end on the Docker host, or, when
+// hlm has its own LAN address (a macvlan network like br0, which the host
+// can't reach), that address and hlm's own port.
+type StatusOrigin struct {
+	Domains []string
+	Port    int
+	// Address is hlm's own LAN address, if it has one; the proxy reaches it
+	// through the end of the tunnel that reaches its LAN.
+	Address string
+}
+
+// UseStatusSites says which domains the status page's sites use, and
+// where hlm is reached.
+func (s *Service) UseStatusSites(f func(ctx context.Context) (StatusOrigin, error)) {
 	s.statusSites = f
 }
 
@@ -531,11 +543,19 @@ func (s *Service) applyStatus(ctx context.Context, st Settings) *StatusSiteResul
 	if s.statusSites == nil {
 		return fail(errors.New("hlm can't tell the status page's sites here"))
 	}
-	domains, port, err := s.statusSites(ctx)
+	origin, err := s.statusSites(ctx)
 	if err != nil {
 		return fail(err)
 	}
-	for _, d := range domains {
+	port, upstream := origin.Port, st.Upstream
+	if origin.Address != "" {
+		// hlm on its own LAN address: through the end of the tunnel on its LAN.
+		if why := s.tunnelReaches(origin.Address); why != "" {
+			return fail(errors.New(why))
+		}
+		upstream = origin.Address
+	}
+	for _, d := range origin.Domains {
 		d = strings.ToLower(d)
 		if statusDomain.MatchString(d) && !slices.Contains(res.Domains, d) {
 			res.Domains = append(res.Domains, d)
@@ -587,7 +607,7 @@ func (s *Service) applyStatus(ctx context.Context, st Settings) *StatusSiteResul
 		// nothing has to reach the proxy for them.
 		cloudflared = s.cloudflareDNSSites(ctx, st, res, certs)
 	}
-	render := func() string { return RenderStatus(res.Domains, certs, st.Upstream, port, probe.ipv6, addr) }
+	render := func() string { return RenderStatus(res.Domains, certs, upstream, port, probe.ipv6, addr) }
 	if res.Output, err = s.writeStatus(ctx, render()); err != nil {
 		res.Address = ""
 		return fail(err)
@@ -804,6 +824,30 @@ func (s *Service) ApplyStatus(ctx context.Context) (*StatusSiteResult, error) {
 		return nil, err
 	}
 	return s.applyStatusRecorded(ctx, st, servers), nil
+}
+
+// tunnelReaches says why the WireGuard tunnel can't reach a LAN address, if
+// it can't: one of its ends has to reach that LAN ("Reach servers with their
+// own LAN address").
+func (s *Service) tunnelReaches(address string) string {
+	a, err := netip.ParseAddr(address)
+	if err != nil {
+		return fmt.Sprintf("hlm's own LAN address %q isn't an IP address", address)
+	}
+	wg, ok, err := s.tunnel()
+	if err != nil || !ok {
+		return "the WireGuard tunnel isn't set up"
+	}
+	subnets := []string{wg.LANSubnet}
+	for _, e := range wg.Hosts {
+		subnets = append(subnets, e.LANSubnet)
+	}
+	for _, sub := range subnets {
+		if p, err := netip.ParsePrefix(sub); err == nil && p.Contains(a) {
+			return ""
+		}
+	}
+	return fmt.Sprintf("hlm has its own LAN address %s (a macvlan network like br0), which the WireGuard tunnel doesn't reach, so the proxy can't pass the status page to it: on the Proxy page, set up \"Reach servers with their own LAN address\" with hlm's network for this host's end of the tunnel", address)
 }
 
 // applyStatusRecorded is applyStatus, keeping its outcome. servers are
