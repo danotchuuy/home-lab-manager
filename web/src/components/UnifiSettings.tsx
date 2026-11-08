@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { api, ApiError } from "../api";
 import type { UnifiConfig, UnifiInput } from "../types";
 import { Spinner } from "./common";
+import { UnifiServers } from "./UnifiServers";
 
 /** Formats a hex SHA-256 fingerprint as AB:CD:… for comparing by eye. */
 function pretty(fp: string): string {
@@ -134,6 +135,7 @@ export function UnifiSettings() {
             Remove
           </button>
         </div>
+        <UnifiServers />
       </div>
     );
   }
