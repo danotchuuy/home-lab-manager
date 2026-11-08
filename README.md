@@ -1992,6 +1992,26 @@ Status page** and add the servers to show; it's at `/status`.
     the site works in any mode. A record that already exists for the name (yours, or a tunnel route's) is left alone
     and reported. When a domain leaves the list or you choose another option, hlm removes its record and certificate.
 
+  - **On the proxy's own address:** tick **Also on the proxy server's own address** to serve the page where players
+    already find the game servers, such as `http://203.0.113.7/status` (or `:8080/status` on a port you choose), with
+    no domain needed. It's plain HTTP and shows every server, with the page-wide passwords. On port 80 it answers only
+    the proxy's own host and addresses, so the sites' domains and any other site there keep working; on another port
+    it answers whatever comes, and that port can't also be a relayed game port (hlm says which server has it). nginx
+    marks these requests for hlm, which then answers only the status page for them, as for a site's domain. The
+    proxy's Linode firewall, if hlm manages it, gets that port opened to everyone (rule `hlm-status-address`, unless
+    port 80 is already open).
+    - **HTTPS there:** tick **HTTPS** and give the domain players use for the game servers (filled in from the proxy's
+      host if that's a name). It has to point at the proxy server with a DNS-only record (Cloudflare's proxy can't
+      carry game traffic) and be on the [Cloudflare account](#web-addresses-with-cloudflare-tunnel). hlm gets a Let's
+      Encrypt certificate for it itself, the same way as [its own](#https), proving the domain with a TXT record
+      through Cloudflare, so the token never goes to the proxy server. It installs the certificate and its key in
+      `/etc/nginx/hlm-certs` there (readable by root alone), checks every 6 hours and renews it with a third of its
+      life left. With port 80 the page is on `https://<domain>/status` (443), and port 80, by name or address, sends
+      visitors there; on another port it's HTTPS on that port. Until there's a certificate (the Cloudflare account
+      isn't connected, or Let's Encrypt refused), the page stays on plain HTTP and the Proxy page says why; a failed
+      attempt is retried after an hour, or straight away when you apply. The Let's Encrypt email, if set, goes on the
+      certificate account. The domain can't also be one of the sites' domains, which have their own HTTPS options.
+
   hlm writes only `/etc/nginx/conf.d/hlm-status.conf` (nginx has to read `conf.d` in its `http` block, as Debian's,
   Ubuntu's and Fedora's do), checks it with `nginx -t` and puts the previous one back if it's refused. The proxy's Linode firewall,
   if hlm manages it, gets ports 80 and 443 opened (to Cloudflare alone, with that option). Each site's settings show

@@ -54,4 +54,13 @@ func TestStatusSitesFirst(t *testing.T) {
 			t.Errorf("%s: %d, want %d", host, w.Code, want)
 		}
 	}
+	// The proxy's own address, marked by its nginx.
+	r := httptest.NewRequest("GET", "/status", nil)
+	r.Host = "203.0.113.7"
+	r.Header.Set(statuspage.OnlyHeader, "1")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Errorf("marked: %d", w.Code)
+	}
 }

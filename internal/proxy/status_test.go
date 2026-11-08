@@ -21,16 +21,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/danotchuuy/home-lab-manager/internal/forwarding"
 	"github.com/danotchuuy/home-lab-manager/internal/linode"
 	"github.com/danotchuuy/home-lab-manager/internal/remote"
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
 )
 
 func TestRenderStatus(t *testing.T) {
-	if c := RenderStatus(nil, nil, "", 0, false); strings.Contains(c, "server {") {
+	if c := RenderStatus(nil, nil, "", 0, false, nil); strings.Contains(c, "server {") {
 		t.Errorf("no domains:\n%s", c)
 	}
-	c := RenderStatus([]string{"friends.example.com", "status.example.com"}, map[string]StatusCert{"status.example.com": letsEncryptCert("status.example.com")}, "10.77.77.2", 8080, true)
+	c := RenderStatus([]string{"friends.example.com", "status.example.com"}, map[string]StatusCert{"status.example.com": letsEncryptCert("status.example.com")}, "10.77.77.2", 8080, true, nil)
 	friends := c[strings.Index(c, "# friends.example.com"):strings.Index(c, "# status.example.com")]
 	status := c[strings.Index(c, "# status.example.com"):]
 	for _, want := range []string{
@@ -54,13 +55,13 @@ func TestRenderStatus(t *testing.T) {
 			t.Errorf("status (HTTPS) lacks %q:\n%s", want, status)
 		}
 	}
-	if strings.Contains(RenderStatus([]string{"a.example.com"}, nil, "fd00::2", 8080, false), "[::]") ||
-		!strings.Contains(RenderStatus([]string{"a.example.com"}, nil, "fd00::2", 8080, false), "proxy_pass http://[fd00::2]:8080;") {
+	if strings.Contains(RenderStatus([]string{"a.example.com"}, nil, "fd00::2", 8080, false, nil), "[::]") ||
+		!strings.Contains(RenderStatus([]string{"a.example.com"}, nil, "fd00::2", 8080, false, nil), "proxy_pass http://[fd00::2]:8080;") {
 		t.Error("IPv6 upstream or listens")
 	}
 	// Cloudflare: the page on port 80 as well (no redirect), with the
 	// scheme Cloudflare says, and the Origin CA certificate on 443.
-	cf := RenderStatus([]string{"cf.example.com"}, map[string]StatusCert{"cf.example.com": originCert("cf.example.com")}, "10.77.77.2", 8080, false)
+	cf := RenderStatus([]string{"cf.example.com"}, map[string]StatusCert{"cf.example.com": originCert("cf.example.com")}, "10.77.77.2", 8080, false, nil)
 	http, https := cf[:strings.Index(cf, "listen 443")], cf[strings.Index(cf, "listen 443"):]
 	for _, want := range []string{"listen 80;", "proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;", "proxy_pass http://10.77.77.2:8080;"} {
 		if !strings.Contains(http, want) {
@@ -321,13 +322,129 @@ func TestDockerStatusConfig(t *testing.T) {
 	os.MkdirAll(origin, 0o700)
 	os.WriteFile(filepath.Join(origin, "cf.example.com.crt"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600)
 	os.WriteFile(filepath.Join(origin, "cf.example.com.key"), pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kder}), 0o600)
-	conf := RenderStatus([]string{"cf.example.com", "friends.example.com", "status.example.com"}, map[string]StatusCert{
-		"status.example.com": letsEncryptCert("status.example.com"), "cf.example.com": originCert("cf.example.com"),
-	}, "10.77.77.2", 8080, true)
-	os.WriteFile(filepath.Join(dir, "conf.d", "hlm-status.conf"), []byte(conf), 0o644)
-	out, err := exec.Command("docker", "run", "--rm", "-v", filepath.Join(dir, "conf.d")+":/etc/nginx/conf.d:ro",
-		"-v", filepath.Join(dir, "live")+":/etc/letsencrypt/live:ro", "-v", origin+":"+originDir+":ro", "nginx:alpine", "nginx", "-t").CombinedOutput()
-	if err != nil {
-		t.Fatalf("nginx -t: %v\n%s\n%s", err, out, conf)
+	// The proxy's own address too: on port 80 beside the domains (and the
+	// image's default site), and on a port of its own.
+	// HTTPS there too, with a certificate in hlm-certs.
+	certs := filepath.Join(dir, "certs")
+	os.MkdirAll(certs, 0o700)
+	os.WriteFile(filepath.Join(certs, "play.example.com.crt"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600)
+	os.WriteFile(filepath.Join(certs, "play.example.com.key"), pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kder}), 0o600)
+	tlsFiles := addressCertFiles("play.example.com")
+	for _, addr := range []*StatusAddress{nil, {Port: 80, Names: []string{"203.0.113.7", "[2001:db8::7]", "play.example.com"}}, {Port: 8081},
+		{Port: 80, Names: []string{"203.0.113.7", "play.example.com"}, Name: "play.example.com", TLS: &tlsFiles},
+		{Port: 8443, Name: "play.example.com", TLS: &tlsFiles}} {
+		conf := RenderStatus([]string{"cf.example.com", "friends.example.com", "status.example.com"}, map[string]StatusCert{
+			"status.example.com": letsEncryptCert("status.example.com"), "cf.example.com": originCert("cf.example.com"),
+		}, "10.77.77.2", 8080, true, addr)
+		os.WriteFile(filepath.Join(dir, "conf.d", "hlm-status.conf"), []byte(conf), 0o644)
+		out, err := exec.Command("docker", "run", "--rm", "-v", filepath.Join(dir, "conf.d", "hlm-status.conf")+":/etc/nginx/conf.d/hlm-status.conf:ro",
+			"-v", filepath.Join(dir, "live")+":/etc/letsencrypt/live:ro", "-v", origin+":"+originDir+":ro", "-v", certs+":"+certDir+":ro",
+			"nginx:alpine", "nginx", "-t").CombinedOutput()
+		if err != nil {
+			t.Fatalf("nginx -t: %v\n%s\n%s", err, out, conf)
+		}
+	}
+}
+
+func TestStatusOnAddress(t *testing.T) {
+	// On port 80, beside the domains: only the proxy's own names.
+	c := RenderStatus([]string{"friends.example.com"}, nil, "10.77.77.2", 8080, true,
+		&StatusAddress{Port: 80, Names: statusAddressNames("Play.Example.com", []string{"203.0.113.7", "2001:db8::7", "fe80::1", "127.0.0.1", "203.0.113.7"})})
+	own := c[strings.Index(c, "# The proxy server's own address"):]
+	for _, want := range []string{"listen 80;", "listen [::]:80;", "server_name play.example.com 203.0.113.7 [2001:db8::7];",
+		"proxy_pass http://10.77.77.2:8080;", "proxy_set_header X-Hlm-Status-Only 1;", "return 302 /status;", "location / {\n        return 404;"} {
+		if !strings.Contains(own, want) {
+			t.Errorf("own address lacks %q:\n%s", want, own)
+		}
+	}
+	if strings.Contains(own, "default_server") || strings.Contains(own, "fe80") || strings.Contains(own, "127.0.0.1") {
+		t.Errorf("own address on 80:\n%s", own)
+	}
+	// On a port of its own: anything that comes, and no domains needed.
+	c = RenderStatus(nil, nil, "10.77.77.2", 8080, false, &StatusAddress{Port: 8081})
+	if !strings.Contains(c, "listen 8081 default_server;") || !strings.Contains(c, "server_name _;") || strings.Contains(c, "[::]") {
+		t.Errorf("own port:\n%s", c)
+	}
+	for host, want := range map[string]string{"203.0.113.7": "http://203.0.113.7:8081/status", "2001:db8::7": "http://[2001:db8::7]:8081/status"} {
+		if got := statusAddressURL(host, 8081); got != want {
+			t.Errorf("URL(%s) = %s", host, got)
+		}
+	}
+	if got := statusAddressURL("vps.example.com", 80); got != "http://vps.example.com/status" {
+		t.Errorf("URL on 80 = %s", got)
+	}
+
+	// Settings: 80 by default, never 443 or the SSH port.
+	st := Settings{Target: remote.Target{Host: "203.0.113.7", User: "root"}, StatusOnAddress: true}
+	if err := Validate(&st); err != nil || st.StatusPort != 80 {
+		t.Errorf("default port: %d %v", st.StatusPort, err)
+	}
+	for _, p := range []int{443, 22, 70000} {
+		st.StatusPort = p
+		if err := Validate(&st); err == nil {
+			t.Errorf("port %d accepted", p)
+		}
+	}
+	st.StatusOnAddress, st.StatusPort = false, 8081
+	if Validate(&st); st.StatusPort != 0 {
+		t.Error("a port without the option")
+	}
+
+	// A relayed game port can't be the status page's too.
+	st = Settings{StatusOnAddress: true, StatusPort: 8081}
+	if why := statusPortConflict(st, []Proxied{{Server: "web", Ports: []forwarding.Mapping{{Port: 8081, Proto: "udp"}}}}); why != "" {
+		t.Errorf("UDP conflicts: %s", why)
+	}
+	if why := statusPortConflict(st, []Proxied{{Server: "web", Ports: []forwarding.Mapping{{Port: 8081, Proto: "tcp"}}}}); !strings.Contains(why, "web") {
+		t.Errorf("conflict = %q", why)
+	}
+
+	// Applying: no sites needed, and the address the probe found.
+	store, _ := secrets.Open(t.TempDir(), "")
+	s := New(store, fakeServers{}, slog.New(slog.DiscardHandler))
+	s.UseStatusSites(func(context.Context) ([]string, int, error) { return nil, 8080, nil })
+	var configs []string
+	s.run = func(_ context.Context, script string, stdin []byte, _ func(string)) (remote.Result, error) {
+		switch {
+		case strings.Contains(script, "hlm:confd"):
+			return remote.Result{Stdout: "hlm:confd\nhlm:addr:198.51.100.4\n"}, nil
+		case strings.Contains(script, StatusConfigPath):
+			configs = append(configs, string(stdin))
+			return remote.Result{Stdout: "hlm:applied\n"}, nil
+		}
+		return remote.Result{}, nil
+	}
+	set := Settings{Target: remote.Target{Host: "play.example.com", User: "root"}, Upstream: "10.77.77.2", UpstreamSource: "wireguard",
+		StatusPage: true, StatusOnAddress: true, StatusPort: 80}
+	res := s.applyStatusRecorded(context.Background(), set, []Proxied{{Server: "mc", Ports: []forwarding.Mapping{{Port: 25565, Proto: "tcp"}}}})
+	if res.Error != "" || res.Address != "http://play.example.com/status" || len(configs) != 1 ||
+		!strings.Contains(configs[0], "server_name play.example.com 198.51.100.4;") {
+		t.Errorf("result = %+v\n%s", res, strings.Join(configs, "\n"))
+	}
+	set.StatusPort = 25565
+	if res := s.applyStatusRecorded(context.Background(), set, []Proxied{{Server: "mc", Ports: []forwarding.Mapping{{Port: 25565, Proto: "tcp"}}}}); !strings.Contains(res.Error, "mc") || len(configs) != 1 {
+		t.Errorf("conflict applied: %+v", res)
+	}
+
+	// The firewall: port 80 is open already; another port gets a rule.
+	set.StatusPort = 8081
+	if _, err := s.Save(set); err != nil {
+		t.Fatal(err)
+	}
+	labels := func() (out []string) {
+		for _, r := range s.wantedRules([]Proxied{}) {
+			out = append(out, r.Label+" "+r.Ports)
+		}
+		return out
+	}
+	if got := labels(); !slices.Contains(got, statusAddressRuleLabel+" 8081") {
+		t.Errorf("rules = %v", got)
+	}
+	set.StatusPort = 80
+	if _, err := s.Save(set); err != nil {
+		t.Fatal(err)
+	}
+	if got := labels(); slices.Contains(got, statusAddressRuleLabel+" 80") {
+		t.Errorf("rules on 80 = %v", got)
 	}
 }

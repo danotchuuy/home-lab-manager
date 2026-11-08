@@ -1268,8 +1268,10 @@ func (s *server) previewProxy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) applyProxy(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	// Getting the status page's certificate can take a few minutes.
+	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Minute)
 	defer cancel()
+	s.Proxy.RetryCert()
 	res, err := s.Proxy.Apply(ctx)
 	if err != nil {
 		writeProxyError(w, err, res.Output)

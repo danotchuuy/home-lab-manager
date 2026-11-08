@@ -273,6 +273,25 @@ func TestStatusSitesAPI(t *testing.T) {
 	if w := at("friends.example.com", "GET", "/api/servers", "", ""); w.Code != 404 {
 		t.Errorf("friends, /api/servers: %d", w.Code)
 	}
+	// Marked by the proxy's nginx (its own address): the page-wide view,
+	// and nothing else of hlm, even for a signed-in user.
+	marked := func(path string, keyed bool) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", path, nil)
+		r.Host, r.RemoteAddr = "203.0.113.7", "198.51.100.9:1"
+		r.Header.Set(statuspage.OnlyHeader, "1")
+		if keyed {
+			r.Header.Set("Authorization", "Bearer "+e.keys["admin"])
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	if w := marked("/api/status-page", false); w.Code != 200 || !strings.Contains(w.Body.String(), "Plex") {
+		t.Errorf("marked page: %d %s", w.Code, w.Body)
+	}
+	if w := marked("/api/servers", true); w.Code != 404 {
+		t.Errorf("marked /api/servers: %d", w.Code)
+	}
 	// The settings say which passwords are set, with the site's ID to keep them.
 	w = call(h, "admin", "GET", "/api/system/status-page", "", e.keys)
 	if !strings.Contains(w.Body.String(), `"hostname":"friends.example.com"`) || !strings.Contains(w.Body.String(), `"id":"`) ||

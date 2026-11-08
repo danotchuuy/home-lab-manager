@@ -79,6 +79,18 @@ type Settings struct {
 	StatusPage  bool   `json:"statusPage"`
 	StatusTLS   string `json:"statusTls,omitempty"`
 	StatusEmail string `json:"statusEmail,omitempty"`
+	// StatusOnAddress also serves the status page on the proxy server's own
+	// address, the one players use for the game servers (Host), over HTTP
+	// on StatusPort (80 by default).
+	StatusOnAddress bool `json:"statusOnAddress,omitempty"`
+	StatusPort      int  `json:"statusPort,omitempty"`
+	// StatusAddressHTTPS serves it there over HTTPS, as StatusAddressName
+	// (the domain players use for the game servers, pointing at the proxy
+	// server and on the Cloudflare account), with a Let's Encrypt
+	// certificate hlm gets through Cloudflare DNS and installs on the proxy.
+	// With port 80, HTTPS is on 443 and 80 redirects to it.
+	StatusAddressHTTPS bool   `json:"statusAddressHttps,omitempty"`
+	StatusAddressName  string `json:"statusAddressName,omitempty"`
 }
 
 // KeyInfo is the public half of hlm's SSH key.
@@ -108,6 +120,9 @@ type Service struct {
 	dockerFor func(host string) (Containers, error)
 	// statusSites finds the status page's sites; see UseStatusSites.
 	statusSites func(ctx context.Context) ([]string, int, error)
+	// issueCert gets a certificate through Cloudflare DNS; see
+	// UseCertIssuer.
+	issueCert CertIssuer
 	// cloudflare puts the status page's sites behind Cloudflare; see
 	// UseCloudflare.
 	cloudflare Cloudflare
@@ -237,6 +252,33 @@ func Validate(st *Settings) error {
 	}
 	if st.Port < 1 || st.Port > 65535 {
 		return fmt.Errorf("invalid SSH port %d", st.Port)
+	}
+	st.StatusAddressName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(st.StatusAddressName), "."))
+	if !st.StatusOnAddress {
+		st.StatusPort, st.StatusAddressHTTPS, st.StatusAddressName = 0, false, ""
+	} else if st.StatusPort == 0 {
+		st.StatusPort = 80
+	}
+	if st.StatusAddressHTTPS {
+		if _, err := netip.ParseAddr(strings.ToLower(st.Host)); st.StatusAddressName == "" && err != nil && statusDomain.MatchString(st.Host) {
+			st.StatusAddressName = strings.ToLower(st.Host)
+		}
+		if !statusDomain.MatchString(st.StatusAddressName) {
+			return errors.New("HTTPS on the proxy's address needs the domain name players use for it (on your Cloudflare account): a certificate can't be got for an IP address")
+		}
+	} else {
+		st.StatusAddressName = ""
+	}
+	switch p := st.StatusPort; {
+	case p == 0:
+	case p < 1 || p > 65535:
+		return fmt.Errorf("invalid port %d for the status page", p)
+	case p == 443 && st.StatusAddressHTTPS:
+		return errors.New("choose port 80 for HTTPS on the usual port: the page is then on 443, and 80 sends visitors there")
+	case p == 443:
+		return errors.New("the status page on the proxy's address is plain HTTP without HTTPS turned on, so it can't use port 443; choose 80 or another port")
+	case p == st.Port:
+		return fmt.Errorf("port %d is the proxy server's SSH port; choose another for the status page", p)
 	}
 	if !userName.MatchString(st.User) {
 		return fmt.Errorf("invalid user name %q", st.User)
@@ -790,7 +832,7 @@ func (s *Service) Apply(ctx context.Context) (ApplyResult, error) {
 		if err := s.recordApplied(st.Upstream, servers); err != nil {
 			s.log.Error("save proxy state", "err", err)
 		}
-		r.Status = s.applyStatusRecorded(ctx, st)
+		r.Status = s.applyStatusRecorded(ctx, st, servers)
 		r.Firewall = s.syncFirewallAfter(ctx, servers)
 		return r, nil
 	case strings.Contains(res.Stdout, "hlm:nonginx"):
