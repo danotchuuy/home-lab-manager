@@ -268,6 +268,23 @@ func (s *Service) routes() ([]Route, error) {
 	return rs, err
 }
 
+// HlmHostnames are the hostnames routed to hlm itself ("Home Lab Manager
+// (status page)"): like a status page site's domain, they reach only the
+// status page.
+func (s *Service) HlmHostnames() []string {
+	rs, err := s.routes()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, r := range rs {
+		if r.Hlm {
+			out = append(out, r.Hostname)
+		}
+	}
+	return out
+}
+
 func (s *Service) applied() (appliedState, bool, error) {
 	var a appliedState
 	ok, err := s.secrets.Get(secretApplied, &a)
@@ -1134,8 +1151,9 @@ func origin(info docker.ContainerJSON, r Route, t Tunnel, remoteHost string) (st
 			return "", errors.New("the server has its own LAN address, which cloudflared only reaches with \"Reach servers with their own LAN address\" set up for the tunnel")
 		}
 		subnet := netip.MustParsePrefix(t.LANSubnet)
-		for _, n := range info.NetworkSettings.Networks {
-			if a, err := netip.ParseAddr(n.IPAddress); err == nil && subnet.Contains(a) {
+		// Its fixed address too while it's stopped (asleep, say).
+		for _, a := range deploy.ContainerAddresses(info) {
+			if subnet.Contains(a) && host == "" {
 				host = a.String()
 			}
 		}

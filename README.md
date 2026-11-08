@@ -985,6 +985,10 @@ playing** (managers) can stop it after a while without players, and start it aga
     Linux build of hlm (releases are) and an image for the same CPU architecture as hlm. The card says when one is
     missing.
   - With ports open to the internet, anyone who connects can start the server; that's all they can do.
+  - Its UniFi port forwards, proxy relays (WireGuard included), proxy firewall rules and Cloudflare Tunnel routes stay
+    as they are while it sleeps, so connections from outside reach the listener. For a server with its own LAN address
+    that's its fixed address (Docker keeps it while the server is stopped); for one whose address Docker chose (and
+    forgets while it's stopped), where they already went.
 - **Let visitors start it from the status page.** A **Start it** button beside it on the [public status
   page](#public-status-page) while it's asleep (if it's on the page). Each address can start servers three times, then
   once every 10 minutes.
@@ -1987,12 +1991,17 @@ Status page** and add the servers to show; it's at `/status`.
 - **Sites on Cloudflare:** with [Cloudflare Tunnel](#web-addresses-with-cloudflare-tunnel) set up, each site has
   **Publish on Cloudflare**, which adds a tunnel route for its domain (and the DNS record) to hlm itself, and then
   shows whether it's published. On the Tunnel page the same route reads **Home Lab Manager (status page)**, a choice
-  for any hostname. hlm works out where cloudflared reaches it: its own port, or the port its container publishes on
+  for any hostname, and says what it shows: a site's domain shows that site, and any other hostname the status page
+  with every server and the page-wide passwords. Either way only the status page reaches through it (the rest of hlm
+  answers 404 there); to reach hlm itself through Cloudflare, route a hostname to **Other server…** at hlm's LAN
+  address and port instead. hlm works out where cloudflared reaches it: its own port, or the port its container publishes on
   the host (it says so if it doesn't publish one). It's sent as HTTP, which hlm accepts from the tunnel even with
   HTTPS on.
 - **Sites on the proxy server:** with the [proxy server](#relaying-through-a-proxy-server-nginx-over-ssh) and its
   [WireGuard tunnel](#wireguard-tunnel-to-this-host) set up (and the tunnel chosen as the home address), tick **Serve the
-  status page's sites here too** on the Proxy page and apply. nginx there answers each site's domain and passes only
+  status page here too** on the Proxy page and apply, or **Serve the status page on the proxy server** under **On the
+  proxy server** in these settings and **Save & apply on the proxy** (the same settings, kept with the proxy's; applying
+  applies its game relays too, as they are). The Proxy page lists the sites it serves. nginx there answers each site's domain and passes only
   the status page's paths to hlm through the tunnel, so hlm's own port is never opened to the internet; everything
   else on those domains is 404 at the proxy as well as at hlm. **HTTPS** is one of:
   - **None:** plain HTTP; point each domain's DNS at the proxy server yourself.
