@@ -1508,8 +1508,11 @@ under **Other Docker hosts** in the tunnel's card, **Set up _host_'s end**. hlm 
 there (host networking, as here), with its own key and its own address in the tunnel (the next free one: `.3`, `.4`, …),
 and adds it to the proxy server's `gsh0` as another peer (which restarts the proxy's end briefly). It connects out to
 the proxy too, so the host can be anywhere. nginx then relays each server to the tunnel address of the host it runs
-on; a server on a host without an end is listed with an error and skipped. **Check tunnel** shows each end's last
-handshake. An end can be set up again (same key and address) or removed; removing the whole tunnel removes them all.
+on; a server on a host without an end is listed with an error and skipped. A server with its own LAN address is
+different: it's a device on the LAN, so it's reached through whichever end is on its LAN (its own host's end first,
+then this host's, then the others'), whichever host runs it. Only one end may reach a given LAN, so with two hosts on
+one LAN, set up **Reach servers with their own LAN address** on one of them, and the other host's `br0` servers are
+relayed through it too. **Check tunnel** shows each end's last handshake. An end can be set up again (same key and address) or removed; removing the whole tunnel removes them all.
 The tunnel network can't change while other hosts have ends in it. An end can use **LAN mode** too: in its setup form
 (**Set up _host_'s end…**, or **change**), choose one of that host's macvlan/ipvlan networks (listed from its Docker),
 optionally with a fixed address there. It then reaches that host's servers with their own LAN address, as this host's

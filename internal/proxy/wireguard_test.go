@@ -521,7 +521,12 @@ func TestRouteFor(t *testing.T) {
 	lan := server(nil)
 	lan.Config.Labels = map[string]string{deploy.LabelDirectIP: "true"}
 	lan.NetworkSettings.Networks = map[string]docker.EndpointSettings{"br0": {IPAddress: "192.168.1.61"}}
-	s := New(store, fakeServers{"bridged": server(map[string]string{"2456/udp": "2456"}), "lan": lan}, slog.New(slog.DiscardHandler))
+	// The same, on another host (whose end can't reach the LAN too).
+	far := server(nil)
+	far.ID = "abc@nas"
+	far.Config.Labels = map[string]string{deploy.LabelDirectIP: "true"}
+	far.NetworkSettings.Networks = map[string]docker.EndpointSettings{"br0": {IPAddress: "192.168.1.62"}}
+	s := New(store, fakeServers{"bridged": server(map[string]string{"2456/udp": "2456"}), "lan": lan, "enshrouded@nas": far}, slog.New(slog.DiscardHandler))
 	if _, err := s.RouteFor(context.Background(), "bridged"); !errors.Is(err, ErrNotConfigured) {
 		t.Errorf("before setup: %v", err)
 	}
@@ -545,6 +550,13 @@ func TestRouteFor(t *testing.T) {
 	store.Set(secretWireGuard, wg)
 	if r, _ := s.RouteFor(context.Background(), "lan"); r.Target != "192.168.1.61" || !r.OwnPorts || !r.ServerAddress || r.Error != "" {
 		t.Errorf("LAN mode: %+v", r)
+	}
+	// A server on another host's br0, whose end doesn't reach the LAN
+	// (only one end may), is reached through this host's end, which does.
+	wg.Hosts = map[string]WireGuardEnd{"nas": {Address: "10.77.77.3"}}
+	store.Set(secretWireGuard, wg)
+	if r, _ := s.RouteFor(context.Background(), "enshrouded@nas"); r.Target != "192.168.1.62" || !r.ServerAddress || r.Error != "" {
+		t.Errorf("LAN server on another host: %+v", r)
 	}
 }
 

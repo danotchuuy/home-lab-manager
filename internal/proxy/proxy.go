@@ -606,8 +606,19 @@ func (s *Service) relayed(ctx context.Context, st Settings) []Proxied {
 			out = append(out, p)
 			continue
 		}
-		end := wg
-		if host := hostOfID(info.ID); st.UpstreamSource == "wireguard" && host != localHost {
+		host := hostOfID(info.ID)
+		switch {
+		case st.UpstreamSource == "wireguard" && info.Config.Labels[deploy.LabelDirectIP] == "true":
+			// A container with its own (macvlan/ipvlan) LAN address is
+			// reached by whichever end of the tunnel is on its LAN.
+			addr, _, err := wg.lanReach(info, host)
+			if err != nil {
+				p.Error = err.Error()
+				out = append(out, p)
+				continue
+			}
+			p.Address, p.Upstream = addr.String(), ""
+		case st.UpstreamSource == "wireguard" && host != localHost:
 			// A server on another host goes through that host's end.
 			e, ok := wg.end(host)
 			if !ok {
@@ -615,18 +626,7 @@ func (s *Service) relayed(ctx context.Context, st Settings) []Proxied {
 				out = append(out, p)
 				continue
 			}
-			end, p.Upstream = e, e.HomeAddress().String()
-		}
-		if st.UpstreamSource == "wireguard" && info.Config.Labels[deploy.LabelDirectIP] == "true" {
-			// The tunnel reaches containers with their own (macvlan/ipvlan)
-			// LAN address only when its home end is on their network.
-			addr, err := end.lanAddressOf(info)
-			if err != nil {
-				p.Error = err.Error()
-				out = append(out, p)
-				continue
-			}
-			p.Address, p.Upstream = addr.String(), ""
+			p.Upstream = e.HomeAddress().String()
 		}
 		for _, m := range ports {
 			if !m.Proxy {
