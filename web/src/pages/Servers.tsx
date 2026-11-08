@@ -67,28 +67,29 @@ export function ServersPage() {
   const [games, setGames] = useState<Record<string, GameSummary>>({});
 
   const load = useCallback(async () => {
+    // Each part is shown as soon as it arrives, so a slow one (another Docker
+    // host taking its time, say) doesn't hold up the server list.
+    // Connections are extra, and only for admins; the servers show without them.
+    const conns = admin
+      ? api.connections().then(setConnections, () => setConnections([]))
+      : Promise.resolve(setConnections([]));
+    const info = api.updateInfo().then(setUpdateInfo, () => {});
     try {
-      const [list, info, conns] = await Promise.all([
-        api.servers(),
-        api.updateInfo(),
-        // Connections are extra, and only for admins; the servers still show without them.
-        admin ? api.connections().catch(() => [] as Connection[]) : ([] as Connection[]),
-      ]);
-      setServers(list);
-      setUpdateInfo(info);
-      api.autoUpdates().then(setAuto, () => {});
-      api.gameStatuses().then(setGames, () => {});
-      // Scheduled tasks are extra; the list still works without them.
-      api.upcomingTasks().then((up) => {
-        const next: Record<string, UpcomingTask> = {};
-        for (const u of up) if (!next[u.server]) next[u.server] = u;
-        setNextTasks(next);
-      }, () => {});
-      setConnections(conns);
+      setServers(await api.servers());
       setError(undefined);
     } catch (e) {
       setError((e as Error).message);
     }
+    api.autoUpdates().then(setAuto, () => {});
+    api.gameStatuses().then(setGames, () => {});
+    // Scheduled tasks are extra; the list still works without them.
+    api.upcomingTasks().then((up) => {
+      const next: Record<string, UpcomingTask> = {};
+      for (const u of up) if (!next[u.server]) next[u.server] = u;
+      setNextTasks(next);
+    }, () => {});
+    // The next refresh waits for the rest, so slow requests don't pile up.
+    await Promise.all([conns, info]);
   }, [admin]);
 
   usePoll(load, 5000, [load]);

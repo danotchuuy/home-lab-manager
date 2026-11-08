@@ -7,6 +7,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
@@ -68,28 +69,64 @@ type Connection struct {
 // Connections lists the connection containers, by name.
 func (m *Manager) Connections(ctx context.Context) ([]Connection, error) {
 	out := []Connection{}
-	for label, k := range m.connections {
-		// Each Docker host can have its own (a tunnel's end, cloudflared).
-		var list []docker.ContainerSummary
-		for _, host := range m.docker.hosts() {
-			l, err := m.docker.ListContainersOn(ctx, host, label)
-			if err != nil {
-				if host == LocalHost {
-					return nil, err
+	// Each Docker host can have its own (a tunnel's end, cloudflared). The
+	// hosts are listed together, each within its own time, and one that
+	// can't be reached is left out rather than holding up the rest.
+	hosts := m.docker.hosts()
+	type found struct {
+		c    docker.ContainerSummary
+		kind ConnectionKind
+	}
+	perHost := make([][]found, len(hosts))
+	errs := make([]error, len(hosts))
+	var wg sync.WaitGroup
+	for i, host := range hosts {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			hctx := ctx
+			if host != LocalHost {
+				var cancel context.CancelFunc
+				hctx, cancel = context.WithTimeout(ctx, remoteTimeout)
+				defer cancel()
+			}
+			for label, k := range m.connections {
+				l, err := m.docker.ListContainersOn(hctx, host, label)
+				if err != nil {
+					if host != LocalHost && !errors.Is(err, ErrHostDown) && ctx.Err() == nil {
+						m.docker.setStatus(host, err)
+					}
+					errs[i] = err
+					return
 				}
-				continue // a host that can't be reached
+				for _, c := range l {
+					perHost[i] = append(perHost[i], found{c, k})
+				}
 			}
-			list = append(list, l...)
+		}()
+	}
+	wg.Wait()
+	if errs[0] != nil { // this host
+		return nil, errs[0]
+	}
+	var list []docker.ContainerSummary
+	var kinds []ConnectionKind
+	for i := range hosts {
+		if errs[i] != nil {
+			continue // a host that can't be reached
 		}
-		for _, c := range list {
-			info, err := m.docker.InspectContainer(ctx, c.ID)
-			if docker.IsNotFound(err) {
-				continue // removed since the list call
-			}
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, m.connection(c, info, k))
+		for _, f := range perHost[i] {
+			list = append(list, f.c)
+			kinds = append(kinds, f.kind)
+		}
+	}
+	infos, err := m.inspectAll(ctx, list)
+	if err != nil {
+		return nil, err
+	}
+	for i, c := range list {
+		if infos[i] != nil {
+			out = append(out, m.connection(c, *infos[i], kinds[i]))
 		}
 	}
 	if m.selfID != "" {
