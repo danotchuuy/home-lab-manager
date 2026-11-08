@@ -786,6 +786,18 @@ export interface DeployEvent {
   target?: string;
   progress?: PullProgress;
   server?: Server;
+  /** How far copying a server's data has got. */
+  copy?: CopyProgress;
+}
+
+/** How far a copy of a server's data has got. */
+export interface CopyProgress {
+  files: number;
+  bytes: number;
+  /** How much there is in all; missing while it's measured (or if it can't be). */
+  total?: number;
+  /** Bytes a second, lately. */
+  rate: number;
 }
 
 export interface Status {

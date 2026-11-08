@@ -121,6 +121,8 @@ type Manager interface {
 	Stop(ctx context.Context, id string) error
 	Remove(ctx context.Context, id string) error
 	CopyData(ctx context.Context, fromID, toID string, folders []string, progress func(files.ArchiveStats)) (files.ArchiveStats, error)
+	// DataSize measures a server's data folders as a copy reads them.
+	DataSize(ctx context.Context, id string, folders []string) (int64, error)
 	HostPortsInUse(ctx context.Context, host string) (map[string]bool, error)
 	KnownHost(host string) bool
 	Networks(ctx context.Context, host string) ([]manager.NetworkInfo, error)

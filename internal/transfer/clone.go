@@ -9,14 +9,12 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/danotchuuy/home-lab-manager/internal/backup"
 	"github.com/danotchuuy/home-lab-manager/internal/catalog"
 	"github.com/danotchuuy/home-lab-manager/internal/deploy"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
-	"github.com/danotchuuy/home-lab-manager/internal/files"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
 )
 
@@ -362,7 +360,7 @@ func (s *Service) Clone(ctx context.Context, id string, opts CloneOptions, emit 
 	for _, c := range p.Copies {
 		folders = append(folders, c.Target)
 	}
-	progress := progressEmitter(emit)
+	tracker := newCopyTracker(emit)
 	switch opts.CopyData {
 	case CopyNow:
 		if len(folders) == 0 {
@@ -383,7 +381,10 @@ func (s *Service) Clone(ctx context.Context, id string, opts CloneOptions, emit 
 			}
 		}
 		emit(manager.Event{Stage: "copy", Message: "Copying " + strings.Join(folders, ", ")})
-		st, err := s.opts.Manager.CopyData(ctx, src.ID, srv.ID, folders, progress)
+		mctx, stopMeasuring := context.WithCancel(ctx)
+		tracker.measure(mctx, func(ctx context.Context) (int64, error) { return s.opts.Manager.DataSize(ctx, src.ID, folders) })
+		st, err := s.opts.Manager.CopyData(ctx, src.ID, srv.ID, folders, tracker.progress)
+		stopMeasuring()
 		resume() // the original is back as soon as its data is copied
 		if err != nil {
 			return fail(fmt.Errorf("copy the data: %w", err))
@@ -391,7 +392,7 @@ func (s *Service) Clone(ctx context.Context, id string, opts CloneOptions, emit 
 		reportCopy(emit, st.Files, st.Bytes, st.Warnings)
 	case CopyBackup:
 		emit(manager.Event{Stage: "copy", Message: "Restoring the backup into " + srv.Name})
-		run, err := s.opts.Backups.RestoreInto(ctx, srcName, opts.BackupKey, srv.ID, progress)
+		run, err := s.opts.Backups.RestoreInto(ctx, srcName, opts.BackupKey, srv.ID, tracker.progress)
 		if err != nil {
 			return fail(fmt.Errorf("restore the backup: %w", err))
 		}
@@ -412,21 +413,6 @@ func reportCopy(emit func(manager.Event), n int, bytes int64, warnings []string)
 	emit(manager.Event{Stage: "copy", Message: fmt.Sprintf("Copied %d files (%s)", n, formatBytes(bytes))})
 	for _, w := range warnings {
 		emit(manager.Event{Stage: "warning", Message: w})
-	}
-}
-
-// progressEmitter reports a copy's progress every couple of seconds.
-func progressEmitter(emit func(manager.Event)) func(files.ArchiveStats) {
-	var mu sync.Mutex
-	var last time.Time
-	return func(st files.ArchiveStats) {
-		mu.Lock()
-		defer mu.Unlock()
-		if time.Since(last) < 2*time.Second {
-			return
-		}
-		last = time.Now()
-		emit(manager.Event{Stage: "copy", Message: fmt.Sprintf("Copied %d files (%s) so far", st.Files, formatBytes(st.Bytes))})
 	}
 }
 

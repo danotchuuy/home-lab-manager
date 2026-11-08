@@ -254,7 +254,11 @@ func (s *Service) Migrate(ctx context.Context, id string, opts MigrateOptions, s
 		emit(manager.Event{Stage: "copy", Message: "There are no data folders to copy"})
 	} else {
 		emit(manager.Event{Stage: "copy", Message: "Copying " + strings.Join(folders, ", ") + " to " + opts.Host})
-		st, err := s.opts.Manager.CopyData(ctx, src.ID, srv.ID, folders, progressEmitter(emit))
+		tracker := newCopyTracker(emit)
+		mctx, stopMeasuring := context.WithCancel(ctx)
+		tracker.measure(mctx, func(ctx context.Context) (int64, error) { return s.opts.Manager.DataSize(ctx, src.ID, folders) })
+		st, err := s.opts.Manager.CopyData(ctx, src.ID, srv.ID, folders, tracker.progress)
+		stopMeasuring()
 		if err != nil {
 			return fail(fmt.Errorf("copy the data: %w", err))
 		}

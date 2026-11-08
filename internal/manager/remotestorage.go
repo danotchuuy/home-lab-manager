@@ -127,3 +127,66 @@ func lastLines(s string) string {
 	}
 	return strings.Join(lines, " / ")
 }
+
+// apparentScript prints "bytes path" for each folder, its files' sizes as
+// a copy reads them, or "-1 path" if it can't.
+const apparentScript = `R=/hlm-root
+for p in "$@"; do
+  s=$(du -sb "$R$p" 2>/dev/null | tail -n 1 | cut -f1)
+  echo "${s:--1} $p"
+done
+echo "hlm:done"`
+
+// DataSize measures a server's data folders (by their paths in the
+// container), as copying them would read them: folders on the host and
+// Docker volumes alike, by where they are on its host. Folders inside
+// another of them count once. It's for showing a copy's progress, so it
+// fails rather than guess when a folder can't be measured.
+func (m *Manager) DataSize(ctx context.Context, id string, folders []string) (int64, error) {
+	info, err := m.inspect(ctx, id)
+	if err != nil {
+		return 0, err
+	}
+	host, _ := SplitID(info.ID)
+	var sources []string
+	for _, mnt := range info.Mounts {
+		if (mnt.Type == "bind" || mnt.Type == "volume") && slices.Contains(folders, path.Clean(mnt.Destination)) && mnt.Source != "" {
+			sources = append(sources, path.Clean(mnt.Source))
+		}
+	}
+	// A folder inside another is part of that one's size.
+	slices.Sort(sources)
+	var outer []string
+	for _, s := range sources {
+		if len(outer) > 0 && (s == outer[len(outer)-1] || strings.HasPrefix(s, outer[len(outer)-1]+"/")) {
+			continue
+		}
+		outer = append(outer, s)
+	}
+	if len(outer) == 0 {
+		return 0, nil
+	}
+	// Apparent sizes (du -b), as the copy counts what it reads, rather
+	// than disk space, which can be far more for many small files.
+	cmd := append([]string{"sh", "-c", apparentScript, "sh"}, outer...)
+	code, out, err := m.runHelperOutput(ctx, host, "/:/hlm-root:ro", "all", cmd...)
+	if err != nil {
+		return 0, err
+	}
+	if code != 0 || !strings.Contains(out, "hlm:done") {
+		return 0, fmt.Errorf("the measuring helper failed (exit status %d): %s", code, lastLines(out))
+	}
+	var total int64
+	for _, line := range strings.Split(out, "\n") {
+		size, p, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if !ok || line == "hlm:done" {
+			continue
+		}
+		n, err := strconv.ParseInt(size, 10, 64)
+		if err != nil || n < 0 {
+			return 0, fmt.Errorf("couldn't measure %s", p)
+		}
+		total += n
+	}
+	return total, nil
+}

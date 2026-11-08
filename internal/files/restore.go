@@ -79,13 +79,31 @@ func rewrite(info docker.ContainerJSON, tr *tar.Reader, tw *tar.Writer, st *Arch
 		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
-		if _, err := io.Copy(tw, tr); err != nil {
+		// Bytes are counted as they're written, so a big file's progress
+		// shows while it's copied, not only once it's done.
+		if _, err := io.Copy(&countingWriter{w: tw, add: func(n int) {
+			st.Bytes += int64(n)
+			progress(*st)
+		}}, tr); err != nil {
 			return err
 		}
 		st.Files++
-		st.Bytes += hdr.Size
 		progress(*st)
 	}
+}
+
+// countingWriter passes writes on and says how much each wrote.
+type countingWriter struct {
+	w   io.Writer
+	add func(n int)
+}
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	if n > 0 {
+		c.add(n)
+	}
+	return n, err
 }
 
 // mountFor returns the innermost mount containing p, if any.
