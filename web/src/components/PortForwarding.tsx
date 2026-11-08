@@ -82,7 +82,7 @@ export function PortForwarding({ server, onChanged }: { server: string; onChange
         <p className="muted">
           Connect your UniFi gateway to open this server&apos;s ports to the internet from here.
         </p>
-        <Link className="btn primary small" to="/system">
+        <Link className="btn primary small" to="/system#unifi">
           Set up UniFi
         </Link>
       </div>

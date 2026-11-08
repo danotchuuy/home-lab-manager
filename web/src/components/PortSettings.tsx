@@ -271,7 +271,7 @@ export function PortSettings({
         )}
         {!info.unifi && !tunnel && (
           <span className="muted small">
-            UniFi isn&apos;t connected; <Link to="/system">connect it</Link> to forward ports on your gateway.
+            UniFi isn&apos;t connected; <Link to="/system#unifi">connect it</Link> to forward ports on your gateway.
           </span>
         )}
         {info.proxy.configured && !info.firewall && (

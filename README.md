@@ -1962,6 +1962,12 @@ can. Web UI links for macvlan servers use the server's own IP.
   Catalog, Host and System, and `?` lists the shortcuts.
 - **Phones.** The layout fits narrow screens, with larger touch targets, and hlm can be added to the home screen (it has
   a web app manifest and icons).
+- **The System page** is in tabs: **Overview** (hlm's version and updates, automatic updates, time zone), **Access**
+  (sign-in, single sign-on, HTTPS, API keys, server groups), **Backups**, **Games** (game profiles, registries),
+  **Sharing** (status page, Discord), **Network** (UniFi, Linode firewall) and **Monitoring** (notifications,
+  activity, Prometheus). The tab is in the page's address (`/system?tab=network`), links to a setting
+  (`/system#linode`) open its tab, and **Find a setting** searches every tab by name or by words like "passkey" or
+  "webhook". The command palette finds settings the same way (`Ctrl K`, then `linode`).
 - **Times** like "5 min ago" show the exact time when you hover over them.
 
 ## Public status page

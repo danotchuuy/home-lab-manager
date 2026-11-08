@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { SYSTEM_SECTIONS, SYSTEM_TABS, sectionPath } from "../systemSections";
 import { api } from "../api";
 import { getTheme, setTheme, type Theme } from "../theme";
 import type { Job, Server } from "../types";
@@ -233,6 +234,8 @@ export function Shortcuts({ admin }: { admin: boolean }) {
 interface Command {
   label: string;
   hint?: string;
+  /** More words it's found by. */
+  keywords?: string;
   run: () => void | Promise<void>;
 }
 
@@ -257,6 +260,14 @@ function CommandPalette({ admin, onClose }: { admin: boolean; onClose: () => voi
       go("Tunnel", "/tunnel");
       go("System", "/system");
       go("Import a server", "/import");
+      // Each of System's tabs and settings, found by its words too.
+      for (const t of SYSTEM_TABS) {
+        if (t.id !== "overview") out.push({ label: `System: ${t.label}`, hint: "page", run: () => navigate(`/system?tab=${t.id}`) });
+      }
+      for (const sec of SYSTEM_SECTIONS) {
+        if (sec.id === "release-notes") continue;
+        out.push({ label: `System: ${sec.title}`, hint: "setting", keywords: sec.keywords, run: () => navigate(sectionPath(sec)) });
+      }
     }
     for (const s of servers) {
       const page = `/servers/${encodeURIComponent(s.name)}`;
@@ -290,9 +301,9 @@ function CommandPalette({ admin, onClose }: { admin: boolean; onClose: () => voi
 
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   const shown = commands
-    .filter((c) => words.every((w) => `${c.label} ${c.hint ?? ""}`.toLowerCase().includes(w)))
-    // Without a query, actions would crowd out the places to go.
-    .filter((c) => words.length > 0 || c.hint !== "action")
+    .filter((c) => words.every((w) => `${c.label} ${c.hint ?? ""} ${c.keywords ?? ""}`.toLowerCase().includes(w)))
+    // Without a query, actions and settings would crowd out the places to go.
+    .filter((c) => words.length > 0 || (c.hint !== "action" && c.hint !== "setting"))
     .slice(0, 12);
 
   function run(c?: Command) {
