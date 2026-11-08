@@ -56,6 +56,30 @@ type Asleep struct {
 	// there isn't one running, if it should be.
 	Listener      string `json:"listener,omitempty"`
 	ListenerError string `json:"listenerError,omitempty"`
+	// Address is the server's own LAN address as it was before it
+	// stopped, for one on a macvlan/ipvlan network (Docker forgets an
+	// address it chose when the container stops).
+	Address *Address `json:"address,omitempty"`
+}
+
+// Address is a container's address on a network.
+type Address struct {
+	Network string `json:"network"`
+	IP      string `json:"ip"`
+	MAC     string `json:"mac,omitempty"`
+}
+
+// seenAddress is a running server's own LAN address, if it has one.
+func seenAddress(info docker.ContainerJSON) *Address {
+	if !lanAddressed(info) {
+		return nil
+	}
+	n := info.HostConfig.NetworkMode
+	ep, ok := info.NetworkSettings.Networks[n]
+	if !ok || ep.IPAddress == "" {
+		return nil
+	}
+	return &Address{Network: n, IP: ep.IPAddress, MAC: ep.MacAddress}
 }
 
 // Status is a server's idle settings and state.
@@ -197,6 +221,12 @@ func (s *Service) setAsleep(name string, a *Asleep) error {
 	return s.opts.Secrets.Set(asleepName, m)
 }
 
+func (s *Service) asleepEntry(name string) (Asleep, bool) {
+	m, _ := s.asleepAll()
+	a, ok := m[name]
+	return a, ok
+}
+
 // AsleepInfo says whether a server is asleep, and whether the status page
 // may wake it.
 func (s *Service) AsleepInfo(name string) (asleep, wakeFromStatusPage bool) {
@@ -243,7 +273,11 @@ func (s *Service) Status(ctx context.Context, name string) (Status, error) {
 	if s.listenerProblem != "" {
 		st.CanListen, st.ListenWhy = false, s.listenerProblem
 	} else if info, err := s.opts.Servers.Inspect(ctx, name); err == nil {
-		if _, err := listenerPorts(info); err != nil {
+		var seen *Address
+		if a, ok := s.asleepEntry(name); ok {
+			seen = a.Address
+		}
+		if _, err := listenerPlan(info, seen); err != nil {
 			st.CanListen, st.ListenWhy = false, err.Error()
 		}
 	}
@@ -459,7 +493,7 @@ func (s *Service) sleep(ctx context.Context, name string, set Settings) {
 	}
 	// Recorded first, so the stop isn't taken for a crash or a start by
 	// someone else.
-	a := Asleep{Since: s.opts.Now(), Minutes: set.Minutes}
+	a := Asleep{Since: s.opts.Now(), Minutes: set.Minutes, Address: seenAddress(info)}
 	if err := s.setAsleep(name, &a); err != nil {
 		s.opts.Log.Warn("record sleeping server", "server", name, "err", err)
 		return
