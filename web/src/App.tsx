@@ -14,6 +14,7 @@ import { ProxyPage } from "./pages/Proxy";
 import { TunnelPage } from "./pages/Tunnel";
 import { InstallPage } from "./pages/Install";
 import { ImportServerPage } from "./pages/ImportServer";
+import { AdoptPage } from "./pages/Adopt";
 import { CloneServerPage } from "./pages/CloneServer";
 import { StackEditorPage } from "./pages/StackEditor";
 import { ServerDetailPage } from "./pages/ServerDetail";
@@ -138,6 +139,7 @@ export function App() {
           <Route path="/servers/:name" element={<ServerDetailPage />} />
           <Route path="/servers/:name/clone" element={<CloneServerPage />} />
           <Route path="/import" element={<ImportServerPage />} />
+          <Route path="/adopt" element={<AdoptPage />} />
           <Route path="/stacks/new" element={<StackEditorPage />} />
           <Route path="/stacks/:name" element={<StackEditorPage />} />
           <Route path="/connections/:name" element={<ConnectionDetailPage />} />

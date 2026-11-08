@@ -571,6 +571,14 @@ func (m *Manager) recreate(ctx context.Context, id string, req *deploy.Request, 
 	if err != nil {
 		return Server{}, err
 	}
+	return m.recreateFrom(ctx, info, req, unconfine, true, emit)
+}
+
+// recreateFrom replaces the container info with one made from req (or its
+// saved request), keeping the old one until the new one runs. pull says
+// whether to pull the image first; otherwise it's only pulled if the host
+// doesn't have it.
+func (m *Manager) recreateFrom(ctx context.Context, info docker.ContainerJSON, req *deploy.Request, unconfine, pull bool, emit func(Event)) (Server, error) {
 	name := strings.TrimPrefix(info.Name, "/")
 	host, bare := SplitID(name)
 	if stack := info.Config.Labels[LabelStack]; stack != "" {
@@ -624,8 +632,10 @@ func (m *Manager) recreate(ctx context.Context, id string, req *deploy.Request, 
 	for _, w := range spec.Warnings {
 		emit(Event{Stage: "warning", Message: w})
 	}
-	if err := m.pull(ctx, host, spec.Image, emit); err != nil {
-		return Server{}, err
+	if _, err := m.docker.InspectImage(ctx, host, spec.Image); pull || err != nil {
+		if err := m.pull(ctx, host, spec.Image, emit); err != nil {
+			return Server{}, err
+		}
 	}
 
 	wasRunning := info.State.Running
@@ -683,11 +693,13 @@ func (m *Manager) recreate(ctx context.Context, id string, req *deploy.Request, 
 	} else {
 		m.removeOldImage(ctx, host, info.Image, srv.imageID, emit)
 	}
-	// The image was just pulled, so the new container is up to date.
-	current := UpdateStatus{State: UpdateCurrent, CheckedAt: time.Now()}
 	m.updates.forget(info.ID)
-	m.updates.set(srv.ID, current)
-	srv.Update = &current
+	if pull {
+		// The image was just pulled, so the new container is up to date.
+		current := UpdateStatus{State: UpdateCurrent, CheckedAt: time.Now()}
+		m.updates.set(srv.ID, current)
+		srv.Update = &current
+	}
 	return srv, nil
 }
 
@@ -698,6 +710,11 @@ func (m *Manager) build(ctx context.Context, host string, req deploy.Request) (*
 	if !ok {
 		return nil, fmt.Errorf("template %q not found in catalog", req.TemplateID)
 	}
+	return m.buildApp(ctx, host, app, req)
+}
+
+// buildApp is build with the template given (localized for the host).
+func (m *Manager) buildApp(ctx context.Context, host string, app *catalog.App, req deploy.Request) (*deploy.Spec, error) {
 	networks, err := m.inspectNetworks(ctx, host)
 	if err != nil {
 		return nil, fmt.Errorf("list networks: %w", err)

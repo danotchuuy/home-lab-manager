@@ -1699,6 +1699,45 @@ defaults; only the ones you change are passed. These templates are listed under 
 refreshes a template; **Delete template** removes it (servers made from it keep running). Images from private
 registries need a login under **System → Registries** first (see [Private registries](#private-registries)).
 
+## Adopting containers hlm didn't make
+
+Containers you started yourself (with `docker run`, Portainer, or Unraid's Docker page) can become hlm servers. On the
+**Servers** page, **Adopt a container** lists each host's containers that aren't hlm's (leaving out hlm itself, its
+agents, helpers and connections), with their image, state, ports and folders. **Adopt…** shows how hlm would do it,
+before anything changes.
+
+Docker can't add labels to a container, so adopting **recreates** it with hlm's labels, the way an update does: the old
+container is stopped and renamed, the new one is made with the same name and started (if the old one was running), and
+the old one is only removed once the new one runs; if it doesn't, the old one is put back. Folders and volumes stay
+where they are, named and anonymous volumes alike, with their data. The image isn't pulled again unless the host
+doesn't have it.
+
+Where its settings come from:
+
+- **Unraid containers** (labelled `net.unraid.docker.managed`): hlm reads Unraid's copy of the template from the flash
+  drive (`/boot/config/plugins/dockerMan/templates-user/my-<name>.xml`, through a throwaway read-only busybox
+  container, so this works on any kind of host). If the catalog has the **Community Applications template** it came from
+  (by its template URL, or else its name or image), the server uses that template, with the values from Unraid's copy,
+  so it's like having installed it from hlm's catalog: settings the user added in Unraid become extra settings, and
+  ones they removed stay switched off. Otherwise Unraid's copy itself is saved as a custom template. Variables Unraid
+  sets itself (`HOST_OS`, `TZ`, …) are kept, and Unraid's CPU pinning becomes `--cpuset-cpus`.
+- **Other containers**: hlm makes a custom template from the container's own settings: its published ports, folders,
+  variables (those the image doesn't set itself), labels and devices as the template's settings, and the rest
+  (volumes, capabilities, limits, health check, user, entrypoint, …) as extra `docker run` parameters, with its command
+  as post arguments.
+
+Either way, hlm builds the new container and compares it with the running one first, and lists anything that would
+differ: a port, folder or variable that would change, settings hlm's servers can't have (`--pid`, `--ipc`, `--link`,
+`--volumes-from`, a second network, `-P`, memory reservations, …), or an Unraid template that no longer matches what's
+running. If there are any, you tick a box to adopt it anyway. A container on a macvlan or ipvlan network keeps its
+address; its MAC address becomes the stable one hlm gives each server, which the list says, since your router then sees
+a new device.
+
+Some containers can't be adopted: ones Docker Compose made (bring the project in as a [Compose stack](#compose-stacks)
+instead), ones on another container's network (`--network container:…`, as behind a VPN container), and paused or
+dead ones. Adopted templates are custom templates (`adopted-…`, under **Custom**). After adopting an Unraid container,
+change it in hlm, not on Unraid's Docker page: Unraid would recreate it without hlm's labels. Adopting needs an admin.
+
 ## Additional settings
 
 As in Unraid's container editor, the install and settings forms can add things a template doesn't include:
@@ -2417,6 +2456,9 @@ when the `HLM_*` one isn't set.
 | `POST /api/servers/{id}/backups`               | Start a backup now (202); progress shows in `GET .../backups`.                     |
 | `POST /api/servers/{id}/backups/restore`       | `{key, target?, backupFirst}`: start restoring a backup (202); progress shows in `GET .../backups`. |
 | `GET /api/servers/{id}/backups/download?key=&target=` | Download one of the server's backups (decrypted).                           |
+| `GET /api/containers?host=`                   | A host's containers that hlm doesn't manage (`containers`: id, name, image, state, ports, mounts, network, `unraid`, `compose`, `adoptable`, `reason`). Admins. |
+| `GET /api/containers/{id}/adopt`              | How hlm would [adopt](#adopting-containers-hlm-didnt-make) a container (`id` is `name` or `name@host`): `source` (`community-apps`, `unraid` or `container`), `template`, `request`, `changes`, `notes`, `restart`. Nothing changes. Admins. |
+| `POST /api/containers/{id}/adopt`             | Adopts it: recreates it as a server. Streams NDJSON progress. Admins. |
 | `GET /api/host/cleanup?host=`                 | What [disk cleanup](#disk-cleanup) can delete on a Docker host (`items`: kind, ID, name, size, ticked by default); nothing is deleted. Admins. |
 | `POST /api/host/cleanup?host=`                | `{images, containers, volumes, buildCache}`: delete those (if they're still candidates); answers `{freed, removed, failed}`. Admins. |
 | `GET/PUT /api/system/cleanup`                  | `{keepOldImages, weekly}`, plus the last weekly run (`lastRun`, `lastFreed`, `lastError`). Admins. |

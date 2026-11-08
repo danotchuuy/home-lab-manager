@@ -108,6 +108,7 @@ import type {
   WireGuardResult,
   WireGuardStatus,
   SSHKeyInfo,
+  AdoptPlan,
   AgentEnrolment,
   DockerHost,
   PasskeyInfo,
@@ -143,6 +144,7 @@ import type {
   StorageReport,
   SystemInfo,
   Status,
+  UnmanagedContainer,
 } from "./types";
 
 const TOKEN_KEY = "hlm.token";
@@ -509,6 +511,14 @@ export const api = {
   /** Makes certificates and sets Docker's API up with TLS on a host over SSH, then saves the host; streams the output. */
   setupTLS: (h: DockerHostInput & { port: number }, onEvent: (e: DeployEvent) => void) =>
     stream("/api/hosts/setup-tls", { method: "POST", body: JSON.stringify(h) }, onEvent),
+  /** A host's containers that hlm doesn't manage. */
+  unmanagedContainers: (host?: string) =>
+    json<{ containers: UnmanagedContainer[] }>(`/api/containers${hostQuery(host)}`).then((r) => r.containers),
+  /** How hlm would adopt a container; nothing changes. */
+  adoptPlan: (id: string) => json<AdoptPlan>(`/api/containers/${encodeURIComponent(id)}/adopt`),
+  /** Recreates a container as one of hlm's servers; streams the progress. */
+  adoptContainer: (id: string, onEvent: (e: DeployEvent) => void) =>
+    stream(`/api/containers/${encodeURIComponent(id)}/adopt`, { method: "POST" }, onEvent),
   /** What disk cleanup can delete on a Docker host; nothing is deleted. */
   cleanupCandidates: (host?: string) => json<CleanupPlan>(`/api/host/cleanup${hostQuery(host)}`),
   cleanup: (req: CleanupRequest, host?: string) =>

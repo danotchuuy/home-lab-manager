@@ -124,6 +124,8 @@ func applyExtraParams(c *docker.CreateRequest, params string, warnings *[]string
 				return fmt.Errorf("--cpus: %w", err)
 			}
 			hc.NanoCPUs = int64(f * 1e9)
+		case "--cpuset-cpus":
+			hc.CpusetCpus = v
 		case "--pids-limit":
 			n, err := strconv.ParseInt(v, 10, 64)
 			if err != nil {

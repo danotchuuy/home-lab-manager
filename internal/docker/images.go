@@ -69,6 +69,8 @@ type Image struct {
 		User         string              `json:"User"`
 		ExposedPorts map[string]struct{} `json:"ExposedPorts"`
 		Volumes      map[string]struct{} `json:"Volumes"`
+		Healthcheck  *Healthcheck        `json:"Healthcheck,omitempty"`
+		StopSignal   string              `json:"StopSignal,omitempty"`
 	} `json:"Config"`
 }
 
