@@ -33,6 +33,10 @@ type UpdateCheckInfo struct {
 	Checking  bool       `json:"checking"`
 	LastCheck *time.Time `json:"lastCheck,omitempty"`
 	Available int        `json:"available"`
+	// Done and Total are how many of the check's images have been looked
+	// up, while it's checking.
+	Done  int `json:"done,omitempty"`
+	Total int `json:"total,omitempty"`
 }
 
 // updateTracker holds update check results in memory, keyed by container ID.
@@ -41,8 +45,15 @@ type updateTracker struct {
 	byID      map[string]UpdateStatus
 	lastCheck time.Time
 	checking  bool
-	run       sync.Mutex // serializes checks
+	// queued counts checks started in the background that are waiting
+	// for the one running.
+	queued      int
+	done, total int
+	run         sync.Mutex // serializes checks
 }
+
+// checkConcurrency is how many images are looked up at once.
+const checkConcurrency = 8
 
 func newUpdateTracker() *updateTracker {
 	return &updateTracker{byID: map[string]UpdateStatus{}}
@@ -73,7 +84,10 @@ func (m *Manager) UpdateInfo() UpdateCheckInfo {
 	t := m.updates
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	info := UpdateCheckInfo{Checking: t.checking}
+	info := UpdateCheckInfo{Checking: t.checking || t.queued > 0}
+	if t.checking {
+		info.Done, info.Total = t.done, t.total
+	}
 	if !t.lastCheck.IsZero() {
 		last := t.lastCheck
 		info.LastCheck = &last
@@ -86,19 +100,48 @@ func (m *Manager) UpdateInfo() UpdateCheckInfo {
 	return info
 }
 
+// StartCheckUpdates checks for updates in the background, returning at
+// once; UpdateInfo shows its progress, and each server's status is filled in
+// as its image is looked up. If a check is already running or waiting, it's
+// the one.
+func (m *Manager) StartCheckUpdates() {
+	t := m.updates
+	t.mu.Lock()
+	if t.queued > 0 {
+		t.mu.Unlock()
+		return
+	}
+	t.queued++
+	t.mu.Unlock()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		if err := m.checkUpdates(ctx, true); err != nil {
+			m.log.Warn("check for updates", "err", err)
+		}
+	}()
+}
+
 // CheckUpdates checks every server's and connection container's image
-// against its registry. Each image is looked up once, however many
-// containers use it.
+// against its registry. Each image is looked up once per host, and each
+// registry once per image, however many containers and hosts use it.
 func (m *Manager) CheckUpdates(ctx context.Context) error {
+	return m.checkUpdates(ctx, false)
+}
+
+func (m *Manager) checkUpdates(ctx context.Context, queued bool) error {
 	t := m.updates
 	t.run.Lock()
 	defer t.run.Unlock()
 	t.mu.Lock()
-	t.checking = true
+	if queued {
+		t.queued--
+	}
+	t.checking, t.done, t.total = true, 0, 0
 	t.mu.Unlock()
 	defer func() {
 		t.mu.Lock()
-		t.checking = false
+		t.checking, t.done, t.total = false, 0, 0
 		t.mu.Unlock()
 	}()
 
@@ -115,58 +158,55 @@ func (m *Manager) CheckUpdates(ctx context.Context) error {
 		servers = append(servers, Server{ID: c.ID, Image: c.Image, imageID: c.imageID})
 	}
 
-	type result struct {
-		localID string // ID of the local image the tag points to
-		status  UpdateStatus
-	}
 	var (
-		mu      sync.Mutex
-		wg      sync.WaitGroup
-		results = map[string]result{}
-		started = map[string]bool{}
-		sem     = make(chan struct{}, 4)
+		wg  sync.WaitGroup
+		sem = make(chan struct{}, checkConcurrency)
+		// Each host has its own copy of an image, but the registry's
+		// answer is the same for all of them.
+		byKey   = map[string][]Server{}
+		keys    []string
+		lookups = newDigestLookups(m.docker.RemoteDigest)
 	)
-	// Each host has its own copy of an image.
 	key := func(srv Server) string { return HostOf(srv.ID) + " " + srv.Image }
 	for _, srv := range servers {
-		if started[key(srv)] {
-			continue
+		k := key(srv)
+		if _, ok := byKey[k]; !ok {
+			keys = append(keys, k)
 		}
-		started[key(srv)] = true
+		byKey[k] = append(byKey[k], srv)
+	}
+	t.mu.Lock()
+	t.total = len(keys)
+	t.mu.Unlock()
+	for _, k := range keys {
 		wg.Add(1)
-		go func(k, host, ref string) {
+		go func(list []Server) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
-			localID, st := m.checkImage(cctx, host, ref)
+			host, ref := HostOf(list[0].ID), list[0].Image
+			localID, st := m.checkImageWith(cctx, host, ref, lookups.get)
 			st.CheckedAt = time.Now()
-			mu.Lock()
-			results[k] = result{localID, st}
-			mu.Unlock()
-		}(key(srv), HostOf(srv.ID), srv.Image)
+			// Each server's status as soon as its image is looked up.
+			for _, srv := range list {
+				st := withLocalImage(srv, localID, st)
+				t.set(srv.ID, st)
+				if st.State == UpdateAvailable && srv.Name != "" {
+					m.notifyUpdateAvailable(srv)
+				}
+			}
+			t.mu.Lock()
+			t.done++
+			t.mu.Unlock()
+		}(byKey[k])
 	}
 	wg.Wait()
 
 	live := map[string]bool{}
 	for _, srv := range servers {
 		live[srv.ID] = true
-		r := results[key(srv)]
-		st := r.status
-		// The registry may match the local image while the container still
-		// runs an older one, e.g. after a manual `docker pull`.
-		if st.State == UpdateCurrent && r.localID != "" && srv.imageID != "" && r.localID != srv.imageID {
-			st = UpdateStatus{
-				State:     UpdateAvailable,
-				Reason:    "a newer image has already been downloaded; update to recreate the server with it",
-				CheckedAt: st.CheckedAt,
-			}
-		}
-		t.set(srv.ID, st)
-		if st.State == UpdateAvailable && srv.Name != "" {
-			m.notifyUpdateAvailable(srv)
-		}
 	}
 
 	t.mu.Lock()
@@ -180,9 +220,71 @@ func (m *Manager) CheckUpdates(ctx context.Context) error {
 	return nil
 }
 
+// withLocalImage is a server's status from its image's: the registry may
+// match the local image while the container still runs an older one, e.g.
+// after a manual `docker pull`.
+func withLocalImage(srv Server, localID string, st UpdateStatus) UpdateStatus {
+	if st.State == UpdateCurrent && localID != "" && srv.imageID != "" && localID != srv.imageID {
+		return UpdateStatus{
+			State:     UpdateAvailable,
+			Reason:    "a newer image has already been downloaded; update to recreate the server with it",
+			CheckedAt: st.CheckedAt,
+		}
+	}
+	return st
+}
+
+// digestLookups asks the registry about each image once per check,
+// whichever host asks first, sharing the answer with the others.
+type digestLookups struct {
+	lookup func(ctx context.Context, host, ref string) (string, error)
+	mu     sync.Mutex
+	calls  map[string]*digestCall
+}
+
+type digestCall struct {
+	done   chan struct{}
+	digest string
+	err    error
+}
+
+func newDigestLookups(lookup func(ctx context.Context, host, ref string) (string, error)) *digestLookups {
+	return &digestLookups{lookup: lookup, calls: map[string]*digestCall{}}
+}
+
+func (d *digestLookups) get(ctx context.Context, host, ref string) (string, error) {
+	d.mu.Lock()
+	c, ok := d.calls[ref]
+	if !ok {
+		c = &digestCall{done: make(chan struct{})}
+		d.calls[ref] = c
+	}
+	d.mu.Unlock()
+	if ok {
+		select {
+		case <-c.done:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+		if c.err == nil {
+			return c.digest, nil
+		}
+		// Its host couldn't ask (it may be down, or not logged in): ask from
+		// this one.
+		return d.lookup(ctx, host, ref)
+	}
+	c.digest, c.err = d.lookup(ctx, host, ref)
+	close(c.done)
+	return c.digest, c.err
+}
+
 // checkImage compares the local image for ref with the registry. It returns
 // the local image ID (if the image is present) and the status.
 func (m *Manager) checkImage(ctx context.Context, host, ref string) (string, UpdateStatus) {
+	return m.checkImageWith(ctx, host, ref, m.docker.RemoteDigest)
+}
+
+func (m *Manager) checkImageWith(ctx context.Context, host, ref string, remoteDigest func(ctx context.Context, host, ref string) (string, error)) (string, UpdateStatus) {
 	if strings.Contains(ref, "@") {
 		return "", UpdateStatus{State: UpdateCurrent, Reason: "pinned to a digest"}
 	}
@@ -201,7 +303,7 @@ func (m *Manager) checkImage(ctx context.Context, host, ref string) (string, Upd
 		return img.ID, UpdateStatus{State: UpdateUnknown, Reason: "the image wasn't pulled from a registry"}
 	}
 
-	remote, err := m.docker.RemoteDigest(ctx, host, ref)
+	remote, err := remoteDigest(ctx, host, ref)
 	if err != nil {
 		var apiErr *docker.APIError
 		if errors.As(err, &apiErr) {
@@ -315,13 +417,7 @@ func (m *Manager) CheckUpdate(ctx context.Context, id string) (UpdateStatus, err
 	defer cancel()
 	localID, st := m.checkImage(cctx, HostOf(srv.ID), srv.Image)
 	st.CheckedAt = time.Now()
-	if st.State == UpdateCurrent && localID != "" && srv.imageID != "" && localID != srv.imageID {
-		st = UpdateStatus{
-			State:     UpdateAvailable,
-			Reason:    "a newer image has already been downloaded; update to recreate the server with it",
-			CheckedAt: st.CheckedAt,
-		}
-	}
+	st = withLocalImage(srv, localID, st)
 	m.updates.set(srv.ID, st)
 	return st, nil
 }
