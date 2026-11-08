@@ -421,19 +421,22 @@ func (m *Manager) runHelper(ctx context.Context, host, bind string, cmd ...strin
 // runHelperOutput is runHelper returning the last lines of output (tail:
 // a number, or "all") whatever the exit status.
 func (m *Manager) runHelperOutput(ctx context.Context, host, bind, tail string, cmd ...string) (int, string, error) {
+	return m.runHelperWith(ctx, host, docker.HostConfig{Binds: []string{bind}, NetworkMode: "none"}, tail, cmd...)
+}
+
+// runHelperWith is runHelperOutput with the helper's host configuration
+// given.
+func (m *Manager) runHelperWith(ctx context.Context, host string, hc docker.HostConfig, tail string, cmd ...string) (int, string, error) {
 	if _, err := m.docker.InspectImage(ctx, host, cleanupImage); err != nil {
 		if err := m.docker.PullImage(ctx, host, cleanupImage, nil); err != nil {
 			return 0, "", fmt.Errorf("pull %s: %w", cleanupImage, err)
 		}
 	}
 	id, _, err := m.docker.CreateContainerOn(ctx, host, "", docker.CreateRequest{
-		Image:  cleanupImage,
-		Cmd:    cmd,
-		Labels: map[string]string{"io.hlm.cleanup": "true"},
-		HostConfig: docker.HostConfig{
-			Binds:       []string{bind},
-			NetworkMode: "none",
-		},
+		Image:      cleanupImage,
+		Cmd:        cmd,
+		Labels:     map[string]string{"io.hlm.cleanup": "true"},
+		HostConfig: hc,
 	})
 	if err != nil {
 		return 0, "", fmt.Errorf("create helper container: %w", err)

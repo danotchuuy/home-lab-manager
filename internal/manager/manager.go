@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/netip"
 	"net/url"
 	"sort"
 	"strconv"
@@ -465,6 +466,9 @@ func (m *Manager) install(ctx context.Context, req deploy.Request, confined, sta
 	if err := m.checkPorts(ctx, host, spec, ""); err != nil {
 		return Server{}, err
 	}
+	if err := m.checkStoppedIP(ctx, host, spec, ""); err != nil {
+		return Server{}, err
+	}
 	for _, w := range spec.Warnings {
 		emit(Event{Stage: "warning", Message: w})
 	}
@@ -629,6 +633,9 @@ func (m *Manager) recreateFrom(ctx context.Context, info docker.ContainerJSON, r
 	if err := m.checkPorts(ctx, host, spec, info.ID); err != nil {
 		return Server{}, err
 	}
+	if err := m.checkStoppedIP(ctx, host, spec, info.ID); err != nil {
+		return Server{}, err
+	}
 	for _, w := range spec.Warnings {
 		emit(Event{Stage: "warning", Message: w})
 	}
@@ -759,7 +766,11 @@ type NetworkInfo struct {
 	// DirectIP reports whether containers get their own address on the LAN
 	// (macvlan/ipvlan), rather than publishing ports on the host.
 	DirectIP bool `json:"directIp"`
-	// UsedIPs lists addresses taken by running containers.
+	// IPRanges are the blocks Docker hands out automatic addresses from
+	// (--ip-range), when the network has them.
+	IPRanges []string `json:"ipRanges"`
+	// UsedIPs lists addresses taken by running containers, and the fixed
+	// addresses of stopped ones (which they take again when they start).
 	UsedIPs []NetworkIP `json:"usedIps"`
 	// Parent is the host interface of a macvlan/ipvlan network.
 	Parent string `json:"parent,omitempty"`
@@ -771,12 +782,20 @@ type NetworkInfo struct {
 type NetworkIP struct {
 	IP        string `json:"ip"`
 	Container string `json:"container"`
+	// Stopped is set for a stopped container's fixed address.
+	Stopped bool `json:"stopped,omitempty"`
 }
 
 // Networks lists the networks servers on a host can use. Docker's
 // internal-only and swarm-scoped networks are left out.
 func (m *Manager) Networks(ctx context.Context, host string) ([]NetworkInfo, error) {
 	networks, err := m.inspectNetworks(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	// Stopped containers aren't on their networks, but take their fixed
+	// addresses back when they start.
+	containers, err := m.docker.ListContainersOn(ctx, host)
 	if err != nil {
 		return nil, err
 	}
@@ -791,6 +810,7 @@ func (m *Manager) Networks(ctx context.Context, host string) ([]NetworkInfo, err
 			Subnets:  []string{},
 			Gateway:  []string{},
 			DirectIP: n.Driver == "macvlan" || n.Driver == "ipvlan",
+			IPRanges: []string{},
 			UsedIPs:  []NetworkIP{},
 			Parent:   n.Options["parent"],
 			Managed:  n.Labels[deploy.LabelManaged] == "true",
@@ -801,6 +821,9 @@ func (m *Manager) Networks(ctx context.Context, host string) ([]NetworkInfo, err
 			}
 			if cfg.Gateway != "" {
 				info.Gateway = append(info.Gateway, cfg.Gateway)
+			}
+			if cfg.IPRange != "" {
+				info.IPRanges = append(info.IPRanges, cfg.IPRange)
 			}
 		}
 		// Docker refuses static addresses on its default networks and on
@@ -814,7 +837,31 @@ func (m *Manager) Networks(ctx context.Context, host string) ([]NetworkInfo, err
 				}
 			}
 		}
-		sort.Slice(info.UsedIPs, func(i, j int) bool { return info.UsedIPs[i].IP < info.UsedIPs[j].IP })
+		used := map[string]bool{}
+		for _, u := range info.UsedIPs {
+			used[u.IP] = true
+		}
+		for _, c := range containers {
+			ep, ok := c.NetworkSettings.Networks[n.Name]
+			if !ok || ep.IPAMConfig == nil || c.State == "running" {
+				continue
+			}
+			_, name := SplitID(strings.TrimPrefix(firstOr(c.Names, ""), "/"))
+			for _, ip := range []string{ep.IPAMConfig.IPv4Address, ep.IPAMConfig.IPv6Address} {
+				if ip != "" && !used[ip] {
+					used[ip] = true
+					info.UsedIPs = append(info.UsedIPs, NetworkIP{IP: ip, Container: name, Stopped: true})
+				}
+			}
+		}
+		sort.Slice(info.UsedIPs, func(i, j int) bool {
+			a, aerr := netip.ParseAddr(info.UsedIPs[i].IP)
+			b, berr := netip.ParseAddr(info.UsedIPs[j].IP)
+			if aerr != nil || berr != nil {
+				return info.UsedIPs[i].IP < info.UsedIPs[j].IP
+			}
+			return a.Less(b)
+		})
 		out = append(out, info)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })

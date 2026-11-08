@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"encoding/hex"
+	"io"
 	"net/netip"
 	"os"
 	"sort"
@@ -27,8 +28,15 @@ func (c *Collector) Interfaces() ([]HostInterface, error) {
 		return nil, err
 	}
 	defer f.Close()
+	return ParseRoutes(f)
+}
+
+// ParseRoutes reads a routing table in /proc/net/route's format: the
+// interfaces with the subnets directly on them, the one with the default
+// route first.
+func ParseRoutes(r io.Reader) ([]HostInterface, error) {
 	byName := map[string]*HostInterface{}
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(r)
 	sc.Scan() // header
 	for sc.Scan() {
 		fields := strings.Fields(sc.Text())
