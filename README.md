@@ -339,7 +339,9 @@ alerts as usual.
   host.
 
 If a host can't be reached, the Servers page says so and its servers are left out until it's back; their settings in
-hlm are kept. Removing a host stops hlm managing its servers: they keep running there.
+hlm are kept. hlm waits up to 10 seconds for a host the first time; after that, listings (servers, connections, usage)
+leave it out straight away instead of waiting for it, and hlm tries it again in the background every 15 seconds, so a
+machine that's asleep or off the network doesn't slow every page. Its servers are listed again as soon as it answers. Removing a host stops hlm managing its servers: they keep running there.
 
 The **Host** page has a picker at the top for this host or another. For each host it shows:
 

@@ -328,21 +328,64 @@ func (m *Manager) List(ctx context.Context) ([]Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	infos, err := m.inspectAll(ctx, list)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]Server, 0, len(list))
-	for _, c := range list {
+	for i, c := range list {
+		if infos[i] == nil {
+			continue
+		}
 		srv := serverFromSummary(c)
-		info, err := m.docker.InspectContainer(ctx, c.ID)
-		if docker.IsNotFound(err) {
-			continue // removed since the list call
-		}
-		if err != nil {
-			return nil, err
-		}
-		m.enrich(&srv, info)
+		m.enrich(&srv, *infos[i])
 		out = append(out, srv)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// inspectAll inspects listed containers, several at a time, rather than
+// one round trip after another (which adds up on another host). Entries
+// are nil for containers removed since they were listed, and for those on
+// another host that couldn't be inspected in time: that host is then taken
+// as down, so the next listing doesn't wait for it. An error on this host
+// fails the call.
+func (m *Manager) inspectAll(ctx context.Context, list []docker.ContainerSummary) ([]*docker.ContainerJSON, error) {
+	out := make([]*docker.ContainerJSON, len(list))
+	errs := make([]error, len(list))
+	sem := make(chan struct{}, 8)
+	var wg sync.WaitGroup
+	for i, c := range list {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			host := HostOf(c.ID)
+			ictx := ctx
+			if host != LocalHost {
+				var cancel context.CancelFunc
+				ictx, cancel = context.WithTimeout(ctx, remoteTimeout)
+				defer cancel()
+			}
+			info, err := m.docker.InspectContainer(ictx, c.ID)
+			switch {
+			case err == nil:
+				out[i] = &info
+			case docker.IsNotFound(err):
+				// Removed since the list call.
+			case host != LocalHost:
+				if ctx.Err() == nil {
+					m.docker.setStatus(host, err)
+				}
+			default:
+				errs[i] = err
+			}
+		}()
+	}
+	wg.Wait()
+	return out, errors.Join(errs...)
 }
 
 // Get returns one managed server by container ID or name.
