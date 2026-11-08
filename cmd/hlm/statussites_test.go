@@ -54,6 +54,17 @@ func TestStatusSitesFirst(t *testing.T) {
 			t.Errorf("%s: %d, want %d", host, w.Code, want)
 		}
 	}
+	// A Cloudflare Tunnel route to hlm that isn't a site's.
+	sp.UseStatusHosts(func() []string { return []string{"status.example.com"} })
+	for host, want := range map[string]int{"status.example.com": 200, "Status.Example.com.:443": 200, "other.example.com": 307} {
+		r := httptest.NewRequest("GET", "/status", nil)
+		r.Host = host
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != want {
+			t.Errorf("tunnel route %s: %d, want %d", host, w.Code, want)
+		}
+	}
 	// The proxy's own address, marked by its nginx.
 	r := httptest.NewRequest("GET", "/status", nil)
 	r.Host = "203.0.113.7"

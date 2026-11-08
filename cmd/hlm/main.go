@@ -706,6 +706,9 @@ func run(log *slog.Logger) error {
 	// WireGuard tunnel to hlm's port on this host.
 	// Cloudflare in front of them, when that's their HTTPS option.
 	relay.UseCloudflare(tunnel)
+	// Cloudflare Tunnel routes to hlm itself reach only the status page,
+	// as the sites' domains do.
+	statusPage.UseStatusHosts(tunnel.HlmHostnames)
 	relay.UseStatusSites(func(ctx context.Context) ([]string, int, error) {
 		set, err := statusPage.Settings()
 		if err != nil {

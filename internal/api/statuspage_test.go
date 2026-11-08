@@ -292,6 +292,15 @@ func TestStatusSitesAPI(t *testing.T) {
 	if w := marked("/api/servers", true); w.Code != 404 {
 		t.Errorf("marked /api/servers: %d", w.Code)
 	}
+	// A Cloudflare Tunnel route to hlm that isn't a site's: the page-wide
+	// page, and nothing else of hlm.
+	e.opts.StatusPage.UseStatusHosts(func() []string { return []string{"status.example.com"} })
+	if w := at("status.example.com", "GET", "/api/status-page", "", ""); w.Code != 200 || !strings.Contains(w.Body.String(), "Plex") {
+		t.Errorf("tunnel route: %d %s", w.Code, w.Body)
+	}
+	if w := at("status.example.com", "GET", "/api/servers", "", ""); w.Code != 404 {
+		t.Errorf("tunnel route, /api/servers: %d", w.Code)
+	}
 	// The settings say which passwords are set, with the site's ID to keep them.
 	w = call(h, "admin", "GET", "/api/system/status-page", "", e.keys)
 	if !strings.Contains(w.Body.String(), `"hostname":"friends.example.com"`) || !strings.Contains(w.Body.String(), `"id":"`) ||

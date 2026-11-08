@@ -268,6 +268,23 @@ func (s *Service) routes() ([]Route, error) {
 	return rs, err
 }
 
+// HlmHostnames are the hostnames routed to hlm itself ("Home Lab Manager
+// (status page)"): like a status page site's domain, they reach only the
+// status page.
+func (s *Service) HlmHostnames() []string {
+	rs, err := s.routes()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, r := range rs {
+		if r.Hlm {
+			out = append(out, r.Hostname)
+		}
+	}
+	return out
+}
+
 func (s *Service) applied() (appliedState, bool, error) {
 	var a appliedState
 	ok, err := s.secrets.Get(secretApplied, &a)
