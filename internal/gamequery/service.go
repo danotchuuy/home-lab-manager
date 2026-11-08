@@ -415,14 +415,22 @@ func (s *Service) poll(ctx context.Context, name string) {
 		method = last
 	}
 	if method == nil {
-		// The way its game's profile names (its status page, say) is right
-		// even before the game answers it: keep asking that way while it
-		// loads, rather than giving up on it until the next look around.
-		if c, ok := gameCandidate(info, gameprofile.Match(info.Config.Image)); ok {
-			method = &Settings{Protocol: c.Protocol, Port: c.Port}
+		// The ways its game's profile names (its status page, on the usual
+		// port or an image's own) are right even before the game answers:
+		// keep asking them while it loads, rather than giving up on them
+		// until the next look around. The first that answers (or says it's
+		// loading) is the one.
+		for i, c := range gameCandidates(info, gameprofile.Match(info.Config.Image)) {
+			m := &Settings{Protocol: c.Protocol, Port: c.Port}
+			r, e := s.query(ctx, info, *m, prefer)
+			if i == 0 || e == nil || errors.Is(e, ErrLoading) {
+				method, res, err = m, r, e
+			}
+			if e == nil || errors.Is(e, ErrLoading) {
+				break
+			}
 		}
-	}
-	if method != nil {
+	} else {
 		res, err = s.query(ctx, info, *method, prefer)
 	}
 	if (method == nil || err != nil) && (detected.IsZero() || now.Sub(detected) >= redetect) {

@@ -138,3 +138,36 @@ func TestDefaultProbes(t *testing.T) {
 		}
 	}
 }
+
+// An image that starts the game with its own -statusPort (fireblade004's
+// 8888) has its status page where the launch option didn't ask: it's found
+// as soon as it answers, without waiting for the next look around.
+func TestStatusPageOnImagePort(t *testing.T) {
+	r := newRig(t)
+	up := false
+	r.s.opts.Probes[ProtoHTTPStatus] = func(_ context.Context, addr string) (Result, error) {
+		r.w.mu.Lock()
+		defer r.w.mu.Unlock()
+		r.w.asked = append(r.w.asked, "http "+addr)
+		if up && strings.HasSuffix(addr, ":8888") {
+			return Result{Protocol: ProtoHTTPStatus, Address: addr, Players: 1, HasPlayers: true}, nil
+		}
+		return Result{}, errors.New("nothing is listening on that port")
+	}
+	c := ctr("ng", "fireblade004/nightingale-server", "192.168.12.130", r.now.Add(time.Minute))
+	c.Config.Cmd = []string{"-statusPort=7778"}
+	r.w.servers["ng"] = c
+
+	// Not up yet: the first look around finds nothing.
+	r.step(2 * time.Minute)
+	if st := r.s.Status("ng", true); st.Status == StatusOnline {
+		t.Fatalf("online too soon: %+v", st)
+	}
+	// It comes up on 8888: the next poll, well before the next look around.
+	up = true
+	r.step(pollStarting)
+	st := r.s.Status("ng", true)
+	if st.Status != StatusOnline || st.Method == nil || st.Method.Port != 8888 {
+		t.Fatalf("on the image's port: %+v (asked %q)", st, r.w.asked[len(r.w.asked)-3:])
+	}
+}
