@@ -789,6 +789,34 @@ progress {
   padding: 0.2rem 0;
 }
 
+.system-find-results li.active {
+  background: var(--surface-2);
+  margin: 0 -0.6rem;
+  padding: 0.2rem 0.6rem;
+}
+
+/* A section just found with "Find a setting", for a moment. */
+.found-flash {
+  animation: found-flash 1.6s ease-out;
+  border-radius: var(--radius);
+}
+
+@keyframes found-flash {
+  0%,
+  30% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 3px transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .found-flash {
+    animation: none;
+  }
+}
+
 /* A dot on a tab with something to look at (an update, say). */
 .tab-dot {
   display: inline-block;

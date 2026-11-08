@@ -7,6 +7,7 @@ import { useAdmin } from "../access";
 import { api } from "../api";
 import { Ago, Overview, Spinner } from "../components/common";
 import { DeployProgress } from "../components/DeployProgress";
+import { SectionFinder, useScrollToSection } from "../components/SectionFinder";
 import { BackupSettings } from "../components/BackupSettings";
 import { BackupTargets } from "../components/BackupTargets";
 import { ConfigBackups } from "../components/ConfigBackups";
@@ -42,16 +43,6 @@ const LEGACY_JUST_UPDATED = "gsh.justUpdated";
 interface Section extends SystemSection {
   body: ReactNode;
   className?: string;
-}
-
-/** Sections whose title or keywords match every word typed. */
-function findSections(sections: Section[], query: string): Section[] {
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return [];
-  return sections.filter((s) => {
-    const text = `${s.title} ${s.keywords}`.toLowerCase();
-    return words.every((w) => text.includes(w));
-  });
 }
 
 export function SystemPage() {
@@ -99,9 +90,8 @@ export function SystemPage() {
 
   // The tab is in the address (?tab=), so it can be linked to and Back works.
   const [params, setParams] = useSearchParams();
-  const [query, setQuery] = useState("");
-  // A section to scroll to once its tab is shown.
-  const [jumpTo, setJumpTo] = useState<string>();
+  // Scrolls to a section once its tab is shown.
+  const scrollTo = useScrollToSection();
   const loaded = !!info;
   // Links like /system#linode open their section's tab and scroll to it.
   const { hash } = useLocation();
@@ -110,21 +100,13 @@ export function SystemPage() {
     const t = sectionInfo(id)?.tab;
     if (!loaded || !t) return;
     setParams(t === "overview" ? {} : { tab: t }, { replace: true });
-    setJumpTo(id);
-  }, [loaded, hash, setParams]);
+    scrollTo(id);
+  }, [loaded, hash, setParams, scrollTo]);
   // On a narrow screen the tabs scroll sideways: keep the chosen one in view.
   const tabParamNow = params.get("tab");
   useEffect(() => {
     document.querySelector(".system-nav .tabs button.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [tabParamNow, loaded]);
-  useEffect(() => {
-    if (!jumpTo) return;
-    const el = document.getElementById(jumpTo);
-    if (el) {
-      el.scrollIntoView({ block: "start" });
-      setJumpTo(undefined);
-    }
-  });
 
   // After an update, wait for hlm to come back (on a new version, or on the
   // old one if the update was rolled back), then reload to get the new UI.
@@ -354,9 +336,8 @@ export function SystemPage() {
     const sec = sections.find((x) => x.id === id);
     if (!sec) return;
     showTab(sec.tab);
-    setJumpTo(id);
+    scrollTo(id);
   };
-  const found = findSections(sections, query);
 
   return (
     <div className="page system-page">
@@ -388,35 +369,10 @@ export function SystemPage() {
             </button>
           ))}
         </div>
-        <div className="system-find">
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Find a setting…"
-            aria-label="Find a setting"
-          />
-          {query.trim() && (
-            <ul className="system-find-results">
-              {found.length === 0 && <li className="muted small">Nothing matches.</li>}
-              {found.map((f) => (
-                <li key={f.id}>
-                  <button
-                    type="button"
-                    className="link-button"
-                    onClick={() => {
-                      setQuery("");
-                      showSection(f.id);
-                    }}
-                  >
-                    {f.title}
-                  </button>{" "}
-                  <span className="muted small">{TABS.find((t) => t.id === f.tab)?.label}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+        <SectionFinder
+          sections={sections.map((x) => ({ ...x, where: TABS.find((t) => t.id === x.tab)?.label }))}
+          onPick={showSection}
+        />
       </div>
 
       {sections
