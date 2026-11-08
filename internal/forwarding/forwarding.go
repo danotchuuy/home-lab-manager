@@ -304,7 +304,7 @@ func localPorts(info docker.ContainerJSON) []Port {
 	switch network := info.HostConfig.NetworkMode; {
 	case info.Config.Labels[deploy.LabelDirectIP] == "true" || network == "host":
 		// The server listens on its own (or the host's) ports directly.
-		for key := range info.Config.ExposedPorts {
+		for key := range deploy.DeclaredPorts(info.Config.ExposedPorts, info.Config.Env) {
 			port, proto, _ := strings.Cut(key, "/")
 			if n, err := strconv.Atoi(port); err == nil {
 				add(n, proto)

@@ -422,3 +422,17 @@ func TestPalworldREST(t *testing.T) {
 		}
 	}
 }
+
+// A container Unraid made on br0 is asked on the ports Unraid passes it
+// as variables, and the one after.
+func TestCandidatesUnraidPorts(t *testing.T) {
+	var info docker.ContainerJSON
+	info.Config.Image = "nodiaque/steamcmd:enshrouded"
+	info.HostConfig.NetworkMode = "br0"
+	info.Config.Env = []string{"UDP_PORT_15637=15637"}
+	got := candidates(info, nil, false)
+	want := []candidate{{ProtoA2S, 15637}, {ProtoA2S, 15638}}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("candidates = %+v", got)
+	}
+}
