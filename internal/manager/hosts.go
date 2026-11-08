@@ -76,10 +76,73 @@ type router struct {
 	mu      sync.RWMutex
 	remotes map[string]RemoteHost
 	status  map[string]HostStatus
+	// probing marks the hosts being tried again in the background.
+	probing map[string]bool
 }
 
 func newRouter(local *docker.Client) *router {
-	return &router{local: local, remotes: map[string]RemoteHost{}, status: map[string]HostStatus{}}
+	return &router{local: local, remotes: map[string]RemoteHost{}, status: map[string]HostStatus{}, probing: map[string]bool{}}
+}
+
+// retryDown is how often a host that couldn't be reached is tried again, in
+// the background. Until it answers, listings leave it out straight away
+// rather than wait for it: one host that's off shouldn't slow every page.
+var retryDown = 15 * time.Second
+
+// remoteTimeout bounds a listing's calls to another host, so one that's slow
+// to answer doesn't hold up the rest.
+var remoteTimeout = 10 * time.Second
+
+// ErrHostDown is returned when listing a host that couldn't be reached the
+// last time it was tried.
+var ErrHostDown = errors.New("the Docker host can't be reached")
+
+// down reports whether a remote host failed the last time it was tried, and
+// why; it starts trying it again in the background when that's due.
+func (r *router) down(host string) (bool, string) {
+	if host == LocalHost || host == "" {
+		return false, ""
+	}
+	r.mu.Lock()
+	st, ok := r.status[host]
+	if !ok || st.OK {
+		r.mu.Unlock()
+		return false, ""
+	}
+	due := time.Since(st.Checked) >= retryDown && !r.probing[host]
+	if due {
+		r.probing[host] = true
+	}
+	r.mu.Unlock()
+	if due {
+		go r.probe(host)
+	}
+	return true, st.Error
+}
+
+// probe tries a down host again.
+func (r *router) probe(host string) {
+	defer func() {
+		r.mu.Lock()
+		delete(r.probing, host)
+		r.mu.Unlock()
+	}()
+	c, err := r.client(host)
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), remoteTimeout)
+	defer cancel()
+	_, err = c.Version(ctx)
+	r.setStatus(host, err)
+}
+
+// downError is ErrHostDown for a host, with why.
+func downError(host, why string) error {
+	if why == "" {
+		return fmt.Errorf("%w: %s", ErrHostDown, host)
+	}
+	return fmt.Errorf("%w: %s (%s); hlm tries it again every %s", ErrHostDown, host, why, retryDown)
 }
 
 // errNoHost is returned for servers on a host hlm no longer knows.
@@ -132,9 +195,14 @@ func (r *router) remote(host string) (RemoteHost, bool) {
 func (r *router) setRemotes(list []RemoteHost) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	old := r.remotes
 	r.remotes = map[string]RemoteHost{}
 	for _, h := range list {
 		r.remotes[h.ID] = h
+		// A host whose connection changed is tried afresh.
+		if o, ok := old[h.ID]; ok && o.Docker != h.Docker {
+			delete(r.status, h.ID)
+		}
 	}
 	for id := range r.status {
 		if _, ok := r.remotes[id]; !ok && id != LocalHost {
@@ -189,8 +257,14 @@ func (r *router) listAll(ctx context.Context, list func(context.Context, *docker
 	hosts := r.hosts()
 	results := make([][]docker.ContainerSummary, len(hosts))
 	errs := make([]error, len(hosts))
+	skipped := make([]bool, len(hosts))
 	var wg sync.WaitGroup
 	for i, h := range hosts {
+		if down, why := r.down(h); down {
+			// Its status stays as it was; the probe updates it.
+			errs[i], skipped[i] = downError(h, why), true
+			continue
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -200,7 +274,7 @@ func (r *router) listAll(ctx context.Context, list func(context.Context, *docker
 				if h != LocalHost {
 					// One slow host shouldn't hold up the server list.
 					var cancel context.CancelFunc
-					lctx, cancel = context.WithTimeout(ctx, 10*time.Second)
+					lctx, cancel = context.WithTimeout(ctx, remoteTimeout)
 					defer cancel()
 				}
 				var l []docker.ContainerSummary
@@ -219,7 +293,7 @@ func (r *router) listAll(ctx context.Context, list func(context.Context, *docker
 		if h == LocalHost && errs[i] != nil {
 			return nil, errs[i]
 		}
-		if h != LocalHost && ctx.Err() == nil {
+		if h != LocalHost && ctx.Err() == nil && !skipped[i] {
 			r.setStatus(h, errs[i])
 		}
 		out = append(out, results[i]...)
@@ -233,6 +307,9 @@ func (r *router) ListContainersOn(ctx context.Context, host string, labels ...st
 	if err != nil {
 		return nil, err
 	}
+	if down, why := r.down(host); down {
+		return nil, downError(host, why)
+	}
 	l, err := c.ListContainers(ctx, labels...)
 	for i := range l {
 		qualifySummary(host, &l[i])
@@ -245,6 +322,9 @@ func (r *router) ListContainersWithSizeOn(ctx context.Context, host string, labe
 	c, err := r.client(host)
 	if err != nil {
 		return nil, err
+	}
+	if down, why := r.down(host); down {
+		return nil, downError(host, why)
 	}
 	l, err := c.ListContainersWithSize(ctx, labels...)
 	for i := range l {
