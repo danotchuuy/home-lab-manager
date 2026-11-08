@@ -441,3 +441,39 @@ func TestPortStates(t *testing.T) {
 		t.Errorf("not configured = %+v, %v", st, err)
 	}
 }
+
+// A LAN-address server asleep (stopped) keeps its rules: by the fixed
+// address Docker keeps (set outside hlm, by Unraid say), or, for one Docker
+// chose and forgot, where its rules already go.
+func TestLANServerAsleep(t *testing.T) {
+	lan := func(running bool, ep docker.EndpointSettings) docker.ContainerJSON {
+		var info docker.ContainerJSON
+		info.ID, info.Name = "enshrouded", "/enshrouded"
+		info.State.Running = running
+		info.HostConfig.NetworkMode = "br0"
+		info.Config.Env = []string{"UDP_PORT_15637=15637"}
+		info.Config.Labels = map[string]string{deploy.LabelDirectIP: "true", deploy.LabelManaged: "true"}
+		info.NetworkSettings.Networks = map[string]docker.EndpointSettings{"br0": ep}
+		return info
+	}
+	servers := fakeServers{"enshrouded": lan(false, docker.EndpointSettings{IPAMConfig: &docker.EndpointIPAMConfig{IPv4Address: "192.168.1.80"}})}
+	s, fake, _ := setup(t, servers)
+	ctx := context.Background()
+	if st, err := s.Sync(ctx, "enshrouded"); err != nil || st.Target != "192.168.1.80" || st.Rules[0].State != "forwarded" {
+		t.Fatalf("asleep with a fixed address: %+v %v", st, err)
+	}
+
+	// Docker chose its address: running, then asleep.
+	servers["enshrouded"] = lan(true, docker.EndpointSettings{IPAddress: "192.168.1.81"})
+	if st, err := s.Sync(ctx, "enshrouded"); err != nil || st.Target != "192.168.1.81" {
+		t.Fatalf("running: %+v %v", st, err)
+	}
+	servers["enshrouded"] = lan(false, docker.EndpointSettings{})
+	st, err := s.Status(ctx, "enshrouded")
+	if err != nil || st.Target != "192.168.1.81" || len(st.Stale) != 0 || st.Rules[0].State != "forwarded" {
+		t.Errorf("asleep with a chosen address: %+v %v", st, err)
+	}
+	if rules := fake.Rules(); len(rules) != 1 || rules[0].Fwd != "192.168.1.81" {
+		t.Errorf("rules = %+v", rules)
+	}
+}

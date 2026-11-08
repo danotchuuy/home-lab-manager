@@ -20,6 +20,7 @@ import (
 
 	"golang.org/x/crypto/curve25519"
 
+	"github.com/danotchuuy/home-lab-manager/internal/deploy"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/linode"
 )
@@ -216,12 +217,9 @@ func (wg WireGuard) lanReach(info docker.ContainerJSON, host string) (netip.Addr
 			ends = append(ends, end{id, wg.Hosts[id].LANSubnet, wg.Hosts[id].LANNetwork})
 		}
 	}
-	var addrs []netip.Addr
-	for _, n := range info.NetworkSettings.Networks {
-		if a, err := netip.ParseAddr(n.IPAddress); err == nil {
-			addrs = append(addrs, a)
-		}
-	}
+	// Its fixed address too while it's stopped (asleep, with its wake
+	// listener there), so its relay stays.
+	addrs := deploy.ContainerAddresses(info)
 	var reach []string
 	for _, e := range ends {
 		if e.subnet == "" {

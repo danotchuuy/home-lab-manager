@@ -985,6 +985,10 @@ playing** (managers) can stop it after a while without players, and start it aga
     Linux build of hlm (releases are) and an image for the same CPU architecture as hlm. The card says when one is
     missing.
   - With ports open to the internet, anyone who connects can start the server; that's all they can do.
+  - Its UniFi port forwards, proxy relays (WireGuard included), proxy firewall rules and Cloudflare Tunnel routes stay
+    as they are while it sleeps, so connections from outside reach the listener. For a server with its own LAN address
+    that's its fixed address (Docker keeps it while the server is stopped); for one whose address Docker chose (and
+    forgets while it's stopped), where they already went.
 - **Let visitors start it from the status page.** A **Start it** button beside it on the [public status
   page](#public-status-page) while it's asleep (if it's on the page). Each address can start servers three times, then
   once every 10 minutes.

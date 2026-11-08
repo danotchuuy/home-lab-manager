@@ -1134,8 +1134,9 @@ func origin(info docker.ContainerJSON, r Route, t Tunnel, remoteHost string) (st
 			return "", errors.New("the server has its own LAN address, which cloudflared only reaches with \"Reach servers with their own LAN address\" set up for the tunnel")
 		}
 		subnet := netip.MustParsePrefix(t.LANSubnet)
-		for _, n := range info.NetworkSettings.Networks {
-			if a, err := netip.ParseAddr(n.IPAddress); err == nil && subnet.Contains(a) {
+		// Its fixed address too while it's stopped (asleep, say).
+		for _, a := range deploy.ContainerAddresses(info) {
+			if subnet.Contains(a) && host == "" {
 				host = a.String()
 			}
 		}

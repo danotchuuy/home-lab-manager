@@ -50,6 +50,14 @@ func publishing(bindings map[string]string) docker.ContainerJSON {
 	return info
 }
 
+// fixedLANServer is a stopped server with a fixed LAN address, which
+// Docker keeps.
+func fixedLANServer(ip string, ports ...string) docker.ContainerJSON {
+	info := lanServer("", ports...)
+	info.NetworkSettings.Networks["lan"] = docker.EndpointSettings{IPAMConfig: &docker.EndpointIPAMConfig{IPv4Address: ip}}
+	return info
+}
+
 func lanServer(ip string, ports ...string) docker.ContainerJSON {
 	var info docker.ContainerJSON
 	info.HostConfig.NetworkMode = "lan"
@@ -225,6 +233,7 @@ func TestOrigin(t *testing.T) {
 		{"own LAN address", lanServer("192.168.1.61", "8080/tcp"), lan, 8080, "http://192.168.1.61:8080", ""},
 		{"own LAN address without LAN mode", lanServer("192.168.1.61", "8080/tcp"), host, 8080, "", "own LAN address"},
 		{"own LAN address, stopped", lanServer("", "8080/tcp"), lan, 8080, "", "is it running"},
+		{"own fixed LAN address, asleep", fixedLANServer("192.168.1.62", "8080/tcp"), lan, 8080, "http://192.168.1.62:8080", ""},
 	} {
 		got, err := origin(c.info, route(c.port), c.t, "")
 		if c.errHas != "" {

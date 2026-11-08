@@ -131,3 +131,16 @@ func TestUnraidPorts(t *testing.T) {
 		}
 	}
 }
+
+func TestContainerAddresses(t *testing.T) {
+	var info docker.ContainerJSON
+	info.NetworkSettings.Networks = map[string]docker.EndpointSettings{
+		"br0":    {IPAMConfig: &docker.EndpointIPAMConfig{IPv4Address: "192.168.1.70"}}, // stopped: only the fixed one
+		"bridge": {IPAddress: "172.17.0.5"},
+	}
+	info.Config.Labels = map[string]string{LabelRequest: `{"ipAddress":"192.168.1.70"}`}
+	got := ContainerAddresses(info)
+	if len(got) != 2 || got[0].String() != "192.168.1.70" || got[1].String() != "172.17.0.5" {
+		t.Errorf("addresses = %v", got)
+	}
+}

@@ -53,14 +53,36 @@ func (s *Service) updateState(fn func(*UpstreamState)) error {
 	return s.secrets.Set(secretState, st)
 }
 
+// secretRelayAddresses keeps the LAN addresses servers were last relayed
+// to.
+const secretRelayAddresses = "proxy-relay-addresses"
+
+// lastRelayAddress is where a server was last relayed to, if it had its own
+// LAN address.
+func (s *Service) lastRelayAddress(server string) string {
+	m := map[string]string{}
+	_, _ = s.secrets.Get(secretRelayAddresses, &m)
+	return m[server]
+}
+
 func (s *Service) recordApplied(upstream string, servers []Proxied) error {
 	applied := map[string][]forwarding.Mapping{}
+	addrs := map[string]string{}
 	for _, p := range servers {
 		if len(p.Ports) > 0 {
 			applied[p.Server] = p.Ports
 		}
+		if p.Address != "" {
+			addrs[p.Server] = p.Address
+		}
 	}
 	if err := s.secrets.Set(secretApplied, applied); err != nil {
+		return err
+	}
+	// Where servers with their own LAN address were relayed to: Docker
+	// forgets an address it chose while the server is stopped (asleep,
+	// say), and the relay keeps going there meanwhile.
+	if err := s.secrets.Set(secretRelayAddresses, addrs); err != nil {
 		return err
 	}
 	return s.updateState(func(st *UpstreamState) {
