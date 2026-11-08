@@ -139,6 +139,7 @@ type HostConfig struct {
 	Ulimits        []Ulimit                 `json:"Ulimits,omitempty"`
 	Memory         int64                    `json:"Memory,omitempty"`
 	NanoCPUs       int64                    `json:"NanoCpus,omitempty"`
+	CpusetCpus     string                   `json:"CpusetCpus,omitempty"`
 	ShmSize        int64                    `json:"ShmSize,omitempty"`
 	PidsLimit      *int64                   `json:"PidsLimit,omitempty"`
 	Init           *bool                    `json:"Init,omitempty"`

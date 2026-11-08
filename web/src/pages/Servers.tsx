@@ -313,9 +313,14 @@ export function ServersPage() {
       <div className="page-header">
         <h1>Servers</h1>
         {admin && (
-          <Link to="/catalog" className="btn primary">
-            + New server
-          </Link>
+          <div className="btn-row">
+            <Link to="/adopt" className="btn" title="Make containers hlm didn't create into servers">
+              Adopt a container
+            </Link>
+            <Link to="/catalog" className="btn primary">
+              + New server
+            </Link>
+          </div>
         )}
       </div>
 

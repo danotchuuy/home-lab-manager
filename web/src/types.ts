@@ -2367,3 +2367,37 @@ export interface PublicStatusPage {
   /** What the visitor's password (if any) lets them see. */
   access?: { level: number; viewLocked: boolean; detailsLocked: boolean; unlocked: boolean };
 }
+
+/** A container on a Docker host that hlm doesn't manage. */
+export interface UnmanagedContainer {
+  /** Its name, with @host for another host: the name it keeps as a server. */
+  id: string;
+  host: string;
+  name: string;
+  image: string;
+  icon?: string;
+  state: string;
+  status: string;
+  created: string;
+  ports: PortSummary[];
+  network?: string;
+  /** "source → destination" */
+  mounts?: string[];
+  unraid?: boolean;
+  compose?: string;
+  adoptable: boolean;
+  reason?: string;
+}
+
+/** How hlm would adopt a container: where its settings come from, and what would change. */
+export interface AdoptPlan {
+  container: UnmanagedContainer;
+  source: "community-apps" | "unraid" | "container";
+  template: string;
+  templateId?: string;
+  request: DeployRequest;
+  changes: string[];
+  notes?: string[];
+  /** It's running, so adopting restarts it. */
+  restart: boolean;
+}

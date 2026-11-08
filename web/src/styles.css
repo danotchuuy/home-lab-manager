@@ -4495,3 +4495,44 @@ pre .muted {
   width: auto;
   max-width: 100%;
 }
+
+/* Adopting containers */
+.adopt-card .adopt-head {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+.adopt-card + .adopt-card {
+  margin-top: 0.75rem;
+}
+.adopt-card .adopt-title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.adopt-card .badge.plain {
+  text-transform: none;
+}
+.adopt-card > p {
+  margin-top: 0.5rem;
+  overflow-wrap: anywhere;
+}
+.adopt-card .adopt-title .badge {
+  margin-left: 0.35rem;
+}
+.adopt-card .adopt-mounts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  margin-top: 0.25rem;
+  overflow-wrap: anywhere;
+}
+.adopt-plan {
+  margin-top: 0.75rem;
+  display: grid;
+  gap: 0.5rem;
+}
+.adopt-plan ul {
+  margin: 0.35rem 0 0.35rem 1.1rem;
+  padding: 0;
+}
