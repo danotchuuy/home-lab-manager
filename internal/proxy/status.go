@@ -348,7 +348,7 @@ ip -o addr show scope global 2>/dev/null | awk '$2 != "gsh0" { split($4, a, "/")
 command -v certbot >/dev/null 2>&1 && echo "hlm:certbot"
 while IFS= read -r d; do
   [ -n "$d" ] || continue
-  [ -f "/etc/letsencrypt/live/$d/fullchain.pem" ] && echo "hlm:cert:$d"
+  [ -f "/etc/letsencrypt/live/$d/fullchain.pem" ] && [ -f "/etc/letsencrypt/live/$d/privkey.pem" ] && echo "hlm:cert:$d"
   o=` + originDir + `/$d
   if [ -f "$o.crt" ] && [ -f "$o.key" ]; then
     if ! command -v openssl >/dev/null 2>&1 || openssl x509 -checkend 2592000 -noout -in "$o.crt" >/dev/null 2>&1; then
@@ -397,8 +397,18 @@ if ! command -v certbot >/dev/null 2>&1; then
   fi
 fi
 if [ -n "$2" ]; then account="-m $2"; else account="--register-unsafely-without-email"; fi
-certbot certonly --webroot -w ` + acmeRoot + ` -d "$1" --non-interactive --agree-tos $account \
-  --deploy-hook "nginx -s reload" --keep-until-expiring 2>&1 | tail -n 5`
+# The certificate is named after the domain, so it's where nginx is told to
+# look (not domain-0001 next to an old one); certbot's own exit status counts,
+# and so does the file being there.
+out=$(certbot certonly --webroot -w ` + acmeRoot + ` -d "$1" --cert-name "$1" --non-interactive --agree-tos $account \
+  --deploy-hook "nginx -s reload" --keep-until-expiring 2>&1)
+rc=$?
+printf '%s\n' "$out" | tail -n 5
+if [ $rc -ne 0 ]; then exit $rc; fi
+if [ ! -f "/etc/letsencrypt/live/$1/fullchain.pem" ] || [ ! -f "/etc/letsencrypt/live/$1/privkey.pem" ]; then
+  echo "certbot finished, but there's no certificate in /etc/letsencrypt/live/$1" >&2
+  exit 3
+fi`
 
 // originInstallScript installs a domain's Origin CA certificate and key,
 // read from stdin as one base64 line each, readable by root alone.
@@ -597,7 +607,7 @@ func (s *Service) applyStatus(ctx context.Context, st Settings) *StatusSiteResul
 	// Let's Encrypt certificates for the domains without one, now that
 	// nginx answers their challenges; then HTTPS for those.
 	if st.StatusTLS == TLSLetsEncrypt {
-		got := false
+		var got []string
 		for _, d := range res.Domains {
 			if probe.certs[d] {
 				continue
@@ -609,12 +619,21 @@ func (s *Service) applyStatus(ctx context.Context, st Settings) *StatusSiteResul
 			case out.ExitCode != 0:
 				res.setFailed(d, lastLine(out.Output()))
 			default:
-				certs[d], got = letsEncryptCert(d), true
+				certs[d] = letsEncryptCert(d)
+				got = append(got, d)
 			}
 		}
-		if got {
-			if res.Output, err = s.writeStatus(ctx, render()); err != nil {
-				return fail(err)
+		if len(got) > 0 {
+			if out, err := s.writeStatus(ctx, render()); err != nil {
+				// nginx kept the configuration without them, serving them over
+				// HTTP: say so for those, rather than failing them all.
+				for _, d := range got {
+					delete(certs, d)
+					res.setFailed(d, "nginx couldn't use its new certificate, so it's served over HTTP: "+err.Error())
+				}
+				res.Output += "\n" + out
+			} else {
+				res.Output = out
 			}
 		}
 	}

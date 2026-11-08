@@ -489,3 +489,35 @@ func TestStatusAddressNamesEdges(t *testing.T) {
 		t.Errorf("empty names:\n%s", c)
 	}
 }
+
+// nginx refusing a domain's new Let's Encrypt certificate: the sites stay on
+// HTTP (as nginx kept them), that domain says why, and nothing else fails.
+func TestLetsEncryptCertRefused(t *testing.T) {
+	store, _ := secrets.Open(t.TempDir(), "")
+	s := New(store, fakeServers{}, slog.New(slog.DiscardHandler))
+	s.UseStatusSites(func(context.Context) ([]string, int, error) { return []string{"lynx.example.com"}, 8080, nil })
+	writes := 0
+	s.run = func(_ context.Context, script string, stdin []byte, _ func(string)) (remote.Result, error) {
+		switch {
+		case strings.Contains(script, "hlm:confd"):
+			return remote.Result{Stdout: "hlm:confd\n"}, nil
+		case strings.Contains(script, StatusConfigPath):
+			writes++
+			if strings.Contains(string(stdin), "ssl_certificate") {
+				return remote.Result{Stdout: "nginx: [emerg] cannot load certificate \"/etc/letsencrypt/live/lynx.example.com/fullchain.pem\"\nhlm:testfailed\n"}, nil
+			}
+			return remote.Result{Stdout: "hlm:applied\n"}, nil
+		case strings.Contains(script, "certbot certonly"):
+			if !strings.Contains(script, `--cert-name "$1"`) {
+				t.Error("certbot without --cert-name")
+			}
+			return remote.Result{}, nil
+		}
+		return remote.Result{}, nil
+	}
+	res := s.applyStatus(context.Background(), Settings{Upstream: "10.77.77.2", UpstreamSource: "wireguard", StatusPage: true, StatusTLS: TLSLetsEncrypt})
+	if res.Error != "" || len(res.HTTPS) != 0 || writes != 2 ||
+		!strings.Contains(res.Failed["lynx.example.com"], "cannot load certificate") || !strings.Contains(res.Failed["lynx.example.com"], "served over HTTP") {
+		t.Errorf("result = %+v, %d writes", res, writes)
+	}
+}
