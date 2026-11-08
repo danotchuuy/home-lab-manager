@@ -32,6 +32,7 @@ export function ServerForwarding({
   return (
     <>
       <fieldset className="plain-fieldset" disabled={!canManage}>
+        <div id="ports">
         <PortSettings
           server={server}
           rulesVersion={rulesVersion}
@@ -41,7 +42,9 @@ export function ServerForwarding({
           }}
           onForwardingNeeded={setShowForwarding}
         />
+        </div>
         {showForwarding && (
+          <div id="unifi-rules">
           <PortForwarding
             key={portsVersion}
             server={server}
@@ -50,9 +53,14 @@ export function ServerForwarding({
               onSaved?.();
             }}
           />
+          </div>
         )}
       </fieldset>
-      {admin && hostnames && <ServerHostnames server={server} />}
+      {admin && hostnames && (
+        <div id="web-address">
+          <ServerHostnames server={server} />
+        </div>
+      )}
     </>
   );
 }

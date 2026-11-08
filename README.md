@@ -1973,6 +1973,9 @@ can. Web UI links for macvlan servers use the server's own IP.
   rest to add, by name or app; arrows and Enter pick, Backspace removes the last, and **All** and **None** are at the
   top of the list. Ones chosen some other way (a server through its whole host's group) show dashed and can't be
   removed there. On the Proxy page, **ports** on a relayed server opens its ports.
+- **A server's page** has **Find a setting** beside its tabs, like the System page: type "cloudflare", "autostart",
+  "sleep" or "memory" and pick a result (or press Enter) to open its tab and scroll to it, highlighted for a moment.
+  It covers the cards above the tabs and every tab you can see.
 - **The same everywhere.** A server's page has what its card on the list has: its update status (with **Check now**,
   and **Update image** asking first while it's running), **Start on boot** and its ☆. Its settings files can be pinned
   and unpinned from the Settings tab as from the Files tab; its group picker shows groups it's in through its host; its

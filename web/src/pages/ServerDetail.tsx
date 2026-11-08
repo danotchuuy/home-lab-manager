@@ -6,6 +6,7 @@ import { Ago, AppIcon, CrashLoopBadge, HealthBadge, Spinner, StateBadge } from "
 import { ServerActivity } from "../components/ActivityLog";
 import { ConfigFilesCard } from "../components/ConfigFilesCard";
 import { UpdateBadge } from "../components/UpdateBadge";
+import { SectionFinder, useScrollToSection } from "../components/SectionFinder";
 import { ExportCard } from "../components/ExportCard";
 import { ConfigForm } from "../components/ConfigForm";
 import { ConsoleInputBar } from "../components/Console";
@@ -59,6 +60,8 @@ export function ServerDetailPage() {
   const [configError, setConfigError] = useState<string>();
 
   const [checking, setChecking] = useState(false);
+  // Scrolls to a section once its tab is shown ("Find a setting").
+  const scrollTo = useScrollToSection();
   // How automatic updates are set, for the update badge.
   const [auto, setAuto] = useState<AutoUpdates>();
   useEffect(() => {
@@ -140,6 +143,63 @@ export function ServerDetailPage() {
   if (!server) return <div className="page"><Spinner /></div>;
 
   const link = webUILink(server.webui);
+
+  // What's on the page, for "Find a setting": the cards above the tabs, and
+  // each tab's (only the tabs shown to this person).
+  const shownTabs: Record<Tab, boolean> = {
+    logs: operator,
+    files: operator,
+    players: operator && !!server.gameProfile,
+    mods: !!server.gameProfile?.mods,
+    backups: true,
+    schedule: true,
+    ports: true,
+    settings: operator,
+  };
+  const sections: { id: string; tab?: Tab; title: string; keywords: string; show?: boolean }[] = [
+    { id: "game-status", title: "Game status", keywords: "players online query a2s rcon version map status" },
+    { id: "launch-options", title: "Launch options", keywords: "flags arguments status page port", show: !!server.gameProfile },
+    { id: "connect", title: "Connect", keywords: "address ip port copy join" },
+    { id: "history", title: "Resource history", keywords: "cpu memory network disk graph chart usage" },
+    { id: "console", tab: "logs", title: "Console", keywords: "logs output command rcon say send console settings" },
+    { id: "files", tab: "files", title: "Files", keywords: "file browser edit config upload download folder" },
+    { id: "players", tab: "players", title: "Players", keywords: "whitelist allowlist ban kick op admin" },
+    { id: "mods", tab: "mods", title: "Mods", keywords: "plugins workshop mod updates" },
+    { id: "backups", tab: "backups", title: "Backups", keywords: "backup restore schedule s3 copy verify keep download" },
+    { id: "tasks", tab: "schedule", title: "Scheduled tasks", keywords: "restart schedule timer daily task command" },
+    { id: "idle", tab: "schedule", title: "When nobody's playing", keywords: "idle sleep stop empty wake listener asleep" },
+    { id: "ports", tab: "ports", title: "Ports", keywords: "internet port proxy relay firewall shift" },
+    { id: "unifi-rules", tab: "ports", title: "UniFi port forwarding", keywords: "unifi router gateway rules forward" },
+    { id: "web-address", tab: "ports", title: "Web address", keywords: "cloudflare tunnel hostname domain https", show: admin },
+    { id: "update", tab: "settings", title: "Update", keywords: "update image check pull version", show: !server.stack },
+    { id: "start-on-boot", tab: "settings", title: "Start on boot", keywords: "autostart restart policy boot", show: !server.stack },
+    { id: "auto-updates", tab: "settings", title: "Automatic updates", keywords: "auto update policy window", show: !server.stack },
+    { id: "health", tab: "settings", title: "Health check", keywords: "health crash loop restart unhealthy", show: !server.stack },
+    { id: "settings-files", tab: "settings", title: "Game settings files", keywords: "config files pinned ini" },
+    { id: "export", tab: "settings", title: "Export, clone and move", keywords: "export clone copy move migrate host", show: !server.stack },
+    { id: "activity", tab: "settings", title: "Activity", keywords: "audit log history who", show: manager },
+    { id: "configuration", tab: "settings", title: "Configuration", keywords: "environment variables ports network ip memory cpu image settings", show: !server.stack },
+    { id: "server-groups", tab: "settings", title: "Server groups", keywords: "groups access permissions", show: admin },
+    { id: "delete", tab: "settings", title: "Delete server", keywords: "remove delete", show: admin },
+  ];
+  const tabLabel: Record<Tab, string> = {
+    logs: "Console",
+    files: "Files",
+    players: "Players",
+    mods: "Mods",
+    backups: "Backups",
+    schedule: "Schedule",
+    ports: "Port forwarding",
+    settings: "Settings",
+  };
+  const findable = sections
+    .filter((x) => x.show !== false && (!x.tab || shownTabs[x.tab]))
+    .map((x) => ({ ...x, where: x.tab ? tabLabel[x.tab] : "above the tabs" }));
+  function showSection(id: string) {
+    const sec = sections.find((x) => x.id === id);
+    if (sec?.tab && sec.tab !== tab) setTab(sec.tab);
+    scrollTo(id);
+  }
 
   // The same as the server list's star, Start on boot switch and Update.
   async function toggleFavourite() {
@@ -277,12 +337,21 @@ export function ServerDetailPage() {
 
       {stats && <StatTiles stats={stats} />}
 
-      <GameStatusCard server={server.name} running={running} canManage={manager} />
-      <LaunchOptionsCard server={server.name} running={running} canManage={manager} onChanged={load} />
-      <ConnectCard server={server} hosts={hosts} />
+      <div id="game-status">
+        <GameStatusCard server={server.name} running={running} canManage={manager} />
+      </div>
+      <div id="launch-options">
+        <LaunchOptionsCard server={server.name} running={running} canManage={manager} onChanged={load} />
+      </div>
+      <div id="connect">
+        <ConnectCard server={server} hosts={hosts} />
+      </div>
 
-      <ServerHistory server={server.name} memLimit={stats?.memoryLimit} />
+      <div id="history">
+        <ServerHistory server={server.name} memLimit={stats?.memoryLimit} />
+      </div>
 
+      <div className="system-nav">
       <div className="tabs">
         {operator && (
           <>
@@ -319,6 +388,8 @@ export function ServerDetailPage() {
           </button>
         )}
       </div>
+      <SectionFinder sections={findable} onPick={showSection} />
+      </div>
 
       {events.length > 0 && (
         <div className="card">
@@ -327,6 +398,7 @@ export function ServerDetailPage() {
       )}
 
       {tab === "logs" && (
+        <div id="console">
         <LogViewer
           serverId={server.name}
           running={running}
@@ -334,18 +406,39 @@ export function ServerDetailPage() {
             <ConsoleInputBar server={server.name} running={running} canManage={manager} append={append} />
           )}
         />
+        </div>
       )}
 
-      {tab === "files" && <FileBrowser server={server.name} running={running} canEdit={manager} />}
+      {tab === "files" && (
+        <div id="files">
+          <FileBrowser server={server.name} running={running} canEdit={manager} />
+        </div>
+      )}
 
-      {tab === "players" && <ServerPlayers server={server.name} running={running} canManage={manager} />}
-      {tab === "mods" && <ServerMods server={server.name} canCheck={operator} canManage={manager} />}
-      {tab === "backups" && <ServerBackups server={server.name} running={running} canRun={operator} canManage={manager} />}
+      {tab === "players" && (
+        <div id="players">
+          <ServerPlayers server={server.name} running={running} canManage={manager} />
+        </div>
+      )}
+      {tab === "mods" && (
+        <div id="mods">
+          <ServerMods server={server.name} canCheck={operator} canManage={manager} />
+        </div>
+      )}
+      {tab === "backups" && (
+        <div id="backups">
+          <ServerBackups server={server.name} running={running} canRun={operator} canManage={manager} />
+        </div>
+      )}
 
       {tab === "schedule" && (
         <>
-          <ServerSchedule server={server.name} canRun={operator} canManage={manager} />
-          <IdleSettings server={server.name} canManage={manager} />
+          <div id="tasks">
+            <ServerSchedule server={server.name} canRun={operator} canManage={manager} />
+          </div>
+          <div id="idle">
+            <IdleSettings server={server.name} canManage={manager} />
+          </div>
         </>
       )}
 
@@ -355,7 +448,7 @@ export function ServerDetailPage() {
         <div className="card">
           {!server.stack && (
             <>
-              <div className="settings-actions">
+              <div className="settings-actions" id="update">
                 <div>
                   <h2>Update</h2>
                   <p className="muted small">
@@ -379,7 +472,7 @@ export function ServerDetailPage() {
                   </button>
                 </div>
               </div>
-              <label className="switch start-on-boot" title={`Restart policy: ${server.restartPolicy}`}>
+              <label className="switch start-on-boot" id="start-on-boot" title={`Restart policy: ${server.restartPolicy}`}>
                 <input
                   type="checkbox"
                   checked={server.autostart}
@@ -392,23 +485,33 @@ export function ServerDetailPage() {
               <p className="muted small no-margin">
                 Docker starts it when the host starts, and again whenever it exits (the same switch as on the server list).
               </p>
-              <ServerUpdatePolicyCard server={server.name} canManage={manager} />
+              <div id="auto-updates">
+                <ServerUpdatePolicyCard server={server.name} canManage={manager} />
+              </div>
               <hr />
-              <ServerHealthCard server={server.name} running={running} canManage={manager} />
+              <div id="health">
+                <ServerHealthCard server={server.name} running={running} canManage={manager} />
+              </div>
               <hr />
             </>
           )}
-          <ConfigFilesCard server={server.name} canManage={manager} />
+          <div id="settings-files">
+            <ConfigFilesCard server={server.name} canManage={manager} />
+          </div>
           <hr />
           {!server.stack && (
             <>
-              <ExportCard server={server.name} canManage={manager} canClone={admin} />
+              <div id="export">
+                <ExportCard server={server.name} canManage={manager} canClone={admin} />
+              </div>
               <hr />
             </>
           )}
           {manager && (
             <>
-              <ServerActivity server={server.name} />
+              <div id="activity">
+                <ServerActivity server={server.name} />
+              </div>
               <hr />
             </>
           )}
@@ -418,7 +521,7 @@ export function ServerDetailPage() {
             </p>
           ) : (
             <>
-              <h2>Configuration</h2>
+              <h2 id="configuration">Configuration</h2>
               <p className="muted small">Saving recreates the container. The old one is restored if the new one fails to start.</p>
             </>
           )}
@@ -445,9 +548,11 @@ export function ServerDetailPage() {
           {admin && (
             <>
               <hr />
-              <ServerGroupPicker server={server} onChanged={load} />
+              <div id="server-groups">
+                <ServerGroupPicker server={server} onChanged={load} />
+              </div>
               <hr />
-              <div className="settings-actions">
+              <div className="settings-actions" id="delete">
                 <div>
                   <h2>Delete server</h2>
                   <p className="muted small">Removes the container. Data folders on the host are kept.</p>
