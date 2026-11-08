@@ -38,6 +38,7 @@ go.work.sum
 /data/
 web/node_modules/
 web/dist/
+*.tsbuildinfo
 
 # Local credentials
 .keys
