@@ -93,6 +93,19 @@ func TestWakeFromStatusPage(t *testing.T) {
 	if page := at("GET", "/api/status-page", false).Body.String(); strings.Contains(page, `"Vikings","state":"asleep"`) {
 		t.Errorf("still asleep on the page: %s", page)
 	}
+	// A server's idle settings say whether it's on the page (where the
+	// Start button would be).
+	for name, want := range map[string]string{"valheim": `"onStatusPage":true`, "plex": `"onStatusPage":true`} {
+		w := call(h, "admin", "GET", "/api/servers/"+name+"/idle", "", e.keys)
+		if w.Code == 200 && !strings.Contains(w.Body.String(), want) {
+			t.Errorf("%s idle: %s", name, w.Body)
+		}
+	}
+	call(h, "admin", "PUT", "/api/system/status-page", `{"enabled":true,"servers":[{"server":"plex"}]}`, e.keys)
+	if w := call(h, "admin", "GET", "/api/servers/valheim/idle", "", e.keys); w.Code != 200 || !strings.Contains(w.Body.String(), `"onStatusPage":false`) {
+		t.Errorf("valheim off the page: %d %s", w.Code, w.Body)
+	}
+	call(h, "admin", "PUT", "/api/system/status-page", body, e.keys)
 	// Three tries from one address, then it has to wait.
 	if w := at("POST", "/api/status-page/vikings/wake", true); w.Code != 429 {
 		t.Errorf("fourth try: %d", w.Code)

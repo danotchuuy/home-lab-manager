@@ -12,6 +12,28 @@ import (
 
 // --- Stopping idle servers and waking them ---
 
+// idleView is a server's idle settings and state, and whether it's on the
+// public status page, where "start it from the status page" puts a button.
+type idleView struct {
+	idle.Status
+	// OnStatusPage: the page is on and the server is on it.
+	OnStatusPage bool `json:"onStatusPage"`
+}
+
+func (s *server) idleView(name string, st idle.Status) idleView {
+	v := idleView{Status: st}
+	if s.StatusPage != nil {
+		if set, err := s.StatusPage.Settings(); err == nil && set.Enabled {
+			for _, e := range set.Servers {
+				if e.Server == name {
+					v.OnStatusPage = true
+				}
+			}
+		}
+	}
+	return v
+}
+
 func (s *server) serverIdle(w http.ResponseWriter, r *http.Request) {
 	name, ok := s.namedServer(w, r)
 	if !ok {
@@ -22,7 +44,7 @@ func (s *server) serverIdle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, st)
+	writeJSON(w, http.StatusOK, s.idleView(name, st))
 }
 
 func (s *server) setServerIdle(w http.ResponseWriter, r *http.Request) {
@@ -40,7 +62,7 @@ func (s *server) setServerIdle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, st)
+	writeJSON(w, http.StatusOK, s.idleView(name, st))
 }
 
 // errNoWake is the answer for anything that can't be woken from the status

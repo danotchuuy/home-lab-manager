@@ -8,6 +8,7 @@ import type {
   StatusPageEntry,
   StatusPageSettings as Settings,
   StatusSite,
+  IdleStatus,
   ProxySettings,
   ProxyStatusSites,
   TunnelRoute,
@@ -444,6 +445,7 @@ export function StatusPageSettings() {
                 />
                 Version and map
               </label>
+              <WakeNote server={e.server} />
               <span className="spacer" />
               <button
                 type="button"
@@ -839,5 +841,28 @@ function SiteProxy({
     <p className="small no-margin">
       Proxy server ({proxy.host}): {state}
     </p>
+  );
+}
+
+/** Whether visitors can start a server from the page while it's asleep: set on its Schedule tab. */
+function WakeNote({ server }: { server: string }) {
+  const [st, setSt] = useState<IdleStatus>();
+  useEffect(() => {
+    api.serverIdle(server).then(setSt, () => {});
+  }, [server]);
+  if (!st) return null;
+  const tab = `/servers/${encodeURIComponent(server)}?tab=schedule`;
+  return (
+    <span className="small muted">
+      {st.minutes > 0 && st.wakeFromStatusPage ? (
+        <>
+          Visitors can start it while it&apos;s asleep (<Link to={tab}>its idle settings</Link>)
+        </>
+      ) : (
+        <>
+          <Link to={tab}>Let visitors start it</Link> while it&apos;s asleep
+        </>
+      )}
+    </span>
   );
 }

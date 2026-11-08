@@ -224,6 +224,7 @@ func (s *server) routes() []route {
 		{"DELETE /api/servers/{id}", admin, s.removeServer},
 		{"POST /api/servers/{id}/{action}", serverRole(rbac.Operator), s.serverAction},
 		{"POST /api/servers/{id}/update", serverRole(rbac.Operator), s.updateServer},
+		{"POST /api/servers/{id}/update/check", serverRole(rbac.Operator), s.checkServerUpdate},
 		{"GET /api/servers/{id}/config", serverRole(rbac.Operator), s.getServerConfig},
 		{"PUT /api/servers/{id}/config", serverRole(rbac.Manager), s.reconfigureServer},
 		{"GET /api/servers/{id}/launch-options", serverRole(rbac.Viewer), s.launchOptions},

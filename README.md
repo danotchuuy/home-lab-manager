@@ -1946,7 +1946,7 @@ can. Web UI links for macvlan servers use the server's own IP.
 - **The server list** has a search (name, app, image, tags, host, address or port: every word has to match), filters
   for state (running, stopped, with a problem, with an update), server group, tag and Docker host, and a sort by name,
   state, CPU, memory or players. The view is in the page's address, so it can be bookmarked or shared.
-- **Favourites.** ☆ pins a server to the top of the list. Favourites are each person's own (each account, single
+- **Favourites.** ☆ (on its card, or beside its name on its page) pins a server to the top of the list. Favourites are each person's own (each account, single
   sign-on user or API key; everyone shares one set while sign-in isn't required) and follow them to other browsers.
 - **Tags.** Managers can give a server up to 10 tags on its page (**+ Add tags**). Clicking a tag shows the servers
   with it.
@@ -1968,6 +1968,10 @@ can. Web UI links for macvlan servers use the server's own IP.
   activity, Prometheus). The tab is in the page's address (`/system?tab=network`), links to a setting
   (`/system#linode`) open its tab, and **Find a setting** searches every tab by name or by words like "passkey" or
   "webhook". The command palette finds settings the same way (`Ctrl K`, then `linode`).
+- **The same everywhere.** A server's page has what its card on the list has: its update status (with **Check now**,
+  and **Update image** asking first while it's running), **Start on boot** and its ☆. Its settings files can be pinned
+  and unpinned from the Settings tab as from the Files tab; its group picker shows groups it's in through its host; its
+  idle settings say whether it's on the status page, whose entries say whether visitors may start it.
 - **Times** like "5 min ago" show the exact time when you hover over them.
 
 ## Public status page
@@ -2596,6 +2600,7 @@ when the `HLM_*` one isn't set.
 | `GET /api/servers/{id}`                        | One server (`id` is the container name or ID).                                    |
 | `POST /api/servers/{id}/start\|stop\|restart`  | Lifecycle actions.                                                                |
 | `POST /api/servers/{id}/update`                | Pull the latest image and recreate. Streams NDJSON.                               |
+| `POST /api/servers/{id}/update/check`          | Check this server's image against its registry now; returns its update status.    |
 | `GET /api/servers/{id}/config`                 | Template plus the saved settings, for an edit form.                               |
 | `PUT /api/servers/{id}/config`                 | Recreate with new settings. Streams NDJSON.                                       |
 | `GET /api/servers/{id}/launch-options`         | The server's game's [launch options](#game-options) (`options`: id, name, description, args, port, proto, `on`, `where`). Viewers. |

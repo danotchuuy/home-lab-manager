@@ -1,6 +1,7 @@
 import type { CreationOptionsJSON, NewPasskeyJSON, RequestOptionsJSON, UsedPasskeyJSON } from "./passkeys";
 import type {
   Account,
+  UpdateStatus,
   AgentMove,
   AuditFilter,
   AuditPage,
@@ -561,6 +562,9 @@ export const api = {
   hostsSSHKey: () => json<SSHKeyInfo>("/api/hosts/ssh-key", { method: "POST" }),
   reconfigure: (id: string, req: DeployRequest, onEvent: (e: DeployEvent) => void) =>
     stream(`/api/servers/${encodeURIComponent(id)}/config`, { method: "PUT", body: JSON.stringify(req) }, onEvent),
+  /** Checks one server's image against its registry now. */
+  checkServerUpdate: (id: string) =>
+    json<UpdateStatus>(`/api/servers/${encodeURIComponent(id)}/update/check`, { method: "POST" }),
   setAutostart: (id: string, enabled: boolean) =>
     json<Server>(`/api/servers/${encodeURIComponent(id)}/autostart`, {
       method: "PUT",
