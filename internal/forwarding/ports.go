@@ -216,3 +216,25 @@ func (s *Service) RenameServer(from, to string) error {
 	delete(all, from)
 	return s.saveOptions(all)
 }
+
+// KeepLocal marks one of a server's ports (by Mapping.Key, "7778/tcp") as
+// only for the LAN: never forwarded, relayed or opened in the proxy's
+// firewall, such as a status page hlm reads. The server's other port
+// options stay as they are.
+func (s *Service) KeepLocal(server, key string) error {
+	s.portsMu.Lock()
+	defer s.portsMu.Unlock()
+	all, err := s.allOptions()
+	if err != nil {
+		return err
+	}
+	opts := all[server]
+	if opts == nil {
+		opts = ServerOptions{}
+	}
+	o := opts[key]
+	o.NoForward, o.NoProxy, o.NoFirewall, o.Internet = true, true, true, 0
+	opts[key] = o
+	all[server] = opts
+	return s.saveOptions(all)
+}

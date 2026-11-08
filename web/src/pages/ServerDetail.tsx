@@ -12,6 +12,7 @@ import { DeployProgress } from "../components/DeployProgress";
 import { ServerMods } from "../components/ServerMods";
 import { FileBrowser } from "../components/FileBrowser";
 import { GameStatusCard } from "../components/GameStatus";
+import { LaunchOptionsCard } from "../components/LaunchOptions";
 import { LogViewer } from "../components/LogViewer";
 import { PortSettings } from "../components/PortSettings";
 import { PortForwarding } from "../components/PortForwarding";
@@ -236,6 +237,7 @@ export function ServerDetailPage() {
       {stats && <StatTiles stats={stats} />}
 
       <GameStatusCard server={server.name} running={running} canManage={manager} />
+      <LaunchOptionsCard server={server.name} running={running} canManage={manager} onChanged={load} />
       <ConnectCard server={server} hosts={hosts} />
 
       <ServerHistory server={server.name} memLimit={stats?.memoryLimit} />
