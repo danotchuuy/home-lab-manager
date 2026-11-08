@@ -33,8 +33,10 @@ type hostView struct {
 	Socket      string              `json:"socket,omitempty"`
 	AppdataRoot string              `json:"appdataRoot,omitempty"`
 	Address     string              `json:"address,omitempty"`
-	// Agent is the connection of the host's agent.
-	Agent *agent.Status `json:"agent,omitempty"`
+	// Agent is the connection of the host's agent, and AgentUpdate how its
+	// last update went.
+	Agent       *agent.Status      `json:"agent,omitempty"`
+	AgentUpdate *hosts.AgentUpdate `json:"agentUpdate,omitempty"`
 }
 
 func (s *server) listHosts(w http.ResponseWriter, r *http.Request) {
@@ -70,11 +72,21 @@ func (s *server) listHosts(w http.ResponseWriter, r *http.Request) {
 			v.SSH, v.Socket, v.AppdataRoot = h.SSH, h.Socket, h.AppdataRoot
 			if h.Kind == hosts.KindAgent {
 				v.Agent = s.Hosts.AgentStatus(h.ID)
+				v.AgentUpdate = s.Hosts.AgentUpdateStatus(h.ID)
 			}
 		}
 		out = append(out, v)
 	}
 	res := map[string]any{"hosts": out}
+	if admin {
+		// What agents are updated to (hlm's version), and whether that's
+		// automatic.
+		v, why := s.Hosts.AgentVersion()
+		res["agentVersion"], res["agentAutoUpdate"] = v, s.Hosts.AgentAutoUpdate()
+		if why != "" {
+			res["agentUpdateBlocked"] = why
+		}
+	}
 	if admin && s.Proxy != nil {
 		// Hosts reached over SSH sign in with hlm's key.
 		if k, err := s.Proxy.Key(); err == nil && k != nil {

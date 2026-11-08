@@ -3,11 +3,13 @@ import { api, ApiError } from "../api";
 import type {
   AgentEnrolment,
   AgentStatus,
+  AgentUpdate,
   DeployEvent,
   DockerHost,
   DockerHostInput,
   DockerVersion,
   HostInspection,
+  HostsList,
   SSHKeyInfo,
 } from "../types";
 import { Ago, Spinner } from "./common";
@@ -41,15 +43,58 @@ export function DockerHosts() {
   // The host whose LAN network (br0) is being set up.
   const [lanFor, setLanFor] = useState<string>();
   const [checked, setChecked] = useState<Record<string, string>>({});
+  // What agents are kept on (hlm's version), and updates running from here.
+  const [agents, setAgents] = useState<Pick<HostsList, "agentVersion" | "agentAutoUpdate" | "agentUpdateBlocked">>({});
+  const [updating, setUpdating] = useState<Record<string, string>>({});
 
   const load = () =>
     api.hosts().then(
       (r) => {
         setHosts(r.hosts);
         setSSHKey(r.sshKey);
+        setAgents({ agentVersion: r.agentVersion, agentAutoUpdate: r.agentAutoUpdate, agentUpdateBlocked: r.agentUpdateBlocked });
       },
       (e) => setError((e as Error).message),
     );
+
+  // While an agent is being updated (by hlm on its own, say), follow it.
+  const busy = hosts?.some((h) => h.agentUpdate?.state === "updating") ?? false;
+  useEffect(() => {
+    if (!busy) return;
+    const t = setInterval(load, 3000);
+    return () => clearInterval(t);
+  }, [busy]);
+
+  async function updateAgent(h: DockerHost) {
+    if (!confirm(`Update ${h.name}'s agent to ${agents.agentVersion}? Its connection drops for a few seconds; its servers keep running.`))
+      return;
+    setUpdating((u) => ({ ...u, [h.id]: "Starting…" }));
+    let failed: string | undefined;
+    try {
+      await api.updateAgent(h.id, (e) => {
+        if (e.stage === "error") failed = e.message;
+        if (e.message) setUpdating((u) => ({ ...u, [h.id]: e.message! }));
+      });
+    } catch (e) {
+      failed = (e as Error).message;
+    }
+    setUpdating((u) => {
+      const next = { ...u };
+      delete next[h.id];
+      return next;
+    });
+    if (failed) setError(`Updating ${h.name}'s agent failed: ${failed}`);
+    load();
+  }
+
+  async function setAuto(on: boolean) {
+    try {
+      await api.setAgentAutoUpdate(on);
+      setAgents((a) => ({ ...a, agentAutoUpdate: on }));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
   useEffect(() => {
     load();
   }, []);
@@ -95,6 +140,19 @@ export function DockerHosts() {
         page for its CPU, memory, network, disks and disk usage by server.
       </p>
       {error && <div className="alert error small">{error}</div>}
+      {hosts?.some((h) => h.kind === "agent") && (
+        <label className="radio small">
+          <input
+            type="checkbox"
+            checked={agents.agentAutoUpdate ?? true}
+            onChange={(e) => setAuto(e.target.checked)}
+            disabled={!!agents.agentUpdateBlocked}
+          />
+          Keep agents on hlm&apos;s version: update an agent automatically when it connects on another one
+          {agents.agentVersion && !agents.agentUpdateBlocked ? ` (${agents.agentVersion})` : ""}
+          {agents.agentUpdateBlocked && <span className="muted"> — {agents.agentUpdateBlocked}</span>}
+        </label>
+      )}
       {!hosts ? (
         <Spinner />
       ) : (
@@ -145,7 +203,15 @@ export function DockerHosts() {
                   </td>
                   <td className="small">
                     {h.kind === "agent" ? (
-                      <AgentState agent={h.agent} />
+                      <>
+                        <AgentState agent={h.agent} />
+                        <AgentUpdateState
+                          update={h.agentUpdate}
+                          running={updating[h.id]}
+                          behind={agentBehind(h, agents.agentVersion, agents.agentUpdateBlocked)}
+                          version={agents.agentVersion}
+                        />
+                      </>
                     ) : h.kind === "ssh" ? (
                       <>
                         SSH{" "}
@@ -192,6 +258,16 @@ export function DockerHosts() {
                     >
                       LAN network (br0)
                     </button>
+                    {agentBehind(h, agents.agentVersion, agents.agentUpdateBlocked) && (
+                      <button
+                        className="btn small"
+                        onClick={() => updateAgent(h)}
+                        disabled={!!updating[h.id] || h.agentUpdate?.state === "updating"}
+                        title={`Its agent runs ${h.agent?.version || "an older version"}; hlm runs ${agents.agentVersion}`}
+                      >
+                        Update agent to {agents.agentVersion}
+                      </button>
+                    )}
                     <button className="btn small ghost danger" onClick={() => remove(h)}>
                       Remove
                     </button>
@@ -1011,4 +1087,46 @@ function AgentCommand({ enrolment, onConnected }: { enrolment: AgentEnrolment; o
       )}
     </div>
   );
+}
+
+/** Whether a host's agent is connected on another version than hlm's, and can be updated. */
+function agentBehind(h: DockerHost, version?: string, blocked?: string): boolean {
+  return h.kind === "agent" && !blocked && !!version && !!h.agent?.connected && !!h.agent.version && h.agent.version !== version;
+}
+
+/** An agent's update: running, how the last one ended, or that it's behind hlm. */
+function AgentUpdateState({
+  update,
+  running,
+  behind,
+  version,
+}: {
+  update?: AgentUpdate;
+  running?: string;
+  behind: boolean;
+  version?: string;
+}) {
+  if (running || update?.state === "updating") {
+    return (
+      <div className="small">
+        <Spinner /> Updating the agent{update?.to ? ` to ${update.to}` : ""}: {running ?? update?.message ?? "…"}
+      </div>
+    );
+  }
+  if (update?.state === "failed" && update.to === version) {
+    return (
+      <div className="small host-down">
+        {update.auto ? "Automatic update" : "Update"} to {update.to} failed: {update.message}
+      </div>
+    );
+  }
+  if (update?.state === "done" && !behind) {
+    return (
+      <div className="small muted">
+        Updated to {update.to} <Ago iso={update.at} />
+      </div>
+    );
+  }
+  if (behind) return <div className="small muted">hlm runs {version}</div>;
+  return null;
 }

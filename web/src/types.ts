@@ -2201,6 +2201,30 @@ export interface DockerHost {
   address?: string;
   /** For a host with hlm's agent: its connection. */
   agent?: AgentStatus;
+  /** How its agent's last update went. */
+  agentUpdate?: AgentUpdate;
+}
+
+/** How a host's agent's last update to hlm's version went. */
+export interface AgentUpdate {
+  state: "updating" | "done" | "failed";
+  from?: string;
+  to: string;
+  message?: string;
+  at: string;
+  /** hlm started it on its own. */
+  auto?: boolean;
+}
+
+/** The hosts, and (for admins) what their agents are kept on. */
+export interface HostsList {
+  hosts: DockerHost[];
+  sshKey?: SSHKeyInfo;
+  /** hlm's version, which agents are updated to. */
+  agentVersion?: string;
+  agentAutoUpdate?: boolean;
+  /** Why agents can't be updated (a development build of hlm). */
+  agentUpdateBlocked?: string;
 }
 
 /** A host's agent's connection to hlm. */
