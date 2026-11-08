@@ -354,7 +354,7 @@ func run(log *slog.Logger) error {
 	agents := agent.NewHub(log)
 	defer agents.Close()
 	dockerHosts := hosts.New(hosts.Options{
-		Secrets: store, SSHKey: relay.KeyPair, Credentials: registries.For, OnChange: mgr.SetHosts, Agents: agents, Log: log,
+		Secrets: store, SSHKey: relay.KeyPair, Credentials: registries.For, OnChange: mgr.SetHosts, Agents: agents, Version: version, Log: log,
 	})
 	if err := dockerHosts.Load(); err != nil {
 		log.Warn("load Docker hosts", "err", err)

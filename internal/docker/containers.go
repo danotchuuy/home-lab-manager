@@ -12,10 +12,12 @@ import (
 
 // ContainerSummary is an entry from the container list endpoint.
 type ContainerSummary struct {
-	ID      string            `json:"Id"`
-	Names   []string          `json:"Names"`
-	Image   string            `json:"Image"`
-	ImageID string            `json:"ImageID"`
+	ID      string   `json:"Id"`
+	Names   []string `json:"Names"`
+	Image   string   `json:"Image"`
+	ImageID string   `json:"ImageID"`
+	// Command is the command it runs, as one line.
+	Command string            `json:"Command"`
 	State   string            `json:"State"`
 	Status  string            `json:"Status"`
 	Created int64             `json:"Created"`

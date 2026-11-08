@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -99,4 +100,38 @@ func (s *server) agentConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Agents.ServeHTTP(w, r)
+}
+
+// updateAgent updates a host's agent to hlm's version, streaming the
+// progress.
+func (s *server) updateAgent(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	audit.Add(r.Context(), "host", id)
+	s.stream(w, r, func(ctx context.Context, emit func(manager.Event)) error {
+		err := s.Hosts.UpdateAgent(ctx, id, func(line string) {
+			emit(manager.Event{Stage: "log", Message: line})
+		})
+		if err != nil {
+			return err
+		}
+		emit(manager.Event{Stage: "done", Message: "The agent runs hlm " + s.Version + "."})
+		return nil
+	})
+}
+
+// setAgentAutoUpdate turns automatic agent updates on or off.
+func (s *server) setAgentAutoUpdate(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		On bool `json:"on"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	audit.Add(r.Context(), "on", fmt.Sprint(in.On))
+	if err := s.Hosts.SetAgentAutoUpdate(in.On); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"on": in.On})
 }

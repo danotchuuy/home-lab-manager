@@ -111,6 +111,7 @@ import type {
   AdoptPlan,
   MigratePreview,
   AgentEnrolment,
+  HostsList,
   DockerHost,
   PasskeyInfo,
   DockerHostInput,
@@ -502,7 +503,12 @@ export const api = {
   bulk: (servers: string[], action: BulkAction, onEvent: (e: DeployEvent) => void) =>
     stream("/api/servers/bulk", { method: "POST", body: JSON.stringify({ servers, action }) }, onEvent),
   /** Docker hosts; admins also get how each is reached, and hlm's SSH key. */
-  hosts: () => json<{ hosts: DockerHost[]; sshKey?: SSHKeyInfo }>("/api/hosts"),
+  hosts: () => json<HostsList>("/api/hosts"),
+  /** Updates a host's agent to hlm's version; streams the progress. */
+  updateAgent: (id: string, onEvent: (e: DeployEvent) => void) =>
+    stream(`/api/hosts/${encodeURIComponent(id)}/update-agent`, { method: "POST" }, onEvent),
+  setAgentAutoUpdate: (on: boolean) =>
+    json<{ on: boolean }>("/api/hosts/agent-auto-update", { method: "PUT", body: JSON.stringify({ on }) }),
   testHost: (h: DockerHostInput) =>
     json<DockerVersion>("/api/hosts/test", { method: "POST", body: JSON.stringify(h) }),
   createHost: (h: DockerHostInput) => json<DockerHost>("/api/hosts", { method: "POST", body: JSON.stringify(h) }),

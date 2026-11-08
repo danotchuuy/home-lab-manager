@@ -103,7 +103,9 @@ type Options struct {
 	// Agents are the agents' connections; without it, hosts can't have
 	// agents.
 	Agents *agent.Hub
-	Log    *slog.Logger
+	// Version is hlm's, which agents are updated to.
+	Version string
+	Log     *slog.Logger
 }
 
 // Registry keeps the hosts and their connections.
@@ -115,6 +117,8 @@ type Registry struct {
 	conns map[string]*conn
 	// collectors sample SSH and TLS hosts' metrics, by host ID.
 	collectors map[string]*hostCollector
+	// agentUpd is how agents' updates went.
+	agentUpd agentUpdates
 }
 
 type conn struct {

@@ -161,12 +161,16 @@ func (r *Registry) authenticateAgent(id, secret string) bool {
 
 // agentChanged hears an agent connect or go: connections kept from the
 // last time it was connected went with it.
-func (r *Registry) agentChanged(id string, _ bool) {
+func (r *Registry) agentChanged(id string, connected bool) {
 	r.mu.Lock()
 	c := r.conns[id]
 	r.mu.Unlock()
 	if c != nil {
 		c.client.Close()
+	}
+	// An agent on another version than hlm's is brought up to it.
+	if connected {
+		go r.autoUpdateAgent(id)
 	}
 }
 
