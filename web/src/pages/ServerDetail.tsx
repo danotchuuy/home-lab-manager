@@ -5,6 +5,7 @@ import { api, ApiError } from "../api";
 import { Ago, AppIcon, CrashLoopBadge, HealthBadge, Spinner, StateBadge } from "../components/common";
 import { ServerActivity } from "../components/ActivityLog";
 import { ConfigFilesCard } from "../components/ConfigFilesCard";
+import { UpdateBadge } from "../components/UpdateBadge";
 import { ExportCard } from "../components/ExportCard";
 import { ConfigForm } from "../components/ConfigForm";
 import { ConsoleInputBar } from "../components/Console";
@@ -24,7 +25,7 @@ import { ServerUpdatePolicyCard } from "../components/UpdatePolicy";
 import { ServerHealthCard } from "../components/HealthSettings";
 import { StatTiles } from "../components/Resources";
 import { ServerHistory } from "../components/ResourceHistory";
-import type { App, DeployEvent, DeployRequest, Server, Stats } from "../types";
+import type { App, AutoUpdates, DeployEvent, DeployRequest, Server, Stats } from "../types";
 import { usePoll } from "../usePoll";
 import { bareName, formatNetwork, formatPorts, webUILink } from "../util";
 import { HostBadge, useHosts } from "../components/HostPicker";
@@ -57,6 +58,12 @@ export function ServerDetailPage() {
   const [config, setConfig] = useState<{ app: App; request: DeployRequest; hidden?: string[] }>();
   const [configError, setConfigError] = useState<string>();
 
+  const [checking, setChecking] = useState(false);
+  // How automatic updates are set, for the update badge.
+  const [auto, setAuto] = useState<AutoUpdates>();
+  useEffect(() => {
+    api.autoUpdates().then(setAuto, () => {});
+  }, []);
   const load = useCallback(async () => {
     try {
       setServer(await api.server(name));
@@ -134,6 +141,38 @@ export function ServerDetailPage() {
 
   const link = webUILink(server.webui);
 
+  // The same as the server list's star, Start on boot switch and Update.
+  async function toggleFavourite() {
+    try {
+      await api.setFavourite(server!.id, !server!.favourite);
+      setServer((s) => (s ? { ...s, favourite: !s.favourite } : s));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+  async function toggleAutostart(on: boolean) {
+    try {
+      setServer(await api.setAutostart(server!.id, on));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+  async function checkUpdate() {
+    setChecking(true);
+    try {
+      const st = await api.checkServerUpdate(server!.id);
+      setServer((s) => (s ? { ...s, update: st } : s));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setChecking(false);
+    }
+  }
+  function updateImage() {
+    if (server!.state === "running" && !confirm(`Update ${server!.name}? It will restart, disconnecting any players.`)) return;
+    runStream((cb) => api.update(name, cb));
+  }
+
   return (
     <div className="page">
       <Link to="/" className="back">
@@ -143,6 +182,16 @@ export function ServerDetailPage() {
         <AppIcon src={server.icon} size={72} />
         <div className="grow">
           <h1>
+            <button
+              type="button"
+              className={`icon-button star${server.favourite ? " on" : ""}`}
+              aria-pressed={!!server.favourite}
+              aria-label={server.favourite ? `Unpin ${bareName(server.name)}` : `Pin ${bareName(server.name)} to the top`}
+              title={server.favourite ? "Pinned to the top of the server list: click to unpin" : "Pin to the top of the server list"}
+              onClick={toggleFavourite}
+            >
+              {server.favourite ? "★" : "☆"}
+            </button>{" "}
             {bareName(server.name)}
             <HostBadge host={server.host} hosts={hosts} /> <StateBadge state={server.state} asleep={server.asleep} /> <HealthBadge state={server.state} health={server.health} />{" "}
             <CrashLoopBadge crashLoop={server.crashLoop} />
@@ -309,12 +358,40 @@ export function ServerDetailPage() {
               <div className="settings-actions">
                 <div>
                   <h2>Update</h2>
-                  <p className="muted small">Pull the latest image and recreate the container with the same settings.</p>
+                  <p className="muted small">
+                    Pull the latest image and recreate the container with the same settings.{" "}
+                    <UpdateBadge
+                      update={server.update}
+                      auto={(auto?.servers[server.name] || auto?.default) === "auto"}
+                      state={auto?.states[server.name]}
+                    />
+                    {server.update?.reason && server.update.state !== "current" && (
+                      <span className="muted small"> {server.update.reason}</span>
+                    )}
+                  </p>
                 </div>
-                <button className="btn" disabled={busy} onClick={() => runStream((cb) => api.update(name, cb))}>
-                  Update image
-                </button>
+                <div className="btn-row">
+                  <button className="btn small" disabled={busy || checking} onClick={checkUpdate}>
+                    {checking ? "Checking…" : "Check now"}
+                  </button>
+                  <button className="btn" disabled={busy} onClick={updateImage}>
+                    Update image
+                  </button>
+                </div>
               </div>
+              <label className="switch start-on-boot" title={`Restart policy: ${server.restartPolicy}`}>
+                <input
+                  type="checkbox"
+                  checked={server.autostart}
+                  disabled={busy || !manager}
+                  onChange={(e) => toggleAutostart(e.target.checked)}
+                />
+                <span className="switch-track" aria-hidden="true" />
+                <span className="small">Start on boot</span>
+              </label>
+              <p className="muted small no-margin">
+                Docker starts it when the host starts, and again whenever it exits (the same switch as on the server list).
+              </p>
               <ServerUpdatePolicyCard server={server.name} canManage={manager} />
               <hr />
               <ServerHealthCard server={server.name} running={running} canManage={manager} />

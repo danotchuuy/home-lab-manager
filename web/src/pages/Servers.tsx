@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { can, useAdmin } from "../access";
+import { UpdateBadge } from "../components/UpdateBadge";
 import { api, type BulkAction } from "../api";
 import { CopyButton, connectAddresses } from "../components/ConnectInfo";
 import { Ago, AppIcon, CONNECTION_GLYPH, CrashLoopBadge, HealthBadge, Spinner, StateBadge } from "../components/common";
@@ -11,7 +12,6 @@ import { ResourceSummary } from "../components/Resources";
 import { StackList } from "../components/StackList";
 import { UpdateProgress } from "../components/UpdateProgress";
 import type {
-  AutoUpdateState,
   AutoUpdates,
   Connection,
   DeployEvent,
@@ -21,11 +21,10 @@ import type {
   Stats,
   UpcomingTask,
   UpdateCheckInfo,
-  UpdateStatus,
 } from "../types";
 import { usePoll } from "../usePoll";
 import { allTags, matches, sortServers, viewFromParams, viewToParams, type ListView } from "../serverlist";
-import { bareName, formatInZone, hostOf, formatNetwork, formatPorts, timeAgo, timeUntil, webUILink } from "../util";
+import { bareName, formatInZone, hostOf, formatNetwork, formatPorts, timeUntil, webUILink } from "../util";
 
 export function ServersPage() {
   const admin = useAdmin();
@@ -782,46 +781,3 @@ function NextTaskBadge({ task, timezone }: { task?: UpcomingTask; timezone: stri
   );
 }
 
-function UpdateBadge({ update: u, auto, state }: { update?: UpdateStatus; auto?: boolean; state?: AutoUpdateState }) {
-  if (!u) return null;
-  const checked = `Checked ${timeAgo(u.checkedAt)}`;
-  switch (u.state) {
-    case "available": {
-      // Updates applied automatically say when.
-      const how = !auto
-        ? ""
-        : state?.state === "waiting" && state.next
-          ? ` · auto ${timeUntil(state.next)}`
-          : state?.state === "failed"
-            ? " · auto-update failed"
-            : state?.state === "players"
-              ? " · auto once players leave"
-            : state
-              ? ` · auto: ${state.state}`
-              : " · updating automatically";
-      return (
-        <span className="badge update-available" title={`${u.reason ?? ""}\n${checked}${state?.message ? `\n${state.message}` : ""}`}>
-          Update available{how}
-        </span>
-      );
-    }
-    case "current":
-      return (
-        <span className="badge update-current" title={checked}>
-          Up to date
-        </span>
-      );
-    case "error":
-      return (
-        <span className="badge update-error" title={`${u.reason ?? ""}\n${checked}`}>
-          Update check failed
-        </span>
-      );
-    default:
-      return (
-        <span className="badge" title={`${u.reason ?? ""}\n${checked}`}>
-          Update status unknown
-        </span>
-      );
-  }
-}

@@ -453,6 +453,8 @@ export interface IdleSettings {
 }
 
 export interface IdleStatus extends IdleSettings {
+  /** The public status page is on and the server is on it (where "start it from the status page" shows a button). */
+  onStatusPage?: boolean;
   idleSince?: string;
   asleep?: { since: string; minutes: number; listener?: string; listenerError?: string };
   canStop: boolean;

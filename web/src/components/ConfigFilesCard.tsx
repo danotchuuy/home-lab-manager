@@ -16,10 +16,11 @@ export function ConfigFilesCard({ server, canManage }: { server: string; canMana
   }, [server]);
 
   const open = (path: string) => setParams({ tab: "files", file: path });
-  const pin = async (path: string) => {
+  // Pinning and unpinning, as the Files tab does.
+  const pin = async (path: string, on = true) => {
     if (!data) return;
     try {
-      setData(await api.setConfigFiles(server, [...data.pinned, { path }]));
+      setData(await api.setConfigFiles(server, on ? [...data.pinned, { path }] : data.pinned.filter((f) => f.path !== path)));
     } catch (e) {
       setError((e as Error).message);
     }
@@ -42,9 +43,16 @@ export function ConfigFilesCard({ server, canManage }: { server: string; canMana
               <span>
                 ★ <strong>{f.label || baseName(f.path)}</strong> <code className="muted small">{f.path}</code>
               </span>
-              <button className="btn small" onClick={() => open(f.path)}>
-                Edit
-              </button>
+              <span className="btn-row">
+                {canManage && (
+                  <button className="btn small ghost" onClick={() => pin(f.path, false)}>
+                    Unpin
+                  </button>
+                )}
+                <button className="btn small" onClick={() => open(f.path)}>
+                  Edit
+                </button>
+              </span>
             </li>
           ))}
           {data.suggested.map((f) => (

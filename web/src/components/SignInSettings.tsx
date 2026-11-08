@@ -6,6 +6,7 @@ import { TwoFactorCard } from "./TwoFactor";
 
 import { Ago, Spinner } from "./common";
 import { SSHKeys } from "./SSHKeys";
+import { MySignIns } from "./ActivityLog";
 
 const MIN_PASSWORD = 10;
 
@@ -157,6 +158,8 @@ export function SignInSettings() {
           <TwoFactorCard username={me.username} status={status.twoFactor} onChange={() => load().catch(() => {})} />
         </>
       )}
+      {/* As on a member's own System page. */}
+      {me && <MySignIns />}
 
       <h3>Local accounts</h3>
       <p className="muted small no-margin">

@@ -28,6 +28,8 @@ export function ServerHostnames({ server }: { server: string }) {
   const [hostname, setHostname] = useState("");
   const [port, setPort] = useState(0);
   const [scheme, setScheme] = useState<"http" | "https">("http");
+  // For https: accept the server's certificate without checking it (most are self-signed), as on the Tunnel page.
+  const [noTLSVerify, setNoTLSVerify] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -73,7 +75,8 @@ export function ServerHostnames({ server }: { server: string }) {
     e.preventDefault();
     const h = hostname.trim().toLowerCase().replace(/\.+$/, "");
     if (!h || !port || !data) return;
-    if (await save([...data.routes.map(asRoute), { hostname: h, server, port, scheme }])) setHostname("");
+    const route: TunnelRoute = { hostname: h, server, port, scheme, noTLSVerify: scheme === "https" && noTLSVerify };
+    if (await save([...data.routes.map(asRoute), route])) setHostname("");
   }
 
   async function remove(h: string) {
@@ -157,6 +160,12 @@ export function ServerHostnames({ server }: { server: string }) {
             <option value="http">http</option>
             <option value="https">https</option>
           </select>
+          {scheme === "https" && (
+            <label className="radio small" title="Most servers' own certificates are self-signed">
+              <input type="checkbox" checked={noTLSVerify} onChange={(e) => setNoTLSVerify(e.target.checked)} /> Don&apos;t
+              verify its certificate
+            </label>
+          )}
           <button type="submit" className="btn small" disabled={busy || !hostname.trim() || !port}>
             {busy ? "Saving…" : "Add hostname"}
           </button>

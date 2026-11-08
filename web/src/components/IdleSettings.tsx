@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { useAdmin } from "../access";
 import { api } from "../api";
 import type { IdleSettings as Settings, IdleStatus } from "../types";
 import { Ago, Spinner } from "./common";
@@ -7,6 +9,7 @@ const DEFAULT_MINUTES = 30;
 
 /** Schedule tab → When nobody's playing: stop the server, and wake it again. */
 export function IdleSettings({ server, canManage }: { server: string; canManage: boolean }) {
+  const admin = useAdmin();
   const [status, setStatus] = useState<IdleStatus>();
   const [form, setForm] = useState<Settings>();
   const [error, setError] = useState<string>();
@@ -129,7 +132,14 @@ export function IdleSettings({ server, canManage }: { server: string; canManage:
           Let visitors start it from the status page
         </label>
         <span className="field-help">
-          A Start button next to it on the public status page while it&apos;s asleep (if the server is on the page).
+          A Start button next to it on the public status page while it&apos;s asleep.{" "}
+          {status.onStatusPage ? (
+            "It's on the page."
+          ) : (
+            <strong>
+              It isn&apos;t on the page{admin ? <>: add it under <Link to="/system#status-page">System → Sharing → Status page</Link></> : " (an admin adds it)"}.
+            </strong>
+          )}
         </span>
       </fieldset>
       {canManage && (

@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api";
 import type { Account, APIKeyInfo, DockerHost, GroupRole, GrantKind, Server, ServerGroup } from "../types";
 import { Spinner } from "./common";
@@ -270,6 +271,9 @@ export function ServerGroupPicker({ server, onChanged }: { server: Server; onCha
     load();
   }, []);
 
+  // The host it's on: after its @, or this one, as groups name hosts.
+  const serverHost = server.name.includes("@") ? server.name.slice(server.name.lastIndexOf("@") + 1) : "local";
+
   async function toggle(id: string, on: boolean) {
     const current = groups!.filter((g) => g.servers.includes(server.name)).map((g) => g.id);
     setBusy(true);
@@ -288,16 +292,29 @@ export function ServerGroupPicker({ server, onChanged }: { server: Server; onCha
   return (
     <>
       <h2>Server groups</h2>
-      <p className="muted small">Who may use this server besides admins. Groups are managed under System.</p>
+      <p className="muted small">
+        Who may use this server besides admins. Groups are managed under <Link to="/system#server-groups">System → Access</Link>.
+      </p>
       {error && <div className="alert error">{error}</div>}
       {!groups && !error && <Spinner />}
       {groups?.length === 0 && <p className="muted small">There are no groups yet.</p>}
       <div className="group-servers">
-        {groups?.map((g) => (
-          <label key={g.id} className="small">
-            <input type="checkbox" checked={g.servers.includes(server.name)} disabled={busy} onChange={(e) => toggle(g.id, e.target.checked)} /> {g.name}
-          </label>
-        ))}
+        {groups?.map((g) => {
+          // In the group with every server on its host: set under System → Server groups.
+          const viaHost = (g.hosts ?? []).includes(serverHost);
+          return (
+            <label key={g.id} className="small" title={viaHost ? "Every server on its host is in this group (System → Access → Server groups)" : undefined}>
+              <input
+                type="checkbox"
+                checked={viaHost || g.servers.includes(server.name)}
+                disabled={busy || viaHost}
+                onChange={(e) => toggle(g.id, e.target.checked)}
+              />{" "}
+              {g.name}
+              {viaHost && <span className="muted"> (through its host)</span>}
+            </label>
+          );
+        })}
       </div>
     </>
   );

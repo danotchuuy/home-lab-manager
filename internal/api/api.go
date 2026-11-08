@@ -713,6 +713,19 @@ func (s *server) checkServerPorts(w http.ResponseWriter, r *http.Request) {
 
 var validServerName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
 
+// checkServerUpdate checks one server's image against its registry now,
+// as "Check for updates" does for all of them.
+func (s *server) checkServerUpdate(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
+	defer cancel()
+	st, err := s.Manager.CheckUpdate(ctx, r.PathValue("id"))
+	if err != nil {
+		writeManagerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
 func (s *server) updateServer(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	s.stream(w, r, func(ctx context.Context, emit func(manager.Event)) error {
