@@ -332,7 +332,7 @@ func TestDockerStatusConfig(t *testing.T) {
 	tlsFiles := addressCertFiles("play.example.com")
 	for _, addr := range []*StatusAddress{nil, {Port: 80, Names: []string{"203.0.113.7", "[2001:db8::7]", "play.example.com"}}, {Port: 8081},
 		{Port: 80, Names: []string{"203.0.113.7", "play.example.com"}, Name: "play.example.com", TLS: &tlsFiles},
-		{Port: 8443, Name: "play.example.com", TLS: &tlsFiles}} {
+		{Port: 8443, Name: "play.example.com", TLS: &tlsFiles}, {Port: 80}} {
 		conf := RenderStatus([]string{"cf.example.com", "friends.example.com", "status.example.com"}, map[string]StatusCert{
 			"status.example.com": letsEncryptCert("status.example.com"), "cf.example.com": originCert("cf.example.com"),
 		}, "10.77.77.2", 8080, true, addr)
@@ -446,5 +446,38 @@ func TestStatusOnAddress(t *testing.T) {
 	}
 	if got := labels(); slices.Contains(got, statusAddressRuleLabel+" 80") {
 		t.Errorf("rules on 80 = %v", got)
+	}
+}
+
+func TestNginxComplaint(t *testing.T) {
+	config := "# Managed by Home Lab Manager\nserver {\n    listen 80;\n    server_name ;\n}\n"
+	out := "nginx: [emerg] invalid number of arguments in \"server_name\" directive in /etc/nginx/conf.d/hlm-status.conf:4\nnginx: configuration file /etc/nginx/nginx.conf test failed"
+	got := nginxComplaint(out, config)
+	if !strings.Contains(got, `invalid number of arguments in "server_name" directive`) || !strings.Contains(got, "(hlm's line 4: server_name ;)") {
+		t.Errorf("complaint = %q", got)
+	}
+	// Elsewhere than hlm's file: as nginx says it.
+	out = "nginx: [emerg] a duplicate default server for 0.0.0.0:8081 in /etc/nginx/sites-enabled/mine:3"
+	if got := nginxComplaint(out, config); got != "a duplicate default server for 0.0.0.0:8081 in /etc/nginx/sites-enabled/mine:3" {
+		t.Errorf("complaint = %q", got)
+	}
+	if got := nginxComplaint("something else", config); got != "" {
+		t.Errorf("no emerg: %q", got)
+	}
+}
+
+func TestStatusAddressNamesEdges(t *testing.T) {
+	// A host name without dots is a name too.
+	if got := statusAddressNames("vps", nil); len(got) != 1 || got[0] != "vps" {
+		t.Errorf("single label: %v", got)
+	}
+	// A site's domain has its own block.
+	if got := withoutSites([]string{"play.example.com", "203.0.113.7"}, []string{"play.example.com"}); len(got) != 1 || got[0] != "203.0.113.7" {
+		t.Errorf("without sites: %v", got)
+	}
+	// Nothing left to answer to on port 80: still valid for nginx.
+	c := RenderStatus([]string{"play.example.com"}, nil, "10.77.77.2", 8080, false, &StatusAddress{Port: 80})
+	if strings.Contains(c, "server_name ;") || !strings.Contains(c, "server_name _;") {
+		t.Errorf("empty names:\n%s", c)
 	}
 }

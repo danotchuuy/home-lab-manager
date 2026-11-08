@@ -124,6 +124,9 @@ type StatusSiteResult struct {
 
 var statusEmail = regexp.MustCompile(`^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,}$`)
 
+// statusLabel is a host name without dots (a name on the LAN, say).
+var statusLabel = regexp.MustCompile(`^(?i)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
 var statusDomain = regexp.MustCompile(`^(?i)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`)
 
 // statusLocations are what nginx passes to hlm for the status page: the
@@ -226,6 +229,10 @@ func RenderStatus(domains []string, certs map[string]StatusCert, upstream string
 		names := strings.Join(addr.Names, " ")
 		b.WriteString("\n# The proxy server's own address, where players find the game servers\nserver {\n")
 		switch {
+		case addr.Port == 80 && len(addr.Names) == 0:
+			// Nothing to answer to that a site doesn't already: kept valid
+			// for nginx, and unreachable.
+			fmt.Fprintf(&b, "%s    server_name _;\n    access_log off;\n", listen("80", ""))
 		case addr.TLS != nil && addr.Port == 80:
 			// Other sites share ports 80 and 443: only the proxy's own names,
 			// sent to HTTPS on its domain.
@@ -267,7 +274,7 @@ func statusAddressNames(host string, addrs []string) []string {
 			if a.Is6() {
 				n = "[" + n + "]"
 			}
-		} else if !statusDomain.MatchString(n) {
+		} else if !statusDomain.MatchString(n) && !statusLabel.MatchString(n) {
 			return
 		}
 		if !slices.Contains(out, n) {
@@ -279,6 +286,12 @@ func statusAddressNames(host string, addrs []string) []string {
 		add(a)
 	}
 	return out
+}
+
+// withoutSites leaves out names that are a site's domain, which has its own
+// server block (two would make nginx ignore one, and warn).
+func withoutSites(names, domains []string) []string {
+	return slices.DeleteFunc(names, func(n string) bool { return slices.Contains(domains, n) })
 }
 
 // statusAddressURL is where visitors find the status page on the proxy's
@@ -435,10 +448,36 @@ func (s *Service) writeStatus(ctx context.Context, config string) (string, error
 	case strings.Contains(res.Stdout, "hlm:applied"):
 		return out, nil
 	case strings.Contains(res.Stdout, "hlm:testfailed"):
-		return out, errors.New("nginx rejected the status page's configuration, so the previous one was kept")
+		why := nginxComplaint(out, config)
+		if why == "" {
+			why = "see its output"
+		}
+		return out, fmt.Errorf("nginx rejected the status page's configuration, so the previous one was kept: %s", why)
 	default:
 		return out, fmt.Errorf("applying the status page's configuration failed (exit status %d)", res.ExitCode)
 	}
+}
+
+// nginxEmerg is a line of "nginx -t" saying what's wrong, and where.
+var nginxEmerg = regexp.MustCompile(`\[emerg\][^\n]*`)
+var nginxWhere = regexp.MustCompile(` in ` + regexp.QuoteMeta(StatusConfigPath) + `:(\d+)`)
+
+// nginxComplaint is what "nginx -t" said is wrong, from its output: its
+// [emerg] lines, and, when one is in hlm's file, that line of config.
+func nginxComplaint(out, config string) string {
+	var parts []string
+	for _, m := range nginxEmerg.FindAllString(out, 3) {
+		m = strings.TrimSpace(strings.TrimPrefix(m, "[emerg]"))
+		if w := nginxWhere.FindStringSubmatch(m); w != nil {
+			if n, err := strconv.Atoi(w[1]); err == nil {
+				if lines := strings.Split(config, "\n"); n >= 1 && n <= len(lines) {
+					m += " (hlm's line " + w[1] + ": " + strings.TrimSpace(lines[n-1]) + ")"
+				}
+			}
+		}
+		parts = append(parts, m)
+	}
+	return strings.Join(parts, "; ")
 }
 
 // applyStatus serves the status page's sites on the proxy, as the settings
@@ -501,10 +540,10 @@ func (s *Service) applyStatus(ctx context.Context, st Settings) *StatusSiteResul
 	}
 	var addr *StatusAddress
 	if st.StatusOnAddress {
-		addr = &StatusAddress{Port: st.StatusPort, Names: statusAddressNames(st.Host, probe.addrs), Name: st.StatusAddressName}
+		addr = &StatusAddress{Port: st.StatusPort, Names: withoutSites(statusAddressNames(st.Host, probe.addrs), res.Domains), Name: st.StatusAddressName}
 		res.Address = statusAddressURL(st.Host, st.StatusPort)
 		if st.StatusAddressHTTPS {
-			addr.Names = statusAddressNames(st.Host, append(probe.addrs, st.StatusAddressName))
+			addr.Names = withoutSites(statusAddressNames(st.Host, append(probe.addrs, st.StatusAddressName)), res.Domains)
 			if slices.Contains(res.Domains, st.StatusAddressName) {
 				res.AddressError = st.StatusAddressName + " is also a status page site's domain, which already has its own HTTPS option: use another name here, or leave HTTPS off here"
 			} else if c, err := s.ensureAddressCert(ctx, st); err != nil {
