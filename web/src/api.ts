@@ -501,6 +501,9 @@ export const api = {
   /** A single-use token for a new host's agent (confirmed admins). */
   agentEnrolment: (h: DockerHostInput) =>
     json<AgentEnrolment>("/api/hosts/agent-enrolment", { method: "POST", body: JSON.stringify(h) }),
+  /** Installs hlm's agent on a host over SSH with a new enrolment token, and waits for it to connect; streams the output. */
+  installAgent: (h: DockerHostInput & { server: string }, onEvent: (e: DeployEvent) => void) =>
+    stream("/api/hosts/install-agent", { method: "POST", body: JSON.stringify(h) }, onEvent),
   checkHost: (id: string) => json<DockerVersion>(`/api/hosts/${encodeURIComponent(id)}/check`, { method: "POST" }),
   /** Signs in to an SSH host: is Docker there, and how would hlm set it up? */
   inspectHost: (h: DockerHostInput) =>

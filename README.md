@@ -285,6 +285,15 @@ alerts as usual.
 
   (or `hlm agent --server … --token … --data DIR` with the binary). The host appears as soon as the agent connects;
   the form waits for it.
+  - **Installed over SSH.** If hlm can sign in to the host over SSH (just to install it), choose **Let hlm install it
+    over SSH** instead: give the SSH host and user (in the `docker` group, root, or with passwordless `sudo`) and
+    hlm's address as that host reaches it (this page's, unless it's `localhost`), **Check for Docker** (which can set
+    Docker up too), then **Install the agent and add host**. hlm makes the token and runs the same `docker run` there,
+    with the token sent over the SSH connection's input, so it's never on a command line (where `sudo` would log it).
+    An `hlm-agent` container already there for this hlm (an earlier agent, say for a host since removed) is replaced;
+    one for another hlm is left alone, and nothing is installed. hlm then waits up to 90 seconds for the agent to
+    connect, and shows the agent's log if it doesn't. After that, hlm doesn't use SSH for the host. The LAN address
+    defaults to the SSH host.
   - **Enrolment.** The token is single-use and lasts an hour; making another for the same host replaces it. The agent
     trades it for its own credential (only its hash is kept in hlm), saved in `agent.json` in its data folder (the
     `hlm-agent` volume, readable by its owner only). Running the same command again (to update the agent) keeps the
@@ -2475,6 +2484,7 @@ when the `HLM_*` one isn't set.
 | `POST /api/hosts/test`                         | Connect to a host as given, without saving it: its Docker version, or (for SSH) the host key to confirm (`hostKey`, `hostKeyFingerprint`). Admins. |
 | `POST /api/hosts`, `PUT /api/hosts/{id}`       | `{id, name, kind: "ssh"\|"tcp"\|"agent" (PUT only; agents' hosts are added by enrolment), ssh?: {host, port, user, hostKey}, socket?, url?, ca?, cert?, key?, appdataRoot, address?}`: add or change a host, after connecting to it. An empty `key` keeps the saved one. [Confirmed](#confirming-its-you) session. |
 | `POST /api/hosts/agent-enrolment`              | `{id, name, appdataRoot, address}`: a single-use, one-hour token for a new host's [agent](#more-docker-hosts) (`token`, `host`, `expires`). Confirmed session. |
+| `POST /api/hosts/install-agent`                | `{id, name, appdataRoot, address?, ssh: {host, port, user, hostKey}, server}`: makes an enrolment token, installs the [agent](#more-docker-hosts) on the host over SSH with it (`server` is hlm's address from there) and waits for it to connect. Streams NDJSON progress. Confirmed session. |
 | `POST /api/agent/enrol`                        | Called by `hlm agent`: `{token, version}` → `{host, credential}`. No sign-in; the token is the proof. Rate-limited. |
 | `GET /api/agent/connect`                       | The agent's WebSocket, signed in with `Authorization: Bearer <credential>`. |
 | `DELETE /api/hosts/{id}`                       | Stop managing a host's servers (they keep running there). Confirmed session.      |
