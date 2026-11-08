@@ -193,19 +193,63 @@ func (wg WireGuard) HomeAddress() netip.Addr {
 	return wg.ProxyAddress().Next()
 }
 
-// lanAddressOf finds a server's own address on the LAN the home end
-// routes to.
-func (wg WireGuard) lanAddressOf(info docker.ContainerJSON) (netip.Addr, error) {
-	if wg.LANSubnet == "" {
-		return netip.Addr{}, errors.New("has its own LAN address, which the WireGuard tunnel only reaches with \"Reach servers with their own LAN address\" set up; choose its network under the tunnel, or relay it to your public address instead")
+// lanReach finds the address a server with its own LAN address is relayed
+// to, and the tunnel end that reaches it. That's any end on its LAN, not
+// only its own host's: a container with its own address is a device on the
+// LAN, which the end there reaches whichever Docker host runs it (and only
+// one end may reach a LAN, so with two hosts on one LAN, the other host's
+// end can't). Its own host's end is tried first, then this host's, then
+// the others'.
+func (wg WireGuard) lanReach(info docker.ContainerJSON, host string) (netip.Addr, string, error) {
+	type end struct {
+		host   string
+		subnet string
+		net    string
 	}
-	subnet := netip.MustParsePrefix(wg.LANSubnet)
-	for _, n := range info.NetworkSettings.Networks {
-		if a, err := netip.ParseAddr(n.IPAddress); err == nil && subnet.Contains(a) {
-			return a, nil
+	var ends []end
+	if e, ok := wg.end(host); ok && host != localHost {
+		ends = append(ends, end{host, e.LANSubnet, e.LANNetwork})
+	}
+	ends = append(ends, end{localHost, wg.LANSubnet, wg.LANNetwork})
+	for _, id := range slices.Sorted(maps.Keys(wg.Hosts)) {
+		if id != host {
+			ends = append(ends, end{id, wg.Hosts[id].LANSubnet, wg.Hosts[id].LANNetwork})
 		}
 	}
-	return netip.Addr{}, fmt.Errorf("has no address on %s (%s), the LAN network the WireGuard tunnel reaches; is it running?", wg.LANNetwork, wg.LANSubnet)
+	var addrs []netip.Addr
+	for _, n := range info.NetworkSettings.Networks {
+		if a, err := netip.ParseAddr(n.IPAddress); err == nil {
+			addrs = append(addrs, a)
+		}
+	}
+	var reach []string
+	for _, e := range ends {
+		if e.subnet == "" {
+			continue
+		}
+		subnet := netip.MustParsePrefix(e.subnet)
+		for _, a := range addrs {
+			if subnet.Contains(a) {
+				return a, e.host, nil
+			}
+		}
+		where := "this host's end"
+		if e.host != localHost {
+			where = "the end on " + e.host
+		}
+		reach = append(reach, fmt.Sprintf("%s reaches %s (%s)", where, e.net, e.subnet))
+	}
+	switch {
+	case len(reach) == 0:
+		return netip.Addr{}, "", errors.New("has its own LAN address, which the WireGuard tunnel only reaches with \"Reach servers with their own LAN address\" set up on an end on that LAN; choose its network under the tunnel, or relay it to your public address instead")
+	case len(addrs) == 0:
+		return netip.Addr{}, "", errors.New("has no address yet (is it running?), so the tunnel can't reach it")
+	}
+	var have []string
+	for _, a := range addrs {
+		have = append(have, a.String())
+	}
+	return netip.Addr{}, "", fmt.Errorf("has its own LAN address (%s), which no end of the WireGuard tunnel reaches: %s", strings.Join(have, ", "), strings.Join(reach, "; "))
 }
 
 // WireGuardInput is what the user chooses when setting up the tunnel.
