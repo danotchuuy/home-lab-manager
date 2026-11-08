@@ -5,10 +5,15 @@ match: [[nightingale]]
 # page instead, at /status on the port -statusPort gives: 503 while
 # loading, then 200 with the players' count and names. It's off unless the
 # server is started with it (the launch option below), and by default it
-# only listens inside the container, hence the listener override.
+# only listens inside the container, hence the listener settings: every
+# HTTP listener on all addresses (DefaultBindAddress), and the status port's
+# too. Some images start the game with their own -statusPort, which wins
+# over the launch option's (the first one counts): fireblade004's uses 8888
+# (8889 when the game's port is 8888), so those are tried as well.
 query:
   protocol: http-status
   port_arg: -statusPort
+  ports: [8888, 8889]
   max_players: 6
 launch_options:
   - id: status
@@ -18,7 +23,7 @@ launch_options:
       for players and who's playing. hlm's status queries use it, so the server shows
       online, its players and idle shutdown work. It's only reachable on your network:
       it's never forwarded or relayed to the internet.
-    args: -statusPort={port} -ini:Engine:[HTTPServer.Listeners]:+ListenerOverrides=(Port={port},BindAddress=0.0.0.0)
+    args: -statusPort={port} -ini:Engine:[HTTPServer.Listeners]:+ListenerOverrides=(Port={port},BindAddress=0.0.0.0) -ini:Engine:[HTTPServer.Listeners]:DefaultBindAddress=0.0.0.0
     port: 7778
 # Images that take the game's launch arguments in a variable (most SteamCMD
 # images); otherwise they go in the container's command (ghcr.io/ekman/nightingale

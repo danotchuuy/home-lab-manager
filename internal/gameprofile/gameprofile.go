@@ -98,6 +98,10 @@ type Query struct {
 	Port     int    `yaml:"port" json:"port,omitempty"`
 	PortEnv  string `yaml:"port_env" json:"portEnv,omitempty"`
 	PortArg  string `yaml:"port_arg" json:"portArg,omitempty"`
+	// Ports are more container ports the protocol may answer on, tried
+	// after the one above: ones some images set themselves (an image that
+	// starts the game with its own -statusPort, which wins over hlm's).
+	Ports []int `yaml:"ports" json:"ports,omitempty"`
 	// MaxPlayers is the game's player limit, for protocols that don't say.
 	MaxPlayers int `yaml:"max_players" json:"maxPlayers,omitempty"`
 	// A2SPorts are the game's usual Steam query ports (container ports).
@@ -294,6 +298,14 @@ func (p *Profile) Validate() error {
 	}
 	if q.MaxPlayers < 0 {
 		return errors.New("query: max_players can't be negative")
+	}
+	for _, port := range q.Ports {
+		if !validPort(port) {
+			return fmt.Errorf("query: ports: %d", port)
+		}
+	}
+	if len(q.Ports) > 0 && q.Protocol == "" {
+		return errors.New("query: ports go with a protocol")
 	}
 	if err := p.validateLaunchOptions(); err != nil {
 		return err

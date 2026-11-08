@@ -59,13 +59,15 @@ func TestArgPortAndCandidates(t *testing.T) {
 	var info docker.ContainerJSON
 	info.Config.Image = "ghcr.io/ekman/nightingale:1"
 	info.HostConfig.PortBindings = map[string][]docker.PortBinding{"7777/udp": {{HostPort: "7777"}}}
-	// Off: the status page isn't asked for.
-	if got := candidates(info, nil, false); slices.ContainsFunc(got, func(c candidate) bool { return c.Protocol == ProtoHTTPStatus }) {
+	// Off: only on the ports images set themselves (fireblade004's 8888,
+	// 8889), not the launch option's.
+	if got := candidates(info, nil, false); slices.Contains(got, candidate{ProtoHTTPStatus, 7778}) ||
+		!slices.Contains(got, candidate{ProtoHTTPStatus, 8888}) || !slices.Contains(got, candidate{ProtoHTTPStatus, 8889}) {
 		t.Errorf("off: %+v", got)
 	}
 	// In the command.
 	info.Config.Cmd = []string{"-statusPort=7778", "-ini:Engine:[HTTPServer.Listeners]:+ListenerOverrides=(Port=7778,BindAddress=0.0.0.0)"}
-	if got := candidates(info, nil, false); len(got) == 0 || got[0] != (candidate{ProtoHTTPStatus, 7778}) {
+	if got := candidates(info, nil, false); len(got) < 3 || got[0] != (candidate{ProtoHTTPStatus, 7778}) || got[1] != (candidate{ProtoHTTPStatus, 8888}) {
 		t.Errorf("command: %+v", got)
 	}
 	// In a variable, and with a space.
