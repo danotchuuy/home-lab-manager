@@ -212,3 +212,26 @@ func (s *Service) waitForTXT(ctx context.Context, name, value string) error {
 		}
 	}
 }
+
+// Issued is a certificate got for something other than hlm itself, such as
+// the status page on the proxy server.
+type Issued struct {
+	Domain    string
+	CertPEM   string // with its chain
+	KeyPEM    string
+	NotBefore time.Time
+	NotAfter  time.Time
+}
+
+// Obtain gets a certificate for another domain, through the same ACME
+// account and Cloudflare connection as hlm's own (and its staging setting).
+func (s *Service) Obtain(ctx context.Context, domain, email string) (Issued, error) {
+	if s.opts.DNS == nil || !s.opts.DNS.Connected() {
+		return Issued{}, errors.New("connect a Cloudflare account first (on the Tunnel page): hlm proves the domain is yours with a DNS record there")
+	}
+	st, err := s.obtain(ctx, Settings{Domain: domain, Email: email, Staging: s.Settings().Staging})
+	if err != nil {
+		return Issued{}, err
+	}
+	return Issued{Domain: st.Domain, CertPEM: st.CertPEM, KeyPEM: st.KeyPEM, NotBefore: st.NotBefore, NotAfter: st.NotAfter}, nil
+}

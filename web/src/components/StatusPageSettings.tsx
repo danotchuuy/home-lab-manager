@@ -252,6 +252,7 @@ export function StatusPageSettings() {
             {proxy.result.address} ↗
           </a>{" "}
           (every server below, with the passwords above).
+          {proxy.result.addressError && <span className="form-error"> No HTTPS yet: {proxy.result.addressError}</span>}
         </p>
       )}
       {sites.map((site, i) => (

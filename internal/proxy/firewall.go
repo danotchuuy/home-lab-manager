@@ -438,7 +438,7 @@ func (s *Service) wantedRules(servers []Proxied) []linode.Rule {
 		// Port 80 is already open to everyone, unless only Cloudflare may
 		// reach it.
 		if st.StatusOnAddress && (st.StatusPort != 80 || from != nil) {
-			rules = append(rules, statusAddressRule(st.StatusPort))
+			rules = append(rules, statusAddressRule(st.StatusPort, st.StatusAddressHTTPS))
 		}
 	}
 	return rules

@@ -565,13 +565,57 @@ export function ProxyPage() {
                     style={{ maxWidth: "8rem" }}
                   />
                   <span className="field-help">
-                    Plain HTTP:{" "}
-                    <code>
-                      http://{form.host || "proxy"}
-                      {(form.statusPort ?? 80) === 80 ? "" : `:${form.statusPort}`}/status
-                    </code>
+                    {form.statusAddressHttps ? (
+                      <>
+                        <code>
+                          https://{form.statusAddressName || "your-domain"}
+                          {(form.statusPort ?? 80) === 80 ? "" : `:${form.statusPort}`}/status
+                        </code>
+                        {(form.statusPort ?? 80) === 80 && <> (on 443; port 80 sends visitors there)</>}
+                      </>
+                    ) : (
+                      <>
+                        Plain HTTP:{" "}
+                        <code>
+                          http://{form.host || "proxy"}
+                          {(form.statusPort ?? 80) === 80 ? "" : `:${form.statusPort}`}/status
+                        </code>
+                      </>
+                    )}
                     . On 80 it shares the port with the sites&apos; domains; any other port can&apos;t be one a game
                     server is relayed on. hlm opens it in the proxy&apos;s Linode firewall, if it manages one.
+                  </span>
+                </label>
+              )}
+              {form.statusOnAddress && (
+                <label className="radio">
+                  <input
+                    type="checkbox"
+                    checked={!!form.statusAddressHttps}
+                    onChange={(e) => {
+                      set("statusAddressHttps", e.target.checked);
+                      const host = form.host ?? "";
+                      if (e.target.checked && !form.statusAddressName && /[a-z]/i.test(host) && !host.includes(":"))
+                        set("statusAddressName", host);
+                    }}
+                  />
+                  HTTPS, with a Let&apos;s Encrypt certificate hlm gets through Cloudflare and keeps on the proxy server
+                </label>
+              )}
+              {form.statusOnAddress && form.statusAddressHttps && (
+                <label className="field">
+                  <span className="field-label">Domain</span>
+                  <input
+                    value={form.statusAddressName ?? ""}
+                    onChange={(e) => set("statusAddressName", e.target.value)}
+                    placeholder="play.example.com"
+                  />
+                  <span className="field-help">
+                    The name players use for the game servers, pointing at the proxy server (DNS only, not proxied by
+                    Cloudflare, which can&apos;t carry game traffic). It has to be on the{" "}
+                    <Link to="/tunnel">Cloudflare account</Link>: hlm proves it&apos;s yours with a DNS record there
+                    (the token stays with hlm), installs the certificate and its key on the proxy server, readable by
+                    root alone, and renews it. The Let&apos;s Encrypt email below is used for it if set.
                   </span>
                 </label>
               )}
@@ -579,7 +623,7 @@ export function ProxyPage() {
           )}
           {form.statusPage && (
             <div className="field status-tls">
-              <span className="field-label">HTTPS</span>
+              <span className="field-label">HTTPS for the sites&apos; domains</span>
               <label className="radio">
                 <input type="radio" name="statusTls" checked={!form.statusTls} onChange={() => set("statusTls", "")} />
                 None: HTTP only (you put the domains&apos; DNS at the proxy server)
@@ -612,7 +656,7 @@ export function ProxyPage() {
                   Cloudflare dashboard. The proxy&apos;s firewall then lets only Cloudflare reach ports 80 and 443.
                 </span>
               )}
-              {form.statusTls === "letsencrypt" && (
+              {(form.statusTls === "letsencrypt" || (form.statusOnAddress && form.statusAddressHttps)) && (
                 <label className="field">
                   <span className="field-label">Email for Let&apos;s Encrypt (optional)</span>
                   <input
@@ -835,7 +879,9 @@ function ServerInfo({
 function statusNote(r?: ProxyStatusSites): string {
   if (!r) return "";
   if (r.error) return ` The status page's sites weren't served: ${r.error}`;
-  const at = r.address ? ` The status page is at ${r.address}.` : "";
+  const at =
+    (r.address ? ` The status page is at ${r.address}.` : "") +
+    (r.addressError ? ` No HTTPS on the proxy's address yet: ${r.addressError}.` : "");
   if (r.domains.length === 0) return at || " There are no status page sites to serve yet.";
   const http = r.domains.filter((d) => !r.https.includes(d));
   let note = `${at} Status page sites: ${r.https.length ? `${r.https.join(", ")} over HTTPS` : ""}${r.https.length && http.length ? "; " : ""}${http.length ? `${http.join(", ")} over HTTP` : ""}.`;

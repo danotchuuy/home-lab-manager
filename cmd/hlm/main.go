@@ -465,6 +465,13 @@ func run(log *slog.Logger) error {
 	})
 	certs.UseNotifier(notifier)
 	go certs.Run(ctx)
+	// The status page on the proxy server's own address gets its HTTPS
+	// certificate the same way, for the proxy to serve.
+	relay.UseCertIssuer(func(ctx context.Context, domain, email string) (string, string, time.Time, time.Time, error) {
+		c, err := certs.Obtain(ctx, domain, email)
+		return c.CertPEM, c.KeyPEM, c.NotBefore, c.NotAfter, err
+	})
+	go relay.RunStatusCertRenewal(ctx, 6*time.Hour)
 	// Commands typed into servers' consoles.
 	// Where the Docker host's published ports are, seen from here. In a
 	// container, that's the gateway of hlm's bridge network first: on a

@@ -324,13 +324,22 @@ func TestDockerStatusConfig(t *testing.T) {
 	os.WriteFile(filepath.Join(origin, "cf.example.com.key"), pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kder}), 0o600)
 	// The proxy's own address too: on port 80 beside the domains (and the
 	// image's default site), and on a port of its own.
-	for _, addr := range []*StatusAddress{nil, {Port: 80, Names: []string{"203.0.113.7", "[2001:db8::7]", "play.example.com"}}, {Port: 8081}} {
+	// HTTPS there too, with a certificate in hlm-certs.
+	certs := filepath.Join(dir, "certs")
+	os.MkdirAll(certs, 0o700)
+	os.WriteFile(filepath.Join(certs, "play.example.com.crt"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600)
+	os.WriteFile(filepath.Join(certs, "play.example.com.key"), pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kder}), 0o600)
+	tlsFiles := addressCertFiles("play.example.com")
+	for _, addr := range []*StatusAddress{nil, {Port: 80, Names: []string{"203.0.113.7", "[2001:db8::7]", "play.example.com"}}, {Port: 8081},
+		{Port: 80, Names: []string{"203.0.113.7", "play.example.com"}, Name: "play.example.com", TLS: &tlsFiles},
+		{Port: 8443, Name: "play.example.com", TLS: &tlsFiles}} {
 		conf := RenderStatus([]string{"cf.example.com", "friends.example.com", "status.example.com"}, map[string]StatusCert{
 			"status.example.com": letsEncryptCert("status.example.com"), "cf.example.com": originCert("cf.example.com"),
 		}, "10.77.77.2", 8080, true, addr)
 		os.WriteFile(filepath.Join(dir, "conf.d", "hlm-status.conf"), []byte(conf), 0o644)
 		out, err := exec.Command("docker", "run", "--rm", "-v", filepath.Join(dir, "conf.d", "hlm-status.conf")+":/etc/nginx/conf.d/hlm-status.conf:ro",
-			"-v", filepath.Join(dir, "live")+":/etc/letsencrypt/live:ro", "-v", origin+":"+originDir+":ro", "nginx:alpine", "nginx", "-t").CombinedOutput()
+			"-v", filepath.Join(dir, "live")+":/etc/letsencrypt/live:ro", "-v", origin+":"+originDir+":ro", "-v", certs+":"+certDir+":ro",
+			"nginx:alpine", "nginx", "-t").CombinedOutput()
 		if err != nil {
 			t.Fatalf("nginx -t: %v\n%s\n%s", err, out, conf)
 		}

@@ -168,4 +168,20 @@ func TestLetsEncryptFlowWithPebble(t *testing.T) {
 	if !again.Active() {
 		t.Error("the certificate wasn't kept")
 	}
+
+	// Another domain's certificate (the proxy server's), through the same
+	// account, leaving hlm's own alone.
+	other, err := s.Obtain(ctx, "play.example.com", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, err := leaf([]byte(other.CertPEM)); err != nil || c.VerifyHostname("play.example.com") != nil || !c.NotAfter.Equal(other.NotAfter) {
+		t.Errorf("other certificate: %v", err)
+	}
+	if _, err := tls.X509KeyPair([]byte(other.CertPEM), []byte(other.KeyPEM)); err != nil {
+		t.Errorf("other key pair: %v", err)
+	}
+	if st := s.Status(); st.CertFor != domain {
+		t.Errorf("hlm's own certificate changed: %+v", st)
+	}
 }
