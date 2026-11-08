@@ -714,12 +714,7 @@ func run(log *slog.Logger) error {
 		if err != nil {
 			return nil, 0, err
 		}
-		var domains []string
-		if set.Enabled {
-			for _, site := range set.Sites {
-				domains = append(domains, site.Hostname)
-			}
-		}
+		domains := set.ProxyDomains()
 		so, err := selfOrigin(ctx)
 		if err != nil {
 			return nil, 0, err

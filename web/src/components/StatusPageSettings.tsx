@@ -44,6 +44,9 @@ export function StatusPageSettings() {
   // Cloudflare Tunnel isn't set up.
   const [tunnel, setTunnel] = useState<TunnelRoutes>();
   const [savedHosts, setSavedHosts] = useState<string[]>([]);
+  const [savedSites, setSavedSites] = useState<StatusSite[]>([]);
+  // Set when a site's proxy switch turns serving the page on the proxy on.
+  const [proxyTurnOn, setProxyTurnOn] = useState(false);
   // The nginx proxy server, which can serve the sites too.
   const [proxy, setProxy] = useState<{
     configured: boolean;
@@ -64,6 +67,7 @@ export function StatusPageSettings() {
         setSaved(r.settings);
         setHas({ view: r.hasViewPassword, details: r.hasDetailsPassword });
         setSites(r.sites);
+        setSavedSites(r.sites);
         setSavedHosts(r.sites.map((x) => x.hostname));
       },
       (e) => setError((e as Error).message),
@@ -152,6 +156,18 @@ export function StatusPageSettings() {
     setAdding("");
   }
 
+  // Turning a site's proxy switch on also turns on serving the page on the
+  // proxy, if it's off; the other sites, shown off until then, stay off.
+  function setSiteProxy(i: number, on: boolean) {
+    const turnOn = on && !proxy?.on && !proxyTurnOn;
+    if (turnOn) setProxyTurnOn(true);
+    setSites(sites.map((x, j) => (j === i ? { ...x, noProxy: !on } : turnOn ? { ...x, noProxy: true } : x)));
+    setDone(false);
+  }
+  // Which sites' domains the proxy serves, to tell whether saving changes it.
+  const proxyKey = (list: StatusSite[]) =>
+    JSON.stringify(list.filter((x) => !x.noProxy).map((x) => x.hostname.trim().toLowerCase()).sort());
+
   async function save() {
     if (!set) return;
     setBusy(true);
@@ -167,12 +183,31 @@ export function StatusPageSettings() {
       setSet(r.settings);
       setSaved(r.settings);
       setHas({ view: r.hasViewPassword, details: r.hasDetailsPassword });
+      const proxyChanged = proxyKey(r.sites) !== proxyKey(savedSites) || set.enabled !== saved?.enabled;
       setSites(r.sites);
+      setSavedSites(r.sites);
       setSavedHosts(r.sites.map((x) => x.hostname));
       setViewPassword(undefined);
       setDetailsPassword(undefined);
       setSaves((n) => n + 1);
       setDone(true);
+      // The proxy follows: its sites' domains as just saved.
+      if (proxy?.configured && proxyForm && (proxyTurnOn || (proxy.on && proxyChanged))) {
+        setProxyNote(undefined);
+        try {
+          if (proxyTurnOn && !proxyForm.statusPage) setProxyForm(await api.saveProxy({ ...proxyForm, statusPage: true }));
+          setProxyTurnOn(false);
+          const a = await api.applyProxyStatus();
+          setProxy((p) => (p ? { ...p, on: true, result: a.status ?? null } : p));
+          if (a.status?.error) {
+            setProxyNote({ ok: false, text: `The proxy server: ${a.status.error}` });
+            setError(`Saved, but the proxy server didn't take the sites: ${a.status.error}`);
+          }
+        } catch (e) {
+          setProxyNote({ ok: false, text: `Saved, but the proxy server wasn't updated: ${(e as Error).message}` });
+          setError(`Saved, but the proxy server wasn't updated: ${(e as Error).message}`);
+        }
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -301,7 +336,7 @@ export function StatusPageSettings() {
                 tunnel={tunnel}
                 onChange={setTunnel}
               />
-              <SiteProxy hostname={site.hostname} proxy={proxy} />
+              <SiteProxy site={site} proxy={proxy} turningOn={proxyTurnOn} onChange={(on) => setSiteProxy(i, on)} />
             </>
           }
           onChange={(c) => {
@@ -778,35 +813,32 @@ function SiteCloudflare({
   );
 }
 
-/** A site's domain on the nginx proxy server: whether it's served there, and how. */
+/**
+ * A site's domain on the nginx proxy server: whether it's served there (a
+ * switch, applied when the settings are saved), and how it's going.
+ */
 function SiteProxy({
-  hostname,
+  site,
   proxy,
+  turningOn,
+  onChange,
 }: {
-  hostname: string;
+  site: StatusSite;
   proxy?: { configured: boolean; on: boolean; host: string; result?: ProxyStatusSites | null };
+  /** Serving the page on the proxy is turned on when the settings are saved. */
+  turningOn: boolean;
+  onChange: (on: boolean) => void;
 }) {
-  const host = hostname.trim().toLowerCase().replace(/\.+$/, "");
+  const host = site.hostname.trim().toLowerCase().replace(/\.+$/, "");
   if (!host || !proxy?.configured) return null;
-  if (!proxy.on) {
-    return (
-      <p className="muted small no-margin">
-        Or serve it on the proxy server ({proxy.host}): turn that on under <strong>On the proxy server</strong> below,
-        and point {host}&apos;s DNS at it.
-      </p>
-    );
-  }
+  const on = (proxy.on || turningOn) && !site.noProxy;
   const r = proxy.result;
-  let state: ReactNode;
-  if (!r || !r.domains.includes(host)) {
-    state = r?.error ? (
-      <span className="form-error">{r.error}</span>
-    ) : (
-      <>
-        not applied yet: <strong>Save &amp; apply on the proxy</strong> below
-      </>
-    );
-  } else if (r.https.includes(host)) {
+  let state: ReactNode = null;
+  if (on && r?.error) {
+    state = <span className="form-error">{r.error}</span>;
+  } else if (on && (!r || !r.domains.includes(host))) {
+    state = <span className="muted">served once the settings are saved; point {host}&apos;s DNS at the proxy server</span>;
+  } else if (on && r && r.https.includes(host)) {
     const note = r.tls === "cloudflare" ? r.notes?.find((n) => n.startsWith(host + "'")) : undefined;
     state = (
       <>
@@ -817,7 +849,7 @@ function SiteProxy({
         {note && <span className="warn-text"> ({note})</span>}
       </>
     );
-  } else {
+  } else if (on && r) {
     state = (
       <>
         served over HTTP
@@ -831,9 +863,13 @@ function SiteProxy({
     );
   }
   return (
-    <p className="small no-margin">
-      Proxy server ({proxy.host}): {state}
-    </p>
+    <div className="small status-site-proxy">
+      <label className="radio">
+        <input type="checkbox" checked={on} onChange={(e) => onChange(e.target.checked)} />
+        Serve it on the proxy server ({proxy.host})
+      </label>
+      {state && <span> · {state}</span>}
+    </div>
   );
 }
 

@@ -2016,7 +2016,11 @@ Status page** and add the servers to show; it's at `/status`.
   [WireGuard tunnel](#wireguard-tunnel-to-this-host) set up (and the tunnel chosen as the home address), tick **Serve the
   status page here too** on the Proxy page and apply, or **Serve the status page on the proxy server** under **On the
   proxy server** in these settings and **Save & apply on the proxy** (the same settings, kept with the proxy's; applying
-  applies its game relays too, as they are). The Proxy page lists the sites it serves. nginx there answers each site's domain and passes only
+  applies its game relays too, as they are). The Proxy page lists the sites it serves. Each site also has **Serve it on
+  the proxy server**: untick it for a site published some other way (Cloudflare Tunnel, say), and tick it on a new site
+  to put it there (which turns on serving the page on the proxy for that site, if it was off). Saving the settings
+  then updates the proxy server's status page configuration straight away (not its game relays), and each site says
+  how it's served there or why not. nginx there answers each site's domain and passes only
   the status page's paths to hlm through the tunnel, so hlm's own port is never opened to the internet; everything
   else on those domains is 404 at the proxy as well as at hlm. **HTTPS** is one of:
   - **None:** plain HTTP; point each domain's DNS at the proxy server yourself.

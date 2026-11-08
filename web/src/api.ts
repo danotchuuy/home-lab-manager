@@ -713,6 +713,8 @@ export const api = {
   testProxy: (st: ProxySettings) => json<ProxyInfo>("/api/proxy/test", { method: "POST", body: JSON.stringify(st) }),
   installNginx: () => json<{ output: string }>("/api/proxy/install", { method: "POST" }),
   previewProxy: () => json<{ config: string; servers: ProxiedServer[]; path: string }>("/api/proxy/preview"),
+  /** Puts the status page's sites on the proxy as they now are, without applying the relays. */
+  applyProxyStatus: () => json<{ status?: ProxyStatusSites | null }>("/api/proxy/status/apply", { method: "POST" }),
   applyProxy: () =>
     json<{ config: string; output: string; servers: ProxiedServer[]; firewall?: FirewallSync; status?: ProxyStatusSites }>("/api/proxy/apply", {
       method: "POST",

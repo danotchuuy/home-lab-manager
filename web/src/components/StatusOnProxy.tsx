@@ -29,8 +29,8 @@ export function StatusOnProxyFields({
         )}
       </label>
       <span className="field-help">
-        nginx on the proxy server answers each of the status page&apos;s sites&apos; domains (and, if you like, its own
-        address) and passes only the
+        nginx on the proxy server answers the status page&apos;s sites&apos; domains (each site has a switch for it) and,
+        if you like, its own address, and passes only the
         status page to hlm, through the WireGuard tunnel: hlm&apos;s own port isn&apos;t opened to the internet. So the
         WireGuard tunnel has to be the home address.
         {form.statusPage && form.upstreamSource !== "wireguard" && (
