@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/danotchuuy/home-lab-manager/internal/catalog"
+	"github.com/danotchuuy/home-lab-manager/internal/deploy"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/gameprofile"
 )
@@ -58,7 +59,7 @@ func candidates(info docker.ContainerJSON, app *catalog.App, consoleReplies bool
 			ports = append(ports, port{n, strings.ToLower(cmpOr(c.Mode, "tcp")), strings.ToLower(c.Name)})
 		}
 	}
-	for key := range info.Config.ExposedPorts {
+	for key := range deploy.DeclaredPorts(info.Config.ExposedPorts, info.Config.Env) {
 		n, proto, _ := strings.Cut(key, "/")
 		if p, err := strconv.Atoi(n); err == nil {
 			ports = append(ports, port{p, cmpOr(proto, "tcp"), ""})

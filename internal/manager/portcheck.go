@@ -109,7 +109,7 @@ func (m *Manager) portConflicts(ctx context.Context, host string, c docker.Creat
 	if c.Labels[deploy.LabelDirectIP] == "true" {
 		return []PortConflict{}, nil
 	}
-	wanted := hostPorts(c.HostConfig.NetworkMode, c.ExposedPorts, c.HostConfig.PortBindings)
+	wanted := hostPorts(c.HostConfig.NetworkMode, deploy.DeclaredPorts(c.ExposedPorts, c.Env), c.HostConfig.PortBindings)
 	out := []PortConflict{}
 	if len(wanted) == 0 {
 		return out, nil
@@ -131,7 +131,7 @@ func (m *Manager) portConflicts(ctx context.Context, host string, c docker.Creat
 		if err != nil {
 			continue // removed meanwhile
 		}
-		theirs := hostPorts(info.HostConfig.NetworkMode, info.Config.ExposedPorts, info.HostConfig.PortBindings)
+		theirs := hostPorts(info.HostConfig.NetworkMode, deploy.DeclaredPorts(info.Config.ExposedPorts, info.Config.Env), info.HostConfig.PortBindings)
 		for _, p := range theirs {
 			published[hostPort{port: p.port, proto: p.proto}] = true
 		}
@@ -198,7 +198,7 @@ func (m *Manager) HostPortsInUse(ctx context.Context, host string) (map[string]b
 		if err != nil {
 			continue // removed meanwhile
 		}
-		for _, p := range hostPorts(info.HostConfig.NetworkMode, info.Config.ExposedPorts, info.HostConfig.PortBindings) {
+		for _, p := range hostPorts(info.HostConfig.NetworkMode, deploy.DeclaredPorts(info.Config.ExposedPorts, info.Config.Env), info.HostConfig.PortBindings) {
 			used[fmt.Sprintf("%d/%s", p.port, p.proto)] = true
 		}
 	}

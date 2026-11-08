@@ -3,6 +3,7 @@ package deploy
 import (
 	"fmt"
 	"net/netip"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -123,4 +124,41 @@ func publish(c *docker.CreateRequest, target, proto, value string, hostPorts map
 		}
 	}
 	return nil
+}
+
+// unraidPortVar matches the variables Unraid passes ports as to containers
+// on host, macvlan and ipvlan networks, where it doesn't publish them:
+// TCP_PORT_<container port>=<port> and UDP_PORT_<…> (dockerMan's
+// xmlToCommand).
+var unraidPortVar = regexp.MustCompile(`^(TCP|UDP)_PORT_([0-9]{1,5})=`)
+
+// UnraidPorts are the ports a container's environment passes the way
+// Unraid does for containers on host, macvlan and ipvlan networks, keyed
+// like Docker's exposed ports ("15637/udp").
+func UnraidPorts(env []string) []string {
+	var out []string
+	for _, kv := range env {
+		m := unraidPortVar.FindStringSubmatch(kv)
+		if m == nil {
+			continue
+		}
+		if n, err := strconv.Atoi(m[2]); err == nil && n > 0 && n < 65536 {
+			out = append(out, strconv.Itoa(n)+"/"+strings.ToLower(m[1]))
+		}
+	}
+	return out
+}
+
+// DeclaredPorts are the ports a container says it listens on: those it
+// exposes, and those Unraid passes it as variables. Containers on the
+// host's network or their own LAN address are reached on these.
+func DeclaredPorts(exposed map[string]struct{}, env []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(exposed))
+	for k := range exposed {
+		out[k] = struct{}{}
+	}
+	for _, k := range UnraidPorts(env) {
+		out[k] = struct{}{}
+	}
+	return out
 }

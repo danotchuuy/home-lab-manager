@@ -1328,6 +1328,12 @@ apart: the game listens on 2456 in each container, and you publish one on host p
 host networking the container port is used on the host directly. On a LAN (macvlan/ipvlan) network nothing is published
 and the field is ignored.
 
+With host networking or a LAN network, the server's ports are the ones its container declares, and port forwarding,
+status queries and port checks go by those. Containers Unraid made on such a network (`br0`, say) don't declare their
+template's ports: Unraid passes them as variables instead, `UDP_PORT_15637=15637` and `TCP_PORT_…`, and hlm counts those
+as ports too, so a server made by Unraid (or [adopted](#adopting-containers-hlm-didnt-make) from it) is forwarded and
+queried on them.
+
 On bridge and host networks, hlm checks those host ports as you edit and refuses to install or save if one is already
 taken by another container (running or stopped, since a stopped one takes its ports back when it starts) or, when the
 Docker host is this machine, by another program listening on it. The port's field shows what uses it. Docker's own
@@ -1811,6 +1817,10 @@ Where its settings come from:
   variables (those the image doesn't set itself), labels and devices as the template's settings, and the rest
   (volumes, capabilities, limits, health check, user, entrypoint, …) as extra `docker run` parameters, with its command
   as post arguments.
+
+On the host's network or a LAN network like `br0`, a container is reached on the ports it declares, so those (beyond
+its image's own) and Unraid's port variables (`UDP_PORT_15637`) become the adopted server's ports, declared again, for
+port forwarding and status queries; the variables stay too.
 
 Either way, hlm builds the new container and compares it with the running one first, and lists anything that would
 differ: a port, folder or variable that would change, settings hlm's servers can't have (`--pid`, `--ipc`, `--link`,
