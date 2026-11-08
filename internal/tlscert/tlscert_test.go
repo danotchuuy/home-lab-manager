@@ -137,6 +137,11 @@ func TestHTTPSAndHTTPOnOnePort(t *testing.T) {
 	if err != nil || res.StatusCode != http.StatusTemporaryRedirect || res.Header.Get("Location") != "https://"+domain+":"+port+"/api/x?y=1" {
 		t.Fatalf("http = %v %v", res, err)
 	}
+	// Agents on a plain http:// address keep connecting there: hlm moves
+	// them to HTTPS itself.
+	if res, body, err := get(t, c, "http://192.168.11.101:"+port+"/api/agent/connect"); err != nil || res.StatusCode != 200 || body != "plain" {
+		t.Errorf("agent over http = %v %q %v", res, body, err)
+	}
 	// A proxy that took HTTPS itself isn't redirected.
 	req, _ := http.NewRequest("GET", "http://"+addr+"/", nil)
 	req.Header.Set("X-Forwarded-Proto", "https")

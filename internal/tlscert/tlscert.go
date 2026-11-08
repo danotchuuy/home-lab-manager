@@ -308,7 +308,11 @@ func (s *Service) TLSConfig() *tls.Config {
 // in, so they're left alone.
 func (s *Service) Redirect(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") || !s.Active() {
+		// Agents given a plain http:// address (with --allow-http) keep
+		// connecting there: they don't follow redirects, and hlm moves them
+		// to its HTTPS address itself.
+		agent := strings.HasPrefix(r.URL.Path, "/api/agent/")
+		if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") || !s.Active() || agent {
 			next.ServeHTTP(w, r)
 			return
 		}

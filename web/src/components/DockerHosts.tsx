@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState, type FormEvent } from "react";
 import { api, ApiError } from "../api";
 import type {
   AgentEnrolment,
+  AgentMove,
   AgentStatus,
   AgentUpdate,
   DeployEvent,
@@ -44,6 +45,10 @@ export function DockerHosts() {
   const [lanFor, setLanFor] = useState<string>();
   const [checked, setChecked] = useState<Record<string, string>>({});
   // What agents are kept on (hlm's version), and updates running from here.
+  // hlm's address for agents, to move them there.
+  const [agentAddress, setAgentAddress] = useState(window.location.origin);
+  const [moving, setMoving] = useState(false);
+  const [moveNote, setMoveNote] = useState<{ ok: boolean; text: string }>();
   const [agents, setAgents] = useState<Pick<HostsList, "agentVersion" | "agentAutoUpdate" | "agentUpdateBlocked">>({});
   const [updating, setUpdating] = useState<Record<string, string>>({});
 
@@ -85,6 +90,38 @@ export function DockerHosts() {
     });
     if (failed) setError(`Updating ${h.name}'s agent failed: ${failed}`);
     load();
+  }
+
+  async function moveAgents(e: FormEvent) {
+    e.preventDefault();
+    setMoving(true);
+    setMoveNote(undefined);
+    try {
+      const { moves } = await api.moveAgents(agentAddress);
+      const moved = moves.filter((m) => m.state === "moved").length;
+      const pending = moves.filter((m) => m.state === "pending").length;
+      const failed = moves.filter((m) => m.state === "failed");
+      setMoveNote({
+        ok: failed.length === 0,
+        text:
+          moves.length === 0
+            ? "There are no agents to move."
+            : [
+                moved ? `${moved} agent${moved === 1 ? "" : "s"} moved to ${agentAddress}.` : "",
+                pending ? `${pending} not connected: told when they next connect.` : "",
+                failed.length
+                  ? `Not moved (they stay where they are): ${failed.map((m) => `${m.host} (${m.error})`).join("; ")}.`
+                  : "",
+              ]
+                .filter(Boolean)
+                .join(" "),
+      });
+      load();
+    } catch (err) {
+      setMoveNote({ ok: false, text: (err as Error).message });
+    } finally {
+      setMoving(false);
+    }
   }
 
   async function setAuto(on: boolean) {
@@ -153,6 +190,26 @@ export function DockerHosts() {
           {agents.agentUpdateBlocked && <span className="muted"> — {agents.agentUpdateBlocked}</span>}
         </label>
       )}
+      {hosts?.some((h) => h.kind === "agent") && (
+        <form className="agent-move" onSubmit={moveAgents}>
+          <label className="field">
+            <span className="field-label">hlm&apos;s address for agents</span>
+            <span className="input-row">
+              <input value={agentAddress} onChange={(e) => setAgentAddress(e.target.value)} placeholder="https://hlm.example.com" />
+              <button className="btn small" type="submit" disabled={moving || !agentAddress.trim()}>
+                {moving ? "Moving…" : "Move agents here"}
+              </button>
+            </span>
+            <span className="field-help">
+              After hlm&apos;s address changes, tell its agents the new one. Each checks it can reach hlm there with its
+              own credential before switching (keeping the old one to fall back on), so a wrong address leaves it where
+              it is; one that isn&apos;t connected is told when it next connects. hlm does this itself when its HTTPS
+              (System → HTTPS) comes on, moves to another domain, or goes off.
+            </span>
+          </label>
+          {moveNote && <div className={`alert ${moveNote.ok ? "success" : "error"} small`}>{moveNote.text}</div>}
+        </form>
+      )}
       {!hosts ? (
         <Spinner />
       ) : (
@@ -205,6 +262,7 @@ export function DockerHosts() {
                     {h.kind === "agent" ? (
                       <>
                         <AgentState agent={h.agent} />
+                        <AgentMoveState move={h.agentMove} current={h.agent?.server} />
                         <AgentUpdateState
                           update={h.agentUpdate}
                           running={updating[h.id]}
@@ -1009,6 +1067,7 @@ function AgentState({ agent }: { agent?: AgentStatus }) {
       <span className="host-ok">
         Agent connected <Ago iso={agent.since} />
         {agent.version && <span className="muted"> (version {agent.version})</span>}
+        {agent.server && <span className="muted small"> to {agent.server}</span>}
       </span>
     );
   return (
@@ -1024,6 +1083,22 @@ function AgentState({ agent }: { agent?: AgentStatus }) {
       )}
     </span>
   );
+}
+
+/** How moving a host's agent to hlm's new address last went, while it's worth saying. */
+function AgentMoveState({ move, current }: { move?: AgentMove; current?: string }) {
+  if (!move) return null;
+  if (move.state === "pending")
+    return <div className="muted small">Moves to {move.to} when it next connects</div>;
+  if (move.state === "failed")
+    return (
+      <div className="form-error small">
+        Not moved to {move.to}: {move.error}
+      </div>
+    );
+  // Moved: worth saying until it's connected there.
+  if (current === move.to) return null;
+  return <div className="muted small">Moving to {move.to}…</div>;
 }
 
 /** The command to run on a new host, and then waiting for its agent to connect. */

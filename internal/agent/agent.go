@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/yamux"
@@ -56,6 +57,20 @@ type Config struct {
 // beside the Docker API it passes on.
 const HostMetricsPath = "/_hlm/host"
 
+// ServerPath is where hlm tells the agent its new address (POST, a
+// MoveRequest): the agent checks it can reach hlm there, keeps it, and
+// connects there from then on.
+const ServerPath = "/_hlm/server"
+
+// CheckPath is where an agent checks, with its credential, that an address
+// is its hlm's (204), before moving to it.
+const CheckPath = "/api/agent/check"
+
+// MoveRequest is hlm's new address for the agent.
+type MoveRequest struct {
+	Server string `json:"server"`
+}
+
 // ErrRevoked is returned when hlm no longer knows the agent.
 var ErrRevoked = errors.New("hlm refused the agent's credential: the host was removed from hlm. To add it again, run the agent with a new enrolment token from hlm's Hosts page")
 
@@ -73,7 +88,10 @@ func (e unreachable) Unwrap() error { return e.err }
 
 // credentials are what the agent keeps.
 type credentials struct {
-	Server     string `json:"server"`
+	Server string `json:"server"`
+	// Previous is the address hlm was at before it moved the agent: tried
+	// as well when the new one keeps failing.
+	Previous   string `json:"previous,omitempty"`
 	Host       string `json:"host"`
 	Credential string `json:"credential"`
 	// Token is the hash of the enrolment token used: given another one,
@@ -181,19 +199,40 @@ func Run(ctx context.Context, cfg Config) error {
 		cfg.Log.Warn("host metrics aren't available", "reason", snap.Reason)
 	}
 	go metrics.Run(ctx)
-	proxy := Handler(DockerProxy(cfg.Socket, cfg.Log), metrics)
+	cur := &current{creds: creds}
+	move := func(ctx context.Context, server string) error { return cfg.move(ctx, client, cur, server) }
+	proxy := Handler(DockerProxy(cfg.Socket, cfg.Log), metrics, move)
 	backoff = firstRetry
+	failures := 0
 	for {
 		started := time.Now()
-		err := connect(ctx, client, creds, cfg.Version, proxy, cfg.Log)
+		creds := cur.get()
+		// The address hlm moved the agent from, every other try once the
+		// new one has failed a few times in a row.
+		previous := failures >= 3 && failures%2 == 1 && creds.Previous != "" && creds.Previous != creds.Server
+		if previous {
+			creds.Server = creds.Previous
+		}
+		cctx, drop := context.WithCancel(ctx)
+		cur.setDrop(drop)
+		err := connect(cctx, client, creds, cfg.Version, proxy, cfg.Log)
+		moved := cctx.Err() != nil && ctx.Err() == nil
+		drop()
 		if ctx.Err() != nil {
 			return nil
 		}
-		if errors.Is(err, ErrRevoked) {
+		if moved {
+			// Dropped to connect at hlm's new address.
+			backoff, failures = firstRetry, 0
+			continue
+		}
+		if errors.Is(err, ErrRevoked) && !previous {
 			return err
 		}
 		if time.Since(started) > time.Minute {
-			backoff = firstRetry
+			backoff, failures = firstRetry, 0
+		} else {
+			failures++
 		}
 		cfg.Log.Warn("not connected to hlm; trying again", "err", err, "in", backoff)
 		select {
@@ -262,19 +301,107 @@ func (c *Config) credentials(ctx context.Context, client *http.Client) (credenti
 		return creds, errors.New("enrol with hlm: unexpected answer")
 	}
 	creds = credentials{Server: server, Host: out.Host, Credential: out.Credential, Token: tokenHash(c.Token)}
-	data, _ = json.MarshalIndent(creds, "", "  ")
-	if err := os.MkdirAll(c.DataDir, 0o700); err != nil {
-		return creds, err
-	}
-	tmp := c.file() + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return creds, err
-	}
-	if err := os.Rename(tmp, c.file()); err != nil {
+	if err := c.save(creds); err != nil {
 		return creds, err
 	}
 	c.Log.Info("enrolled with hlm", "host", out.Host)
 	return creds, nil
+}
+
+// save keeps the credential, readable by the agent alone.
+func (c *Config) save(creds credentials) error {
+	data, _ := json.MarshalIndent(creds, "", "  ")
+	if err := os.MkdirAll(c.DataDir, 0o700); err != nil {
+		return err
+	}
+	tmp := c.file() + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, c.file())
+}
+
+// current is the credential the agent connects with, which hlm can move to
+// a new address, and how to end the connection so it reconnects there.
+type current struct {
+	mu    sync.Mutex
+	creds credentials
+	drop  func()
+}
+
+func (c *current) get() credentials {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.creds
+}
+
+func (c *current) set(creds credentials) {
+	c.mu.Lock()
+	c.creds = creds
+	c.mu.Unlock()
+}
+
+func (c *current) setDrop(f func()) {
+	c.mu.Lock()
+	c.drop = f
+	c.mu.Unlock()
+}
+
+// moveDelay is how long after agreeing to move the agent drops its
+// connection, so its answer reaches hlm first.
+var moveDelay = time.Second
+
+// move switches the agent to hlm's new address, once it has checked hlm is
+// there and knows it; otherwise it stays where it is and says why.
+func (c *Config) move(ctx context.Context, client *http.Client, cur *current, raw string) error {
+	server, err := checkServer(raw, c.AllowHTTP)
+	if err != nil {
+		return err
+	}
+	creds := cur.get()
+	if server == creds.Server {
+		return nil
+	}
+	if err := Check(ctx, client, server, creds.Credential); err != nil {
+		return err
+	}
+	creds.Previous, creds.Server = creds.Server, server
+	if err := c.save(creds); err != nil {
+		return fmt.Errorf("keep the new address: %w", err)
+	}
+	cur.set(creds)
+	c.Log.Info("hlm moved: connecting at its new address", "server", server, "was", creds.Previous)
+	cur.mu.Lock()
+	drop := cur.drop
+	cur.mu.Unlock()
+	if drop != nil {
+		time.AfterFunc(moveDelay, drop)
+	}
+	return nil
+}
+
+// Check asks hlm at server whether it knows this agent's credential.
+func Check(ctx context.Context, client *http.Client, server, credential string) error {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server+CheckPath, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+credential)
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("the agent can't reach hlm at %s: %w", server, err)
+	}
+	resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusNoContent:
+		return nil
+	case http.StatusUnauthorized:
+		return fmt.Errorf("what answers at %s doesn't know this agent: is it this hlm?", server)
+	default:
+		return fmt.Errorf("%s answered %s, not as hlm does (an older hlm, or something else there?)", server, resp.Status)
+	}
 }
 
 // Dial opens the WebSocket to hlm, signed in with the credential.
@@ -291,6 +418,7 @@ func Dial(ctx context.Context, client *http.Client, server, credential, version 
 	req.Header.Set("Sec-WebSocket-Protocol", Protocol)
 	req.Header.Set("Authorization", "Bearer "+credential)
 	req.Header.Set("X-HLM-Agent-Version", version)
+	req.Header.Set("X-HLM-Agent-Server", server)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -373,17 +501,36 @@ func DockerProxy(socket string, log *slog.Logger) http.Handler {
 	})
 }
 
-// Handler is what the agent serves hlm: the host's metrics, and the
-// Docker API calls it passes on.
-func Handler(docker http.Handler, metrics *hostmetrics.Collector) http.Handler {
+// Handler is what the agent serves hlm: the host's metrics, moving to hlm's
+// new address (with move), and the Docker API calls it passes on.
+func Handler(docker http.Handler, metrics *hostmetrics.Collector, move func(ctx context.Context, server string) error) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == HostMetricsPath && r.Method == http.MethodGet {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(metrics.Snapshot())
 			return
 		}
+		if r.URL.Path == ServerPath && r.Method == http.MethodPost && move != nil {
+			var in MoveRequest
+			if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&in); err != nil {
+				writeAgentError(w, http.StatusBadRequest, err)
+				return
+			}
+			if err := move(r.Context(), in.Server); err != nil {
+				writeAgentError(w, http.StatusBadGateway, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		docker.ServeHTTP(w, r)
 	})
+}
+
+func writeAgentError(w http.ResponseWriter, status int, err error) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 }
 
 // writeDockerError answers as Docker does, so hlm shows the message.

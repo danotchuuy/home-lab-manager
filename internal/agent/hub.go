@@ -6,6 +6,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -53,6 +54,9 @@ type Status struct {
 	LastSeen time.Time `json:"lastSeen,omitzero"`
 	Version  string    `json:"version,omitempty"`
 	Remote   string    `json:"remote,omitempty"`
+	// Server is hlm's address as the agent connects to it (agents from
+	// before v0.0.52 don't say).
+	Server string `json:"server,omitempty"`
 }
 
 // Hub keeps the agents' connections.
@@ -121,6 +125,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	s := &session{mux: mux, status: Status{
 		Connected: true, Since: now, LastSeen: now, Version: r.Header.Get("X-HLM-Agent-Version"), Remote: r.RemoteAddr,
+		Server: r.Header.Get("X-HLM-Agent-Server"),
 	}}
 	h.mu.Lock()
 	old := h.sessions[host]
@@ -151,6 +156,63 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
+}
+
+// ServeCheck answers an agent checking, with its credential, that this is
+// its hlm (CheckPath): 204, or 401 for a credential hlm doesn't know.
+func (h *Hub) ServeCheck(w http.ResponseWriter, r *http.Request) {
+	cred, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	host, secret, ok := ParseCredential(cred)
+	if !ok || h.Authenticate == nil || !h.Authenticate(host, secret) {
+		http.Error(w, `{"error":"this agent isn't enrolled here"}`, http.StatusUnauthorized)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ErrAgentTooOld is a move asked of an agent from before agents could be
+// moved.
+var ErrAgentTooOld = errors.New("its agent is too old to be told hlm's new address: update it first")
+
+// MoveTo tells a host's agent hlm's new address. The agent checks it can
+// reach hlm there before it switches, and says why not if it can't; then it
+// reconnects there.
+func (h *Hub) MoveTo(ctx context.Context, host, server string) error {
+	client := &http.Client{Transport: &http.Transport{
+		DialContext:       func(ctx context.Context, _, _ string) (net.Conn, error) { return h.Dial(ctx, host) },
+		DisableKeepAlives: true,
+	}}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	body, _ := json.Marshal(MoveRequest{Server: server})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://agent"+ServerPath, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		if errors.Is(err, ErrNotConnected) {
+			return ErrNotConnected
+		}
+		return err
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusNoContent:
+		return nil
+	case http.StatusForbidden:
+		// An older agent passes the path to Docker's allow-list.
+		return ErrAgentTooOld
+	}
+	var e struct {
+		Error string `json:"error"`
+	}
+	_ = json.NewDecoder(io.LimitReader(resp.Body, 16<<10)).Decode(&e)
+	if e.Error == "" {
+		e.Error = resp.Status
+	}
+	return errors.New(e.Error)
 }
 
 // Dial opens a connection to a host's Docker through its agent.

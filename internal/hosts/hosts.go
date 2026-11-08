@@ -119,6 +119,10 @@ type Registry struct {
 	collectors map[string]*hostCollector
 	// agentUpd is how agents' updates went.
 	agentUpd agentUpdates
+	// agentMv is how moving agents to hlm's new address went; agentMvMu
+	// keeps moves of agents that connect from overlapping.
+	agentMv   agentMoves
+	agentMvMu sync.Mutex
 }
 
 type conn struct {

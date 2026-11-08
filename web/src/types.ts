@@ -2241,6 +2241,19 @@ export interface DockerHost {
   agent?: AgentStatus;
   /** How its agent's last update went. */
   agentUpdate?: AgentUpdate;
+  /** How moving its agent to hlm's new address last went. */
+  agentMove?: AgentMove;
+}
+
+/** Moving a host's agent to hlm's new address. */
+export interface AgentMove {
+  host: string;
+  from?: string;
+  to: string;
+  /** pending: it's told when it next connects. */
+  state: "moved" | "pending" | "failed";
+  error?: string;
+  at: string;
 }
 
 /** How a host's agent's last update to hlm's version went. */
@@ -2272,6 +2285,8 @@ export interface AgentStatus {
   lastSeen?: string;
   version?: string;
   remote?: string;
+  /** hlm's address as the agent connects to it (older agents don't say). */
+  server?: string;
 }
 
 /** A single-use token for a new host's agent. */

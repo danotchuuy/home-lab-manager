@@ -472,6 +472,9 @@ func run(log *slog.Logger) error {
 		return c.CertPEM, c.KeyPEM, c.NotBefore, c.NotAfter, err
 	})
 	go relay.RunStatusCertRenewal(ctx, 6*time.Hour)
+	// Agents follow hlm's address when its HTTPS comes on, changes domain
+	// or goes off.
+	go followHTTPS(ctx, certs, dockerHosts, log)
 	// Commands typed into servers' consoles.
 	// Where the Docker host's published ports are, seen from here. In a
 	// container, that's the gateway of hlm's bridge network first: on a
@@ -997,4 +1000,36 @@ func statusSitesFirst(sp *statuspage.Service, redirected, direct http.Handler) h
 		}
 		redirected.ServeHTTP(w, r)
 	})
+}
+
+// followHTTPS moves the agents when hlm's HTTPS comes on (from plain HTTP to
+// https://<domain>, same port), moves to another domain, or goes off (back to
+// plain HTTP at the domain, for agents allowed it). Connections already open
+// stay up while it changes, so agents are told over them.
+func followHTTPS(ctx context.Context, certs *tlscert.Service, registry *hosts.Registry, log *slog.Logger) {
+	domain := func() string {
+		if certs.Active() {
+			return strings.ToLower(certs.Settings().Domain)
+		}
+		return ""
+	}
+	last := domain()
+	t := time.NewTicker(5 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		now := domain()
+		if now == last {
+			continue
+		}
+		log.Info("hlm's HTTPS changed: moving agents", "from", last, "to", now)
+		for _, mv := range registry.MoveAgents(ctx, hosts.HTTPSMove(last, now)) {
+			log.Info("agent move", "host", mv.Host, "to", mv.To, "state", mv.State, "err", mv.Error)
+		}
+		last = now
+	}
 }
