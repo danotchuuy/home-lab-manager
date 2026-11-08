@@ -665,3 +665,25 @@ func (s *Service) All(ctx context.Context, now time.Time) ([]Server, []string, e
 	}
 	return slices.Clone(s.page.Servers), slices.Clone(s.names), nil
 }
+
+// RenameServer moves a server's place on the status page to its new name, when it moves to
+// another Docker host (its name gains or changes its @host).
+func (s *Service) RenameServer(from, to string) error {
+	set, err := s.Settings()
+	if err != nil {
+		return err
+	}
+	set.Servers = slices.Clone(set.Servers)
+	moved := false
+	for i := range set.Servers {
+		if set.Servers[i].Server == from {
+			set.Servers[i].Server = to
+			moved = true
+		}
+	}
+	if !moved {
+		return nil
+	}
+	_, err = s.save(set, nil)
+	return err
+}

@@ -155,3 +155,30 @@ func (s *Store) ForgetServer(server string) error {
 	}
 	return nil
 }
+
+// RenameServer moves a server's tags, and its place in users' favourites to its new name, when it moves to
+// another Docker host (its name gains or changes its @host).
+func (s *Store) RenameServer(from, to string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.secrets.MoveKey(secretTags, from, to); err != nil {
+		return err
+	}
+	favs, err := s.load(secretFavourites)
+	if err != nil {
+		return err
+	}
+	moved := false
+	for user, list := range favs {
+		if i := slices.Index(list, from); i >= 0 {
+			list = slices.Clone(list)
+			list[i] = to
+			favs[user] = list
+			moved = true
+		}
+	}
+	if !moved {
+		return nil
+	}
+	return s.secrets.Set(secretFavourites, favs)
+}

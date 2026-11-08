@@ -195,6 +195,36 @@ func (s *Store) Set(name string, v any) error {
 	return s.writeAll(all)
 }
 
+// MoveKey moves the entry from to the key to in the secret called name, a
+// JSON object such as a map of servers' settings, replacing any entry to
+// had. It reports whether there was an entry to move.
+func (s *Store) MoveKey(name, from, to string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	all, err := s.readAll()
+	if err != nil {
+		return false, err
+	}
+	raw, ok := all[name]
+	if !ok || from == to {
+		return false, nil
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return false, fmt.Errorf("%s isn't an object: %w", name, err)
+	}
+	v, ok := m[from]
+	if !ok {
+		return false, nil
+	}
+	m[to] = v
+	delete(m, from)
+	if all[name], err = json.Marshal(m); err != nil {
+		return false, err
+	}
+	return true, s.writeAll(all)
+}
+
 // Delete removes the secret called name.
 func (s *Store) Delete(name string) error {
 	s.mu.Lock()

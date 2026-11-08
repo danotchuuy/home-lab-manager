@@ -44,6 +44,7 @@ type fakeManager struct {
 	reqs     map[string]deploy.Request
 	used     map[string]bool
 	nets     []manager.NetworkInfo
+	netsOn   map[string][]manager.NetworkInfo // by host, when set
 	calls    []string
 	copyFail error
 }
@@ -117,7 +118,10 @@ func (m *fakeManager) HostPortsInUse(_ context.Context, host string) (map[string
 	}
 	return m.used, nil
 }
-func (m *fakeManager) Networks(context.Context, string) ([]manager.NetworkInfo, error) {
+func (m *fakeManager) Networks(_ context.Context, host string) ([]manager.NetworkInfo, error) {
+	if nets, ok := m.netsOn[host]; ok {
+		return nets, nil
+	}
 	return m.nets, nil
 }
 

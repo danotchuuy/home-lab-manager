@@ -320,6 +320,23 @@ func (s *Service) SetRelayed(server string, on bool) error {
 	return err
 }
 
+// RenameServer moves a relayed server to its new name, when it moves to
+// another Docker host, and applies the proxy's configuration again, so the
+// relay reaches it there. It reports whether the server was relayed.
+func (s *Service) RenameServer(ctx context.Context, from, to string) (bool, error) {
+	if !s.Relayed(from) {
+		return false, nil
+	}
+	if err := s.SetRelayed(from, false); err != nil {
+		return true, err
+	}
+	if err := s.SetRelayed(to, true); err != nil {
+		return true, err
+	}
+	_, err := s.Apply(ctx)
+	return true, err
+}
+
 // Relayed reports whether the proxy relays a server.
 func (s *Service) Relayed(server string) bool {
 	st, ok, err := s.Settings()

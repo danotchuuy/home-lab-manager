@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
+import { useHosts } from "./HostPicker";
 
 /** Settings tab: export the server's settings to a file, and clone it. */
 export function ExportCard({ server, canManage, canClone }: { server: string; canManage: boolean; canClone: boolean }) {
+  const hosts = useHosts();
   const [secrets, setSecrets] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -40,7 +42,8 @@ export function ExportCard({ server, canManage, canClone }: { server: string; ca
               <>
                 {" "}
                 <strong>Clone</strong> makes a copy here, with its own data folders and free ports, and copies its data
-                now or from a backup.
+                now or from a backup. <strong>Move</strong> takes it, with its data and settings, to another Docker
+                host, and points its port forwards and web addresses there.
               </>
             )}
           </p>
@@ -59,6 +62,11 @@ export function ExportCard({ server, canManage, canClone }: { server: string; ca
           {canClone && (
             <Link className="btn" to={`/servers/${encodeURIComponent(server)}/clone`}>
               Clone…
+            </Link>
+          )}
+          {canClone && hosts && hosts.length > 1 && (
+            <Link className="btn" to={`/servers/${encodeURIComponent(server)}/move`}>
+              Move to another host…
             </Link>
           )}
         </div>

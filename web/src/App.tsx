@@ -16,6 +16,7 @@ import { InstallPage } from "./pages/Install";
 import { ImportServerPage } from "./pages/ImportServer";
 import { AdoptPage } from "./pages/Adopt";
 import { CloneServerPage } from "./pages/CloneServer";
+import { MoveServerPage } from "./pages/MoveServer";
 import { StackEditorPage } from "./pages/StackEditor";
 import { ServerDetailPage } from "./pages/ServerDetail";
 import { ServersPage } from "./pages/Servers";
@@ -138,6 +139,7 @@ export function App() {
           <Route path="/catalog/:id" element={<InstallPage />} />
           <Route path="/servers/:name" element={<ServerDetailPage />} />
           <Route path="/servers/:name/clone" element={<CloneServerPage />} />
+          <Route path="/servers/:name/move" element={<MoveServerPage />} />
           <Route path="/import" element={<ImportServerPage />} />
           <Route path="/adopt" element={<AdoptPage />} />
           <Route path="/stacks/new" element={<StackEditorPage />} />

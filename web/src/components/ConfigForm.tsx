@@ -19,6 +19,8 @@ interface Props {
   readOnly?: boolean;
   /** The Docker host a new server goes on; a server being edited is on the one its name says. */
   host?: string;
+  /** The server keeps its name (it's moving to another host): shown, not changed. */
+  keepName?: boolean;
   onSubmit: (req: DeployRequest) => void;
 }
 
@@ -32,7 +34,7 @@ const sections: { type: ConfigType; title: string }[] = [
 
 const NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
 
-export function ConfigForm({ app, initial, isNew, submitLabel, busy, restricted, readOnly, host, onSubmit }: Props) {
+export function ConfigForm({ app, initial, isNew, submitLabel, busy, restricted, readOnly, host, keepName, onSubmit }: Props) {
   const editing = !!initial && !isNew;
   const onHost = editing ? hostOf(initial?.name) : host;
   const [name, setName] = useState(initial?.name ?? suggestName(app.name));
@@ -125,12 +127,14 @@ export function ConfigForm({ app, initial, isNew, submitLabel, busy, restricted,
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            disabled={editing}
+            disabled={editing || keepName}
             aria-invalid={!nameValid}
             spellCheck={false}
           />
           <span className="field-help">
-            {editing
+            {keepName
+              ? "It keeps its name on the new host."
+              : editing
               ? "The container name can't be changed."
               : "Used as the Docker container name: letters, digits, '_', '.' and '-'."}
           </span>

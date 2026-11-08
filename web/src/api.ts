@@ -109,6 +109,7 @@ import type {
   WireGuardStatus,
   SSHKeyInfo,
   AdoptPlan,
+  MigratePreview,
   AgentEnrolment,
   DockerHost,
   PasskeyInfo,
@@ -457,6 +458,15 @@ export const api = {
     },
     onEvent: (e: DeployEvent) => void,
   ) => stream(`/api/servers/${encodeURIComponent(id)}/clone`, { method: "POST", body: JSON.stringify(opts) }, onEvent),
+  /** How a server would move to another Docker host; nothing changes. */
+  previewMigrate: (id: string, host: string) =>
+    json<MigratePreview>(`/api/servers/${encodeURIComponent(id)}/migrate/preview`, {
+      method: "POST",
+      body: JSON.stringify({ host }),
+    }),
+  /** Moves a server to another Docker host with its data; streams the progress. */
+  migrateServer: (id: string, opts: { host: string; request?: DeployRequest }, onEvent: (e: DeployEvent) => void) =>
+    stream(`/api/servers/${encodeURIComponent(id)}/migrate`, { method: "POST", body: JSON.stringify(opts) }, onEvent),
   stacks: () => json<Stack[]>("/api/stacks"),
   /** A stack, with its Compose file and .env for admins. */
   stack: (name: string) => json<{ stack: Stack; yaml?: string; env?: string }>(`/api/stacks/${encodeURIComponent(name)}`),

@@ -427,3 +427,12 @@ func (s *Service) findFile(ctx context.Context, info docker.ContainerJSON, f gam
 	})
 	return matches[0], nil
 }
+
+// RenameServer moves a server's player records to its new name, when it moves to
+// another Docker host (its name gains or changes its @host).
+func (s *Service) RenameServer(from, to string) error {
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
+	_, err := s.opts.Secrets.MoveKey(logName, from, to)
+	return err
+}

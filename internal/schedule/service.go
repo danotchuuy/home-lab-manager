@@ -736,3 +736,15 @@ func (s *Service) advance(server, id string, scheduled, now time.Time, loc *time
 		s.opts.Log.Warn("schedule next run", "server", server, "err", err)
 	}
 }
+
+// RenameServer moves a server's scheduled tasks to its new name, when it moves to
+// another Docker host (its name gains or changes its @host).
+func (s *Service) RenameServer(from, to string) error {
+	return s.update(func(st *stored) error {
+		if v, ok := st.Servers[from]; ok {
+			st.Servers[to] = v
+			delete(st.Servers, from)
+		}
+		return nil
+	})
+}

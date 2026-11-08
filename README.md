@@ -1243,6 +1243,36 @@ that. If copying fails, the half-made copy is removed; the folders it made stay 
 **Restore as new server…** (a backup on the **Backups** tab, admins) is a clone that copies that backup, leaving the
 original as it is: to look at an old world, or to try something on a copy.
 
+### Moving a server to another host
+
+**Move to another host…** (next to **Clone…**, admins, when there's more than one [Docker host](#more-docker-hosts))
+takes a server, with all its files and settings, to another host. It keeps its name there (`valheim` becomes
+`valheim@nas`, and back), its settings and its host ports (moved up only if they're taken there); its data folders under
+the appdata folder go under the other host's, and folders elsewhere keep their path. Choose the host and hlm shows what
+it would copy and what follows the server, then the settings form, to change anything first. Then:
+
+1. the server is made on the other host, stopped;
+2. the original is stopped (if it runs) and its data folders, and the Docker volumes made for the image's `VOLUME`
+   paths, are copied across, as for a clone;
+3. the moved server is started there, if the original was running. Until it runs, any failure removes it and starts the
+   original again, as it was;
+4. everything kept by the server's name moves to its new one: server groups (and so Discord), scheduled tasks, backup
+   plan, update policy, status query, console, pinned files, health and idle settings, players, restore tests, tags and
+   favourites, status page entry and notification targets. Its **backups** stay where they are and new ones go with
+   them, so its backup history carries on (nothing is copied in the bucket);
+5. its **port forwards** on UniFi are removed and made again for the new host (to its LAN address, or the server's own
+   on a LAN network), its **web addresses** (Cloudflare Tunnel) are routed to the new host (through that host's own
+   tunnel, if it has one), and the **proxy server** relays it there;
+6. the original is removed. Its data folders stay on the old host, listed with deleted servers' data on the Host page, to
+   delete once you're happy with the move.
+
+**Its network and address.** If the server is on a network of its own (a LAN network like `br0`, or a private one with
+fixed addresses) and that doesn't carry over, a dialog asks for its network and address on the new host before it
+moves: when the other host has no network of that name, when the server's fixed address isn't in that network's subnet
+there or is taken there, or when a LAN network's subnet is different there (its address on your LAN changes anyway). It
+starts on the network of the same name, or else a LAN network there, with the [next free address](#networks-and-static-ips)
+filled in. Servers on `bridge` or `host` don't need this. Compose stacks can't be moved.
+
 ## A server's ports
 
 **Host ports.** In the install and settings forms, each port field is the port on this host that Docker publishes the
@@ -2518,6 +2548,8 @@ when the `HLM_*` one isn't set.
 | `POST /api/servers/import/preview?host=`       | Read an export file: the install form's template and settings (for a [Docker host](#more-docker-hosts)), warnings, what was left out and what comes along. Admins. |
 | `POST /api/servers/import`                     | `{export, request, host?}`: install a server from an export file with the form's settings, and give it the file's other settings. Streams NDJSON. Admins. |
 | `POST /api/servers/{id}/clone/preview`         | `{name, host?}`: a clone's settings (new data folders and free ports), what it copies, and warnings; `host` puts it on another [Docker host](#more-docker-hosts). Admins. |
+| `POST /api/servers/{id}/migrate/preview`       | `{host}`: how the server would [move](#moving-a-server-to-another-host) there: `name` (`name@host`), `request`, `copies`, `warnings`, `running`, `network` (`{network, subnets, ipAddress, target, reason}` when its network or address has to be chosen there) and `follows` (port forwards, web addresses, relay). Admins. |
+| `POST /api/servers/{id}/migrate`               | `{host, request?}`: move the server, with `request` holding its network and address there when `network` asked for them. Streams NDJSON. Admins. |
 | `POST /api/servers/{id}/clone`                 | `{name, host?, request?, copyData: "none"\|"now"\|"backup", backupKey?, stopSource, start}`: clone the server. Streams NDJSON. Admins. |
 | `DELETE /api/servers/{id}/backups?key=&target=` | Delete one of the server's backups (and its checksum) from the bucket.          |
 | `GET /api/system/backup`                       | Configuration backups: their plan, a running backup, and the backups in the bucket. |
