@@ -79,6 +79,11 @@ type Settings struct {
 	StatusPage  bool   `json:"statusPage"`
 	StatusTLS   string `json:"statusTls,omitempty"`
 	StatusEmail string `json:"statusEmail,omitempty"`
+	// StatusOnAddress also serves the status page on the proxy server's own
+	// address, the one players use for the game servers (Host), over HTTP
+	// on StatusPort (80 by default).
+	StatusOnAddress bool `json:"statusOnAddress,omitempty"`
+	StatusPort      int  `json:"statusPort,omitempty"`
 }
 
 // KeyInfo is the public half of hlm's SSH key.
@@ -237,6 +242,20 @@ func Validate(st *Settings) error {
 	}
 	if st.Port < 1 || st.Port > 65535 {
 		return fmt.Errorf("invalid SSH port %d", st.Port)
+	}
+	if !st.StatusOnAddress {
+		st.StatusPort = 0
+	} else if st.StatusPort == 0 {
+		st.StatusPort = 80
+	}
+	switch p := st.StatusPort; {
+	case p == 0:
+	case p < 1 || p > 65535:
+		return fmt.Errorf("invalid port %d for the status page", p)
+	case p == 443:
+		return errors.New("the status page on the proxy's address is plain HTTP, so it can't use port 443; choose 80 or another port")
+	case p == st.Port:
+		return fmt.Errorf("port %d is the proxy server's SSH port; choose another for the status page", p)
 	}
 	if !userName.MatchString(st.User) {
 		return fmt.Errorf("invalid user name %q", st.User)
@@ -790,7 +809,7 @@ func (s *Service) Apply(ctx context.Context) (ApplyResult, error) {
 		if err := s.recordApplied(st.Upstream, servers); err != nil {
 			s.log.Error("save proxy state", "err", err)
 		}
-		r.Status = s.applyStatusRecorded(ctx, st)
+		r.Status = s.applyStatusRecorded(ctx, st, servers)
 		r.Firewall = s.syncFirewallAfter(ctx, servers)
 		return r, nil
 	case strings.Contains(res.Stdout, "hlm:nonginx"):

@@ -1033,11 +1033,16 @@ export interface ProxySettings {
   statusPage?: boolean;
   statusTls?: "" | "letsencrypt" | "cloudflare";
   statusEmail?: string;
+  /** Also serve the status page on the proxy's own address (the one players use), over HTTP on statusPort (80). */
+  statusOnAddress?: boolean;
+  statusPort?: number;
 }
 
 /** How serving the status page's sites on the proxy last went. */
 export interface ProxyStatusSites {
   domains: string[];
+  /** The status page on the proxy's own address, when it's served there. */
+  address?: string;
   /** The HTTPS option used. */
   tls?: "" | "letsencrypt" | "cloudflare";
   https: string[];

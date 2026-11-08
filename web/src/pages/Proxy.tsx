@@ -540,6 +540,44 @@ export function ProxyPage() {
             )}
           </span>
           {form.statusPage && (
+            <div className="field">
+              <label className="radio">
+                <input
+                  type="checkbox"
+                  checked={!!form.statusOnAddress}
+                  onChange={(e) => {
+                    set("statusOnAddress", e.target.checked);
+                    if (e.target.checked && !form.statusPort) set("statusPort", 80);
+                  }}
+                />
+                Also on the proxy server&apos;s own address ({form.host || "its host"}), where players find the game
+                servers
+              </label>
+              {form.statusOnAddress && (
+                <label className="field">
+                  <span className="field-label">Port</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={65535}
+                    value={form.statusPort ?? 80}
+                    onChange={(e) => set("statusPort", Number(e.target.value) || 0)}
+                    style={{ maxWidth: "8rem" }}
+                  />
+                  <span className="field-help">
+                    Plain HTTP:{" "}
+                    <code>
+                      http://{form.host || "proxy"}
+                      {(form.statusPort ?? 80) === 80 ? "" : `:${form.statusPort}`}/status
+                    </code>
+                    . On 80 it shares the port with the sites&apos; domains; any other port can&apos;t be one a game
+                    server is relayed on. hlm opens it in the proxy&apos;s Linode firewall, if it manages one.
+                  </span>
+                </label>
+              )}
+            </div>
+          )}
+          {form.statusPage && (
             <div className="field status-tls">
               <span className="field-label">HTTPS</span>
               <label className="radio">
@@ -797,9 +835,10 @@ function ServerInfo({
 function statusNote(r?: ProxyStatusSites): string {
   if (!r) return "";
   if (r.error) return ` The status page's sites weren't served: ${r.error}`;
-  if (r.domains.length === 0) return " There are no status page sites to serve yet.";
+  const at = r.address ? ` The status page is at ${r.address}.` : "";
+  if (r.domains.length === 0) return at || " There are no status page sites to serve yet.";
   const http = r.domains.filter((d) => !r.https.includes(d));
-  let note = ` Status page sites: ${r.https.length ? `${r.https.join(", ")} over HTTPS` : ""}${r.https.length && http.length ? "; " : ""}${http.length ? `${http.join(", ")} over HTTP` : ""}.`;
+  let note = `${at} Status page sites: ${r.https.length ? `${r.https.join(", ")} over HTTPS` : ""}${r.https.length && http.length ? "; " : ""}${http.length ? `${http.join(", ")} over HTTP` : ""}.`;
   const failed = Object.entries(r.failed ?? {});
   if (failed.length && r.tls === "cloudflare")
     note += ` Not set up on Cloudflare: ${failed.map(([d, why]) => `${d} (${why})`).join(", ")}.`;

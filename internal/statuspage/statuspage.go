@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"regexp"
 	"slices"
 	"strings"
@@ -105,6 +106,18 @@ func siteFor(set Settings, host string) *Site {
 func (s *Service) IsSiteHost(host string) bool {
 	set, err := s.Settings()
 	return err == nil && siteFor(set, host) != nil
+}
+
+// OnlyHeader marks a request as for the status page alone, like one for a
+// site's domain: the proxy server's nginx sets it on what it passes from its
+// own address. Anyone can send it, but it only takes away: such a request
+// reaches the status page and nothing else of hlm.
+const OnlyHeader = "X-Hlm-Status-Only"
+
+// StatusOnly reports whether a request may reach only the status page: for
+// a site's domain, or marked with OnlyHeader.
+func (s *Service) StatusOnly(r *http.Request) bool {
+	return r.Header.Get(OnlyHeader) != "" || s.IsSiteHost(r.Host)
 }
 
 // DefaultTitle is the page's title when none is set.

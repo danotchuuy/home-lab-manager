@@ -20,6 +20,7 @@ import (
 
 	"github.com/danotchuuy/home-lab-manager/internal/linode"
 	"github.com/danotchuuy/home-lab-manager/internal/remote"
+	"github.com/danotchuuy/home-lab-manager/internal/statuspage"
 )
 
 // The status page's sites on the proxy server: nginx serves each site's
@@ -104,6 +105,9 @@ func (s *Service) UseStatusSites(f func(ctx context.Context) (domains []string, 
 // StatusSiteResult is how serving the status page's sites went.
 type StatusSiteResult struct {
 	Domains []string `json:"domains"`
+	// Address is the status page on the proxy server's own address
+	// ("http://203.0.113.7/status"), when it's served there.
+	Address string `json:"address,omitempty"`
 	// TLS is the HTTPS option used: "", "letsencrypt" or "cloudflare".
 	TLS string `json:"tls,omitempty"`
 	// HTTPS lists the domains with a certificate, served over HTTPS.
@@ -158,15 +162,23 @@ func originCert(d string) StatusCert {
 	return StatusCert{Cert: originDir + "/" + d + ".crt", Key: originDir + "/" + d + ".key", Cloudflare: true}
 }
 
+// StatusAddress serves the status page on the proxy server's own address:
+// over HTTP on Port, answering Names (its host name and addresses) on port
+// 80, where other sites may be, and anything on another port.
+type StatusAddress struct {
+	Port  int
+	Names []string
+}
+
 // RenderStatus produces the nginx http configuration for the status page's
 // sites: each domain on port 80 (answering Let's Encrypt's challenges, and
 // redirecting to HTTPS once it has a Let's Encrypt certificate) and, with a
-// certificate, on 443.
-func RenderStatus(domains []string, certs map[string]StatusCert, upstream string, port int, ipv6 bool) string {
+// certificate, on 443; and, with addr, the proxy's own address.
+func RenderStatus(domains []string, certs map[string]StatusCert, upstream string, port int, ipv6 bool, addr *StatusAddress) string {
 	var b strings.Builder
 	b.WriteString("# Managed by Home Lab Manager; changes made here are overwritten.\n")
 	b.WriteString("# The status page's sites, passed to hlm through the WireGuard tunnel.\n")
-	if len(domains) == 0 {
+	if len(domains) == 0 && addr == nil {
 		return b.String()
 	}
 	if a, err := netip.ParseAddr(upstream); err == nil && a.Is6() {
@@ -201,7 +213,82 @@ func RenderStatus(domains []string, certs map[string]StatusCert, upstream string
 			b.WriteString("}\n")
 		}
 	}
+	if addr != nil {
+		p := strconv.Itoa(addr.Port)
+		b.WriteString("\n# The proxy server's own address, where players find the game servers\nserver {\n")
+		if addr.Port == 80 {
+			// Other sites share port 80: only the proxy's own names.
+			fmt.Fprintf(&b, "%s    server_name %s;\n", listen(p, ""), strings.Join(addr.Names, " "))
+		} else {
+			fmt.Fprintf(&b, "%s    server_name _;\n", listen(p, " default_server"))
+		}
+		b.WriteString("    access_log off;\n")
+		// hlm keeps these to the status page, whatever the Host.
+		loc := fmt.Sprintf(statusLocations, to, "$scheme")
+		loc = strings.Replace(loc, "        proxy_set_header Host $host;\n", "        proxy_set_header Host $host;\n        proxy_set_header "+statuspage.OnlyHeader+" 1;\n", 1)
+		b.WriteString(loc)
+		b.WriteString("}\n")
+	}
 	return b.String()
+}
+
+// statusAddressNames are the names the proxy's own address answers to on
+// port 80: its host as hlm knows it and its addresses, IPv6 ones in
+// brackets as nginx wants them.
+func statusAddressNames(host string, addrs []string) []string {
+	var out []string
+	add := func(n string) {
+		if n = strings.ToLower(strings.Trim(n, "[]")); n == "" {
+			return
+		}
+		if a, err := netip.ParseAddr(n); err == nil {
+			if a.IsLoopback() || a.IsLinkLocalUnicast() {
+				return
+			}
+			n = a.String()
+			if a.Is6() {
+				n = "[" + n + "]"
+			}
+		} else if !statusDomain.MatchString(n) {
+			return
+		}
+		if !slices.Contains(out, n) {
+			out = append(out, n)
+		}
+	}
+	add(host)
+	for _, a := range addrs {
+		add(a)
+	}
+	return out
+}
+
+// statusAddressURL is where visitors find the status page on the proxy's
+// own address.
+func statusAddressURL(host string, port int) string {
+	if a, err := netip.ParseAddr(strings.Trim(host, "[]")); err == nil && a.Is6() {
+		host = "[" + a.String() + "]"
+	}
+	if port != 80 {
+		host += ":" + strconv.Itoa(port)
+	}
+	return "http://" + host + "/status"
+}
+
+// statusPortConflict says which relayed server already has the status
+// page's port on the proxy, if one does.
+func statusPortConflict(st Settings, servers []Proxied) string {
+	if !st.StatusOnAddress {
+		return ""
+	}
+	for _, p := range servers {
+		for _, m := range p.Ports {
+			if m.Proto == "tcp" && m.Port == st.StatusPort {
+				return fmt.Sprintf("port %d/tcp on the proxy already relays %s, so the status page can't have it; choose another port for it", m.Port, p.Server)
+			}
+		}
+	}
+	return ""
 }
 
 // statusProbeScript says whether nginx's http block reads conf.d, whether
@@ -211,6 +298,7 @@ const statusProbeScript = `PATH="$PATH:/usr/sbin:/sbin"
 dump=$(nginx -T 2>/dev/null)
 printf '%s\n' "$dump" | grep -qE 'include[[:space:]]+/etc/nginx/conf\.d/\*\.conf' && echo "hlm:confd"
 [ -f /proc/net/if_inet6 ] && echo "hlm:ipv6"
+ip -o addr show scope global 2>/dev/null | awk '$2 != "gsh0" { split($4, a, "/"); print "hlm:addr:" a[1] }'
 command -v certbot >/dev/null 2>&1 && echo "hlm:certbot"
 while IFS= read -r d; do
   [ -n "$d" ] || continue
@@ -281,6 +369,7 @@ echo "hlm:installed"`
 // statusProbe is what statusProbeScript found.
 type statusProbe struct {
 	confd, ipv6, certbot bool
+	addrs                []string        // the proxy server's own addresses
 	certs                map[string]bool // Let's Encrypt
 	origin               map[string]bool // Cloudflare Origin CA
 }
@@ -299,6 +388,8 @@ func (s *Service) probeStatus(ctx context.Context, domains []string) (statusProb
 			p.ipv6 = true
 		case line == "hlm:certbot":
 			p.certbot = true
+		case strings.HasPrefix(line, "hlm:addr:"):
+			p.addrs = append(p.addrs, strings.TrimPrefix(line, "hlm:addr:"))
 		case strings.HasPrefix(line, "hlm:cert:"):
 			p.certs[strings.TrimPrefix(line, "hlm:cert:")] = true
 		case strings.HasPrefix(line, "hlm:origin:"):
@@ -334,7 +425,7 @@ func (s *Service) applyStatus(ctx context.Context, st Settings) *StatusSiteResul
 	if !st.StatusPage {
 		// Turned off: take the sites off the proxy, once.
 		if served {
-			if _, err := s.writeStatus(ctx, RenderStatus(nil, nil, "", 0, false)); err != nil {
+			if _, err := s.writeStatus(ctx, RenderStatus(nil, nil, "", 0, false, nil)); err != nil {
 				s.log.Warn("clear the status page's configuration on the proxy", "err", err)
 			} else {
 				_ = s.secrets.Delete(secretStatusServed)
@@ -378,8 +469,13 @@ func (s *Service) applyStatus(ctx context.Context, st Settings) *StatusSiteResul
 	if err != nil {
 		return fail(err)
 	}
-	if !probe.confd && len(res.Domains) > 0 {
+	if !probe.confd && (len(res.Domains) > 0 || st.StatusOnAddress) {
 		return fail(errors.New("nginx on the proxy server doesn't read /etc/nginx/conf.d/*.conf in its http block, where hlm puts the status page's sites; add that include to nginx.conf"))
+	}
+	var addr *StatusAddress
+	if st.StatusOnAddress {
+		addr = &StatusAddress{Port: st.StatusPort, Names: statusAddressNames(st.Host, probe.addrs)}
+		res.Address = statusAddressURL(st.Host, st.StatusPort)
 	}
 	certs := map[string]StatusCert{}
 	var cloudflared []string
@@ -393,8 +489,9 @@ func (s *Service) applyStatus(ctx context.Context, st Settings) *StatusSiteResul
 		// from the internet to get them.
 		cloudflared = s.cloudflareSites(ctx, st, res, probe, certs)
 	}
-	render := func() string { return RenderStatus(res.Domains, certs, st.Upstream, port, probe.ipv6) }
+	render := func() string { return RenderStatus(res.Domains, certs, st.Upstream, port, probe.ipv6, addr) }
 	if res.Output, err = s.writeStatus(ctx, render()); err != nil {
+		res.Address = ""
 		return fail(err)
 	}
 	// Domains no longer behind Cloudflare lose hlm's records and
@@ -429,7 +526,7 @@ func (s *Service) applyStatus(ctx context.Context, st Settings) *StatusSiteResul
 			res.HTTPS = append(res.HTTPS, d)
 		}
 	}
-	s.log.Info("served the status page's sites on the proxy", "domains", len(res.Domains), "https", len(res.HTTPS), "tls", st.StatusTLS)
+	s.log.Info("served the status page's sites on the proxy", "domains", len(res.Domains), "https", len(res.HTTPS), "tls", st.StatusTLS, "address", res.Address)
 	return res
 }
 
@@ -557,9 +654,15 @@ func (s *Service) forgetCloudflare(ctx context.Context, keep []string) {
 	}
 }
 
-// applyStatusRecorded is applyStatus, keeping its outcome.
-func (s *Service) applyStatusRecorded(ctx context.Context, st Settings) *StatusSiteResult {
-	res := s.applyStatus(ctx, st)
+// applyStatusRecorded is applyStatus, keeping its outcome. servers are
+// the relayed servers, whose ports the status page can't also have.
+func (s *Service) applyStatusRecorded(ctx context.Context, st Settings, servers []Proxied) *StatusSiteResult {
+	var res *StatusSiteResult
+	if why := statusPortConflict(st, servers); why != "" && st.StatusPage {
+		res = &StatusSiteResult{Domains: []string{}, HTTPS: []string{}, TLS: st.StatusTLS, Error: why}
+	} else {
+		res = s.applyStatus(ctx, st)
+	}
 	if res == nil {
 		_ = s.secrets.Delete(secretStatusResult)
 	} else if err := s.secrets.Set(secretStatusResult, res); err != nil {
@@ -578,6 +681,18 @@ func (r *StatusSiteResult) setFailed(domain, why string) {
 func lastLine(s string) string {
 	lines := strings.Split(strings.TrimSpace(s), "\n")
 	return strings.TrimSpace(lines[len(lines)-1])
+}
+
+const statusAddressRuleLabel = rulePrefix + "status-address"
+
+// statusAddressRule opens the status page's port on the proxy's own
+// address to everyone.
+func statusAddressRule(port int) linode.Rule {
+	return linode.Rule{
+		Action: "ACCEPT", Protocol: "TCP", Ports: strconv.Itoa(port),
+		Addresses: &linode.Addresses{IPv4: []string{"0.0.0.0/0"}, IPv6: []string{"::/0"}},
+		Label:     statusAddressRuleLabel, Description: "Home Lab Manager: the status page on the proxy's address",
+	}
 }
 
 // statusRule opens HTTP and HTTPS on the proxy's firewall, for the status

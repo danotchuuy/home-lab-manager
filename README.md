@@ -1992,6 +1992,15 @@ Status page** and add the servers to show; it's at `/status`.
     the site works in any mode. A record that already exists for the name (yours, or a tunnel route's) is left alone
     and reported. When a domain leaves the list or you choose another option, hlm removes its record and certificate.
 
+  - **On the proxy's own address:** tick **Also on the proxy server's own address** to serve the page where players
+    already find the game servers, such as `http://203.0.113.7/status` (or `:8080/status` on a port you choose), with
+    no domain needed. It's plain HTTP and shows every server, with the page-wide passwords. On port 80 it answers only
+    the proxy's own host and addresses, so the sites' domains and any other site there keep working; on another port
+    it answers whatever comes, and that port can't also be a relayed game port (hlm says which server has it). nginx
+    marks these requests for hlm, which then answers only the status page for them, as for a site's domain. The
+    proxy's Linode firewall, if hlm manages it, gets that port opened to everyone (rule `hlm-status-address`, unless
+    port 80 is already open).
+
   hlm writes only `/etc/nginx/conf.d/hlm-status.conf` (nginx has to read `conf.d` in its `http` block, as Debian's,
   Ubuntu's and Fedora's do), checks it with `nginx -t` and puts the previous one back if it's refused. The proxy's Linode firewall,
   if hlm manages it, gets ports 80 and 443 opened (to Cloudflare alone, with that option). Each site's settings show

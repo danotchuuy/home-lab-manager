@@ -984,7 +984,7 @@ func hostPortOf(so cftunnel.SelfOrigin) (int, error) {
 // HTTP to hlm, and mustn't be redirected to hlm's own HTTPS address.
 func statusSitesFirst(sp *statuspage.Service, redirected, direct http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if sp.IsSiteHost(r.Host) {
+		if sp.StatusOnly(r) {
 			direct.ServeHTTP(w, r)
 			return
 		}

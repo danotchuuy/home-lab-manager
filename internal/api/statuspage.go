@@ -306,7 +306,7 @@ func statusMethodOK(r *http.Request) bool {
 // everything else of hlm answers 404 there, whoever asks.
 func (s *server) statusHost(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.StatusPage != nil && s.StatusPage.IsSiteHost(r.Host) {
+		if s.StatusPage != nil && s.StatusPage.StatusOnly(r) {
 			switch {
 			case r.URL.Path == "/":
 				http.Redirect(w, r, "/status", http.StatusFound)

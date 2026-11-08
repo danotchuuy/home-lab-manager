@@ -245,6 +245,15 @@ export function StatusPageSettings() {
         rest of hlm answers &ldquo;not found&rdquo; there. Point a Cloudflare Tunnel route (or a proxy) for it at hlm.
         On any other address, such as hlm&apos;s own, the page shows every server below, with the passwords above.
       </p>
+      {proxy?.result?.address && (
+        <p className="small no-margin">
+          On the proxy server&apos;s own address, beside the game servers:{" "}
+          <a href={proxy.result.address} target="_blank" rel="noreferrer">
+            {proxy.result.address} ↗
+          </a>{" "}
+          (every server below, with the passwords above).
+        </p>
+      )}
       {sites.map((site, i) => (
         <SiteFields
           key={(site.id ?? "new") + i + saves}
