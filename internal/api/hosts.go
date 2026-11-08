@@ -37,6 +37,8 @@ type hostView struct {
 	// last update went.
 	Agent       *agent.Status      `json:"agent,omitempty"`
 	AgentUpdate *hosts.AgentUpdate `json:"agentUpdate,omitempty"`
+	// AgentMove is how moving its agent to hlm's new address last went.
+	AgentMove *hosts.AgentMove `json:"agentMove,omitempty"`
 }
 
 func (s *server) listHosts(w http.ResponseWriter, r *http.Request) {
@@ -73,6 +75,7 @@ func (s *server) listHosts(w http.ResponseWriter, r *http.Request) {
 			if h.Kind == hosts.KindAgent {
 				v.Agent = s.Hosts.AgentStatus(h.ID)
 				v.AgentUpdate = s.Hosts.AgentUpdateStatus(h.ID)
+				v.AgentMove = s.Hosts.AgentMoveStatus(h.ID)
 			}
 		}
 		out = append(out, v)

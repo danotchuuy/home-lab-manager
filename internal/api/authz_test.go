@@ -133,6 +133,8 @@ var expected = map[string]string{
 	"POST /api/hosts/install-agent":                     "confirmed",
 	"POST /api/agent/enrol":                             "public",
 	"GET /api/agent/connect":                            "public",
+	"GET /api/agent/check":                              "public",
+	"POST /api/hosts/move-agents":                       "confirmed",
 	"POST /api/hosts/setup-docker":                      "confirmed",
 	"POST /api/hosts/setup-tls":                         "confirmed",
 	"GET /api/stacks/{name}":                            "signedIn",

@@ -102,6 +102,43 @@ func (s *server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	s.Agents.ServeHTTP(w, r)
 }
 
+// moveAgents tells every agent hlm's new address (for agents that
+// connect to it there): {"server": "https://hlm.example.com"}. Each checks
+// it can reach hlm there before switching; ones not connected are told when
+// they next connect.
+func (s *server) moveAgents(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Server string `json:"server"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	server, err := hosts.CheckAgentServer(in.Server)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	audit.Add(r.Context(), "server", server)
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	moves := s.Hosts.MoveAgents(ctx, func(string) (string, bool) { return server, true })
+	if moves == nil {
+		moves = []hosts.AgentMove{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"moves": moves})
+}
+
+// agentCheck answers an agent checking an address is its hlm's, before
+// it moves there.
+func (s *server) agentCheck(w http.ResponseWriter, r *http.Request) {
+	if s.Agents == nil {
+		writeError(w, http.StatusNotFound, errors.New("agents can't connect to this hlm"))
+		return
+	}
+	s.Agents.ServeCheck(w, r)
+}
+
 // updateAgent updates a host's agent to hlm's version, streaming the
 // progress.
 func (s *server) updateAgent(w http.ResponseWriter, r *http.Request) {

@@ -1,6 +1,7 @@
 import type { CreationOptionsJSON, NewPasskeyJSON, RequestOptionsJSON, UsedPasskeyJSON } from "./passkeys";
 import type {
   Account,
+  AgentMove,
   AuditFilter,
   AuditPage,
   AuditSettings,
@@ -508,6 +509,9 @@ export const api = {
   /** Updates a host's agent to hlm's version; streams the progress. */
   updateAgent: (id: string, onEvent: (e: DeployEvent) => void) =>
     stream(`/api/hosts/${encodeURIComponent(id)}/update-agent`, { method: "POST" }, onEvent),
+  /** Tells every agent hlm's new address; each checks it can reach hlm there before switching. */
+  moveAgents: (server: string) =>
+    json<{ moves: AgentMove[] }>("/api/hosts/move-agents", { method: "POST", body: JSON.stringify({ server }) }),
   setAgentAutoUpdate: (on: boolean) =>
     json<{ on: boolean }>("/api/hosts/agent-auto-update", { method: "PUT", body: JSON.stringify({ on }) }),
   testHost: (h: DockerHostInput) =>

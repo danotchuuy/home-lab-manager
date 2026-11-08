@@ -338,6 +338,18 @@ alerts as usual.
     hlm (not a `vX.Y.Z` release) don't update agents, since there's no image for them. An agent run as the `hlm`
     binary, outside Docker, or several agents on one host, have to be updated by hand: run the new version with the
     same arguments.
+  - **When hlm's address changes.** An agent keeps the address it enrolled at (in its credential file; `--server` is
+    only used to enrol). To move agents, enter hlm's new address under **hlm's address for agents** on the Hosts page
+    and click **Move agents here**. hlm tells each agent over its connection. The agent first checks, with its own
+    credential, that hlm answers at the new address, then keeps it and reconnects there; if it can't reach hlm there
+    (or something else answers), it stays where it is and the Hosts page says why. It keeps the old address too, and
+    tries it as well if the new one keeps failing. An agent that isn't connected is told when it next connects. The
+    new address has to be `https://`, unless the agent was started with `--allow-http`. hlm moves its agents itself
+    when its [HTTPS](#https) comes on (agents on plain `http://` go to `https://<domain>` on the same port), moves to
+    another domain, or goes off (back to `http://<domain>`, for agents allowed it); agents that reach hlm some other
+    way, such as through a proxy, are left alone. Plain HTTP agents aren't redirected to HTTPS meanwhile, so they keep
+    working if they can't be moved. The Hosts page shows the address each agent connects to (agents from v0.0.52 on).
+    Moving agents takes a confirmed sign-in, like other changes to how hosts are reached.
   - **Removing the host** disconnects its agent and its credential stops working; the agent says so and exits. Remove
     the `hlm-agent` container there too. The table shows each agent's connection: since when, and its version.
   - The agent's settings can also be given as `HLM_AGENT_SERVER`, `HLM_AGENT_TOKEN`, `HLM_AGENT_DATA` (default
@@ -2618,6 +2630,7 @@ when the `HLM_*` one isn't set.
 | `POST /api/hosts`, `PUT /api/hosts/{id}`       | `{id, name, kind: "ssh"\|"tcp"\|"agent" (PUT only; agents' hosts are added by enrolment), ssh?: {host, port, user, hostKey}, socket?, url?, ca?, cert?, key?, appdataRoot, address?}`: add or change a host, after connecting to it. An empty `key` keeps the saved one. [Confirmed](#confirming-its-you) session. |
 | `POST /api/hosts/agent-enrolment`              | `{id, name, appdataRoot, address}`: a single-use, one-hour token for a new host's [agent](#more-docker-hosts) (`token`, `host`, `expires`). Confirmed session. |
 | `POST /api/hosts/{id}/update-agent`            | Updates the host's [agent](#more-docker-hosts) to hlm's version (a helper container swaps it, putting the old one back if the new one doesn't stay up). Streams NDJSON progress. Admins. |
+| `POST /api/hosts/move-agents`                  | Tells every [agent](#more-docker-hosts) hlm's new address (`{"server": "https://…"}`); each checks it can reach hlm there before switching. Returns how each went (`moves`). Admins, with a confirmed sign-in. |
 | `PUT /api/hosts/agent-auto-update`             | `{on}`: whether agents that connect on another version are updated automatically (on by default). `GET /api/hosts` reports it as `agentAutoUpdate`, with `agentVersion` (hlm's), `agentUpdateBlocked` (why not, for a development build) and each agent host's `agentUpdate` (`{state, from, to, message, at, auto}`). Admins. |
 | `POST /api/hosts/install-agent`                | `{id, name, appdataRoot, address?, ssh: {host, port, user, hostKey}, server}`: makes an enrolment token, installs the [agent](#more-docker-hosts) on the host over SSH with it (`server` is hlm's address from there) and waits for it to connect. Streams NDJSON progress. Confirmed session. |
 | `POST /api/agent/enrol`                        | Called by `hlm agent`: `{token, version}` → `{host, credential}`. No sign-in; the token is the proof. Rate-limited. |

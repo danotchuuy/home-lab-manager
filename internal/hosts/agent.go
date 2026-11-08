@@ -171,6 +171,8 @@ func (r *Registry) agentChanged(id string, connected bool) {
 	// An agent on another version than hlm's is brought up to it.
 	if connected {
 		go r.autoUpdateAgent(id)
+		// One hlm moved while it wasn't connected is told the new address.
+		go r.movePending(id)
 	}
 }
 
