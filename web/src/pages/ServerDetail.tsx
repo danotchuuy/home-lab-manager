@@ -14,11 +14,9 @@ import { FileBrowser } from "../components/FileBrowser";
 import { GameStatusCard } from "../components/GameStatus";
 import { LaunchOptionsCard } from "../components/LaunchOptions";
 import { LogViewer } from "../components/LogViewer";
-import { PortSettings } from "../components/PortSettings";
-import { PortForwarding } from "../components/PortForwarding";
+import { ServerForwarding } from "../components/ServerForwarding";
 import { ServerBackups } from "../components/ServerBackups";
 import { ServerGroupPicker } from "../components/ServerGroups";
-import { ServerHostnames } from "../components/ServerHostnames";
 import { ServerSchedule } from "../components/ServerSchedule";
 import { IdleSettings } from "../components/IdleSettings";
 import { ServerPlayers } from "../components/ServerPlayers";
@@ -43,12 +41,6 @@ export function ServerDetailPage() {
   const [server, setServer] = useState<Server>();
   const [stats, setStats] = useState<Stats>();
   // Bumped when internet ports change, so port forwarding reloads.
-  const [portsVersion, setPortsVersion] = useState(0);
-  // Bumped when the UniFi rules change, so the ports' sync states reload.
-  const [rulesVersion, setRulesVersion] = useState(0);
-  // Through the WireGuard tunnel, gateway rules aren't needed, so their card
-  // is hidden unless some are still in place.
-  const [showForwarding, setShowForwarding] = useState(true);
   const [error, setError] = useState<string>();
   const [params, setParams] = useSearchParams();
   const operator = !!server && can(server, "operator");
@@ -308,22 +300,7 @@ export function ServerDetailPage() {
         </>
       )}
 
-      {tab === "ports" && (
-        <>
-          <fieldset className="plain-fieldset" disabled={!manager}>
-            <PortSettings
-              server={server.name}
-              rulesVersion={rulesVersion}
-              onSaved={() => setPortsVersion((v) => v + 1)}
-              onForwardingNeeded={setShowForwarding}
-            />
-            {showForwarding && (
-              <PortForwarding key={portsVersion} server={server.name} onChanged={() => setRulesVersion((v) => v + 1)} />
-            )}
-          </fieldset>
-          {admin && <ServerHostnames server={server.name} />}
-        </>
-      )}
+      {tab === "ports" && <ServerForwarding server={server.name} canManage={manager} />}
 
       {tab === "settings" && (
         <div className="card">

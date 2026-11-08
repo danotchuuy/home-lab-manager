@@ -1,24 +1,85 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import type { TunnelRoutes } from "../types";
+import type { TunnelRoute, TunnelRoutes, TunnelRouteState } from "../types";
 import { RouteBadge } from "./Hostnames";
 
-/** Lists the hostnames the Cloudflare Tunnel publishes for a server, with a link to manage them. */
+/** A saved route as it's sent back when saving the list. */
+function asRoute(r: TunnelRouteState): TunnelRoute {
+  return {
+    hostname: r.hostname,
+    zoneId: r.zoneId,
+    server: r.server,
+    address: r.address,
+    port: r.port,
+    scheme: r.scheme,
+    noTLSVerify: r.noTLSVerify,
+    hlm: r.hlm,
+  };
+}
+
+/**
+ * A server's hostnames on the Cloudflare Tunnel: listed, added and removed
+ * here as on the Tunnel page (which also routes other web servers and hlm).
+ */
 export function ServerHostnames({ server }: { server: string }) {
   const [data, setData] = useState<TunnelRoutes>();
   const [error, setError] = useState<string>();
+  const [hostname, setHostname] = useState("");
+  const [port, setPort] = useState(0);
+  const [scheme, setScheme] = useState<"http" | "https">("http");
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     api.tunnelRoutes().then(setData, (e) => setError((e as Error).message));
   }, [server]);
 
-  if (error) return <div className="card"><div className="alert error">{error}</div></div>;
+  const srv = data?.servers.find((s) => s.name === server);
+  useEffect(() => {
+    // Its web UI's port first, as the Tunnel page does.
+    if (srv && !port) {
+      setPort(srv.webuiPort ?? srv.ports[0]?.port ?? 0);
+      if (srv.webuiScheme === "https") setScheme("https");
+    }
+  }, [srv, port]);
+
+  if (error && !data)
+    return (
+      <div className="card">
+        <div className="alert error">{error}</div>
+      </div>
+    );
   if (!data) return null;
   // Only servers with a TCP port can have a web address.
-  const srv = data.servers.find((s) => s.name === server);
   if (!srv?.ports.length) return null;
   const routes = data.routes.filter((r) => r.server === server);
+
+  async function save(next: TunnelRoute[]) {
+    setBusy(true);
+    setError(undefined);
+    try {
+      await api.setTunnelRoutes(next);
+      setData(await api.tunnelRoutes());
+      return true;
+    } catch (e) {
+      setError((e as Error).message);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function add(e: FormEvent) {
+    e.preventDefault();
+    const h = hostname.trim().toLowerCase().replace(/\.+$/, "");
+    if (!h || !port || !data) return;
+    if (await save([...data.routes.map(asRoute), { hostname: h, server, port, scheme }])) setHostname("");
+  }
+
+  async function remove(h: string) {
+    if (!data || !confirm(`Stop publishing ${h}? Its Cloudflare DNS record is removed too.`)) return;
+    await save(data.routes.filter((r) => r.hostname !== h).map(asRoute));
+  }
 
   return (
     <div className="card">
@@ -31,8 +92,8 @@ export function ServerHostnames({ server }: { server: string }) {
               : "Publish this server's web interface on your own domain, like panel.example.com, through a Cloudflare Tunnel. Nothing needs forwarding at home."}
           </p>
         </div>
-        <Link className="btn small" to="/tunnel">
-          {routes.length ? "Manage hostnames" : data.tunnel ? "Add a hostname" : "Set up Cloudflare Tunnel"}
+        <Link className="btn small ghost" to="/tunnel">
+          {data.tunnel ? "All hostnames" : "Set up Cloudflare Tunnel"}
         </Link>
       </div>
       {routes.length > 0 && (
@@ -43,6 +104,7 @@ export function ServerHostnames({ server }: { server: string }) {
                 <th>Hostname</th>
                 <th>Goes to</th>
                 <th>Status</th>
+                <th />
               </tr>
             </thead>
             <tbody>
@@ -63,12 +125,44 @@ export function ServerHostnames({ server }: { server: string }) {
                     {r.error && <div className="small form-error">{r.error}</div>}
                     {r.state === "pending" && !data.tunnel && <div className="muted small">published once the tunnel is set up</div>}
                   </td>
+                  <td className="actions">
+                    <button type="button" className="btn small ghost danger" onClick={() => remove(r.hostname)} disabled={busy}>
+                      Remove
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+      {data.tunnel && (
+        <form className="input-row hostname-add" onSubmit={add}>
+          <input
+            value={hostname}
+            onChange={(e) => setHostname(e.target.value)}
+            placeholder="panel.example.com"
+            aria-label="Hostname"
+            spellCheck={false}
+          />
+          <select value={port} onChange={(e) => setPort(Number(e.target.value))} aria-label="Port">
+            {srv.ports.map((p) => (
+              <option key={p.port} value={p.port}>
+                port {p.port}
+                {p.container && p.container !== p.port ? ` (container ${p.container})` : ""}
+              </option>
+            ))}
+          </select>
+          <select value={scheme} onChange={(e) => setScheme(e.target.value as "http" | "https")} aria-label="Protocol">
+            <option value="http">http</option>
+            <option value="https">https</option>
+          </select>
+          <button type="submit" className="btn small" disabled={busy || !hostname.trim() || !port}>
+            {busy ? "Saving…" : "Add hostname"}
+          </button>
+        </form>
+      )}
+      {error && <div className="alert error small">{error}</div>}
     </div>
   );
 }

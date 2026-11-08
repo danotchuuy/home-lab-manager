@@ -1380,6 +1380,10 @@ route. The UniFi column and the UniFi rules card are hidden, since nothing needs
 still has rules for the server, they reappear with a warning, because those rules expose your home address: untick
 them and update the rules.
 
+The same table, with the server's UniFi rules, also opens from **Ports** beside each server in the Proxy page's server
+list, and from **Ports** in the **Servers** list under System → UniFi port forwarding, which shows every server's rules at
+a glance and has **Update all rules**. Relaying a server from its table changes the Proxy page's list too.
+
 Columns only appear for what's set up, and each column's header ticks or unticks all its ports. Internet ports that
 another server also exposes are flagged. After saving, click **Update rules** (UniFi) and **Apply proxy** (nginx and the
 firewall) to put the changes in place. Deleting a server forgets its port settings.
@@ -1624,7 +1628,7 @@ host's own address. Leave the subdomain empty to publish on the domain itself (`
 leaves these hostnames alone.
 
 Each hostname shows where cloudflared sends it (e.g. `http://localhost:8080`) and whether it's **published**, **not
-yet** published, or has a **conflict** or an **error**. A server's **Port forwarding** tab lists its hostnames too.
+yet** published, or has a **conflict** or an **error**. A server's **Port forwarding** tab lists its hostnames too, under **Web address**, and adds (**Add hostname**, with one of its TCP ports and http or https) or removes them, the same as here.
 
 - hlm only changes or removes DNS records it made. A hostname that already has another `A`, `AAAA` or `CNAME` record is
   shown as a conflict and isn't published; delete that record in Cloudflare or choose another hostname.

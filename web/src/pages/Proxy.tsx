@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { Ago, Spinner } from "../components/common";
 import { ProxyFirewall } from "../components/ProxyFirewall";
+import { ServerForwarding } from "../components/ServerForwarding";
 import { WireGuardTunnel } from "../components/WireGuardTunnel";
 import type { ProxyStatusSites } from "../types";
 import type {
@@ -83,6 +84,8 @@ export function ProxyPage() {
   const [configured, setConfigured] = useState(false);
   const [key, setKey] = useState<SSHKeyInfo | null>(null);
   const [form, setForm] = useState<ProxySettings>(EMPTY);
+  // The server whose ports are open below the settings.
+  const [portsOf, setPortsOf] = useState<string>();
   const [servers, setServers] = useState<Server[]>([]);
   const [info, setInfo] = useState<ProxyInfo>();
   const configFile = info?.configFile || "/etc/nginx/hlm-stream.conf";
@@ -516,13 +519,27 @@ export function ProxyPage() {
           {servers.length === 0 && <span className="muted small">No servers yet.</span>}
           <div className="server-checks">
             {servers.map((s) => (
-              <label key={s.id} className="radio">
-                <input type="checkbox" checked={form.servers.includes(s.name)} onChange={(e) => toggleServer(s.name, e.target.checked)} />
-                {s.name}
-                <span className="muted small">{s.app}</span>
-              </label>
+              <span key={s.id} className="server-check">
+                <label className="radio">
+                  <input type="checkbox" checked={form.servers.includes(s.name)} onChange={(e) => toggleServer(s.name, e.target.checked)} />
+                  {s.name}
+                  <span className="muted small">{s.app}</span>
+                </label>
+                <button
+                  type="button"
+                  className={`btn small ghost${portsOf === s.name ? " active" : ""}`}
+                  onClick={() => setPortsOf(portsOf === s.name ? undefined : s.name)}
+                  title={`${s.name}'s ports: internet ports, and which the proxy relays and its firewall opens`}
+                >
+                  Ports
+                </button>
+              </span>
             ))}
           </div>
+          <span className="field-help">
+            <strong>Ports</strong> shows a server&apos;s ports as on its Port forwarding tab: their internet ports, and
+            which the proxy relays, its firewall opens and UniFi forwards.
+          </span>
         </div>
 
         <fieldset className="config-section">
@@ -682,6 +699,27 @@ export function ProxyPage() {
           </button>
         </div>
       </form>
+
+      {portsOf && (
+        <section className="embedded-forwarding">
+          <div className="settings-actions">
+            <h2>{portsOf}&apos;s ports</h2>
+            <button type="button" className="btn small ghost" onClick={() => setPortsOf(undefined)}>
+              Close
+            </button>
+          </div>
+          <ServerForwarding
+            key={portsOf}
+            server={portsOf}
+            canManage
+            hostnames={false}
+            onSaved={() =>
+              // Its relay may have changed: keep the list above as saved.
+              api.proxy().then((p) => setForm((f) => ({ ...f, servers: p.settings.servers })), () => {})
+            }
+          />
+        </section>
+      )}
 
       <WireGuardTunnel
         beforeSetup={async () => {
