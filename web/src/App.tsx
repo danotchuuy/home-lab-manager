@@ -18,6 +18,7 @@ import { ImportServerPage } from "./pages/ImportServer";
 import { AdoptPage } from "./pages/Adopt";
 import { CloneServerPage } from "./pages/CloneServer";
 import { MoveServerPage } from "./pages/MoveServer";
+import { StackAdoptPage } from "./pages/StackAdopt";
 import { StackEditorPage } from "./pages/StackEditor";
 import { ServerDetailPage } from "./pages/ServerDetail";
 import { ServersPage } from "./pages/Servers";
@@ -145,6 +146,7 @@ export function App() {
           <Route path="/import" element={<ImportServerPage />} />
           <Route path="/adopt" element={<AdoptPage />} />
           <Route path="/stacks/new" element={<StackEditorPage />} />
+          <Route path="/stacks/adopt" element={<StackAdoptPage />} />
           <Route path="/stacks/:name" element={<StackEditorPage />} />
           <Route path="/connections/:name" element={<ConnectionDetailPage />} />
           <Route path="/backups" element={<BackupsPage />} />

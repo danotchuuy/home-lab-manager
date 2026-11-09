@@ -31,6 +31,18 @@ import (
 // composeProjectLabel marks containers Docker Compose made.
 const composeProjectLabel = "com.docker.compose.project"
 
+// composeFile is the Compose file a container's project came from (the
+// first, when it was several), or its folder, from Compose's labels.
+func composeFile(labels map[string]string) string {
+	if labels[composeProjectLabel] == "" {
+		return ""
+	}
+	if f, _, _ := strings.Cut(labels["com.docker.compose.project.config_files"], ","); f != "" {
+		return f
+	}
+	return labels["com.docker.compose.project.working_dir"]
+}
+
 // Unmanaged is a container on a Docker host that hlm doesn't manage.
 type Unmanaged struct {
 	// ID is the container's name, with @host for another host: the name
@@ -51,6 +63,9 @@ type Unmanaged struct {
 	// project of one Docker Compose made.
 	Unraid  bool   `json:"unraid,omitempty"`
 	Compose string `json:"compose,omitempty"`
+	// ComposeFile is its project's Compose file on the host, as Compose
+	// labelled it, for adopting the whole project as a stack.
+	ComposeFile string `json:"composeFile,omitempty"`
 	// Adoptable says whether hlm can adopt it; Reason says why not.
 	Adoptable bool   `json:"adoptable"`
 	Reason    string `json:"reason,omitempty"`
@@ -82,6 +97,7 @@ func (m *Manager) Unmanaged(ctx context.Context, host string) ([]Unmanaged, erro
 			ID: strings.TrimPrefix(firstOr(c.Names, c.ID), "/"), Host: host, Image: c.Image, State: c.State, Status: c.Status,
 			Created: time.Unix(c.Created, 0), Ports: dedupePorts(c.Ports), Icon: c.Labels["net.unraid.docker.icon"], Network: c.HostConfig.NetworkMode,
 			Unraid: c.Labels[catalog.UnraidManagedLabel] != "", Compose: c.Labels[composeProjectLabel],
+			ComposeFile: composeFile(c.Labels),
 		}
 		_, u.Name = SplitID(u.ID)
 		if other, ok := strings.CutPrefix(u.Network, "container:"); ok && names[other] != "" {
@@ -124,7 +140,7 @@ func (m *Manager) hlmOwn(id, image string, labels map[string]string) bool {
 func adoptBlocker(u Unmanaged) string {
 	switch {
 	case u.Compose != "":
-		return "Docker Compose made it (project " + u.Compose + "): adopting one of its containers would split it from the rest. Bring the project into hlm as a Compose stack instead."
+		return "Docker Compose made it (project " + u.Compose + "): adopting one of its containers would split it from the rest. Adopt the whole project as a Compose stack instead."
 	case strings.HasPrefix(u.Network, "container:"):
 		return "It uses another container's network (" + u.Network + "), which hlm's servers can't."
 	case u.State == "paused":
@@ -212,6 +228,7 @@ func (m *Manager) AdoptPlan(ctx context.Context, id string) (AdoptPlan, error) {
 	plan.Container = Unmanaged{
 		ID: JoinID(host, bare), Host: host, Name: bare, Image: info.Config.Image, State: info.State.Status, Network: info.HostConfig.NetworkMode,
 		Icon: labels["net.unraid.docker.icon"], Unraid: labels[catalog.UnraidManagedLabel] != "", Compose: labels[composeProjectLabel],
+		ComposeFile: composeFile(labels),
 	}
 	if plan.Container.Reason = adoptBlocker(plan.Container); plan.Container.Reason != "" {
 		return plan, errors.New(plan.Container.Reason)

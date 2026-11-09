@@ -4,6 +4,7 @@ import { api } from "../api";
 import { Spinner } from "../components/common";
 import { DeployProgress } from "../components/DeployProgress";
 import { HostPicker } from "../components/HostPicker";
+import { StackPlanCard } from "../components/StackPlanCard";
 import type { DeployEvent, StackPlan } from "../types";
 
 const EXAMPLE = `services:
@@ -34,13 +35,6 @@ volumes:
   db:
 `;
 
-const CHANGE: Record<string, string> = {
-  create: "created",
-  update: "recreated",
-  unchanged: "unchanged",
-  remove: "removed (its data is kept)",
-};
-
 /** Catalog → Add a Compose stack, and a stack's Edit. */
 export function StackEditorPage() {
   const { name: existing } = useParams();
@@ -56,6 +50,8 @@ export function StackEditorPage() {
   // A new stack's Docker host; an existing one stays where it is.
   const [host, setHost] = useState("local");
   const [stackHost, setStackHost] = useState<string>();
+  // The Compose file on the host it was adopted from, if it was.
+  const [source, setSource] = useState<string>();
 
   useEffect(() => {
     if (!existing) return;
@@ -64,6 +60,7 @@ export function StackEditorPage() {
         setYaml(r.yaml ?? "");
         setEnv(r.env ?? "");
         setStackHost(r.stack.host);
+        setSource(r.stack.source);
         setLoaded(true);
       },
       (e) => setError((e as Error).message),
@@ -171,6 +168,14 @@ export function StackEditorPage() {
             On Docker host <strong>{stackHost}</strong>.
           </p>
         )}
+        {existing && source && (
+          <p className="muted small no-margin">
+            Adopted from <code>{source}</code>
+            {stackHost && stackHost !== "local" ? ` on ${stackHost}` : ""}. Its relative paths (<code>./data</code>) are
+            still relative to that folder. hlm runs it from its own copy of the file below: changes to the file on the host
+            aren&apos;t picked up, and <code>docker compose</code> shouldn&apos;t be used on it any more.
+          </p>
+        )}
         <label className="field">
           <span className="field-label">docker-compose.yml</span>
           <textarea
@@ -222,53 +227,7 @@ export function StackEditorPage() {
         </div>
       </div>
 
-      {plan && (
-        <div className="card">
-          <h2>What happens</h2>
-          {plan.warnings.length > 0 && (
-            <ul className="warnings transfer-warnings">
-              {plan.warnings.map((w, i) => (
-                <li key={i}>⚠ {w}</li>
-              ))}
-            </ul>
-          )}
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Service</th>
-                <th>Image</th>
-                <th>Ports</th>
-                <th>Data</th>
-                <th>Change</th>
-              </tr>
-            </thead>
-            <tbody>
-              {plan.services.map((s) => (
-                <tr key={s.service}>
-                  <td>
-                    <strong>{s.service}</strong>
-                    <div className="muted small">{s.container}</div>
-                    {s.dependsOn?.length ? <div className="muted small">after {s.dependsOn.join(", ")}</div> : null}
-                  </td>
-                  <td>
-                    <code className="small">{s.image}</code>
-                  </td>
-                  <td className="small">{s.ports.join(", ") || "—"}</td>
-                  <td className="small">
-                    {s.mounts.map((m) => (
-                      <div key={m}>
-                        <code>{m}</code>
-                      </div>
-                    ))}
-                  </td>
-                  <td className={`small change-${s.change}`}>{CHANGE[s.change]}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {plan.networks.length > 0 && <p className="muted small">Networks: {plan.networks.join(", ")}</p>}
-        </div>
-      )}
+      {plan && <StackPlanCard plan={plan} />}
       {events.length > 0 && (
         <div className="card">
           <DeployProgress events={events} />

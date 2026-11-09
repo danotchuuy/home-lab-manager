@@ -95,6 +95,9 @@ export function CatalogPage() {
           <Link className="btn" to="/stacks/new">
             Add a Compose stack
           </Link>
+          <Link className="btn" to="/stacks/adopt">
+            Adopt a Compose stack
+          </Link>
           <button className="btn ghost" onClick={refresh} disabled={refreshing}>
             {refreshing ? "Refreshing…" : "Refresh feed"}
           </button>

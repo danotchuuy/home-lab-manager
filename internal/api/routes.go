@@ -207,6 +207,8 @@ func (s *server) routes() []route {
 		{"GET /api/stacks", signedIn, s.listStacks},
 		{"GET /api/stacks/{name}", signedIn, s.getStack},
 		{"POST /api/stacks/preview", admin, s.previewStack},
+		{"POST /api/stacks/adopt/preview", admin, s.previewAdoptStack},
+		{"POST /api/stacks/adopt", admin, s.adoptStack},
 		{"POST /api/stacks", admin, s.createStack},
 		{"PUT /api/stacks/{name}", admin, s.updateStack},
 		{"POST /api/stacks/{name}/{action}", signedIn, s.stackAction},

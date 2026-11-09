@@ -1233,11 +1233,38 @@ Some apps need several containers: an app with its database and cache, or a game
   services, networks and relative data folders (under that host's data folder) are all there, and its services are
   named `<name>@<host>`. A stack stays on its host: to move it, create it on the other one and delete the old one.
 
+### Adopting a stack Docker Compose runs
+
+A stack you started with `docker compose up` can become one of hlm's. **Catalog → Adopt a Compose stack** (or **Adopt
+the stack…** on a Compose container on the **Adopt a container** page, which fills in its file) asks for the Docker
+host and the Compose file's full path there, or the folder it's in (hlm looks for `compose.yaml`, `compose.yml`,
+`docker-compose.yaml` and `docker-compose.yml`, as Compose does). hlm reads the file and the `.env` beside it, through
+a container it creates but never starts, with that folder mounted read-only. **Check** shows each service and what
+happens to it, then **Adopt**:
+
+- The stack keeps Compose's project name (from its containers' labels, the file's `name:`, or its folder), as its
+  networks and named volumes are named after it.
+- A stack Compose runs from several files (`-f a.yml -f b.yml`) is refused: merge them into one first.
+- hlm keeps a copy of the file and `.env` as the stack's, like a stack made in hlm.
+- Each container Compose made is recreated as one of hlm's servers, with the same name (`<project>-<service>-1`),
+  image, folders, named volumes and networks. Docker can't add labels to a container, so this is how it becomes
+  hlm's; the old one stays, renamed, until the new one runs, and is put back if it doesn't. The image isn't pulled
+  again: adopting changes who runs it, not what.
+- Services Compose hadn't started are created, named as Compose would name them.
+- Relative paths (`./data`) stay relative to the file's folder, as in Compose, rather than going under `<appdata>`.
+- A service with more than one container (`--scale`) has to be scaled to one first. Containers of services no longer
+  in the file are left alone.
+
+After that, change the stack in hlm (**Edit**): it runs from its own copy, so later changes to the file on the host
+aren't picked up, and `docker compose` shouldn't be used on that folder any more. The stack's page says where it was
+adopted from.
+
 What hlm reads from the file:
 
 - **Variables.** `${VAR}`, `${VAR:-default}`, `${VAR:?message}` and the rest of Compose's forms, from the `.env`
   only: hlm's own environment is never used. `env_file: .env` passes the `.env`'s variables to a service.
-- **Data folders.** Relative paths (`./data`) go in `<appdata>/<stack>/`, and can't leave it. Absolute paths and named
+- **Data folders.** Relative paths (`./data`) go in `<appdata>/<stack>/`, and can't leave it (an adopted stack's are
+  relative to its file's folder). Absolute paths and named
   volumes (`<stack>_<name>`, or the `name:` given) are used as they are.
 - **Services:** `image`, `command`, `entrypoint`, `environment`, `env_file`, `ports` and `expose`, `volumes`, `tmpfs`,
   `networks` (with aliases), `network_mode` (including `service:<name>`), `depends_on`, `restart`, `healthcheck`,

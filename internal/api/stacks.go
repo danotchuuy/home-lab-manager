@@ -124,6 +124,52 @@ func (s *server) previewStack(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, plan)
 }
 
+// adoptInput is a Compose stack on a host to adopt: its file, or the
+// folder it's in.
+type adoptInput struct {
+	Host string `json:"host"`
+	Path string `json:"path"`
+}
+
+func readAdopt(w http.ResponseWriter, r *http.Request) (adoptInput, bool) {
+	var in adoptInput
+	if err := json.NewDecoder(io.LimitReader(r.Body, 16<<10)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return in, false
+	}
+	return in, true
+}
+
+// previewAdoptStack reads a Compose file on a host and says what adopting
+// its stack would do.
+func (s *server) previewAdoptStack(w http.ResponseWriter, r *http.Request) {
+	in, ok := readAdopt(w, r)
+	if !ok {
+		return
+	}
+	ap, err := s.Stacks.AdoptPreview(r.Context(), in.Host, in.Path)
+	if err != nil {
+		writeStackError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ap)
+}
+
+// adoptStack makes a Compose stack on a host one of hlm's.
+func (s *server) adoptStack(w http.ResponseWriter, r *http.Request) {
+	in, ok := readAdopt(w, r)
+	if !ok {
+		return
+	}
+	audit.Add(r.Context(), "path", in.Path)
+	if in.Host != "" {
+		audit.Add(r.Context(), "host", in.Host)
+	}
+	s.stream(w, r, func(ctx context.Context, emit func(manager.Event)) error {
+		return s.Stacks.Adopt(ctx, in.Host, in.Path, emit)
+	})
+}
+
 func (s *server) createStack(w http.ResponseWriter, r *http.Request) {
 	s.applyStack(w, r, false)
 }

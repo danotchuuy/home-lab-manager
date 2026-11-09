@@ -193,13 +193,17 @@ func (p *Project) Spec(s *Service, appdata string) (ContainerSpec, error) {
 }
 
 // hostPath resolves a bind mount's source: relative paths are inside the
-// stack's folder under appdata.
+// stack's folder under appdata, or relative to Dir.
 func (p *Project) hostPath(src, appdata string) (string, error) {
 	if strings.HasPrefix(src, "~") {
 		return "", fmt.Errorf("%s: use a path relative to the stack, or an absolute one, not ~", src)
 	}
 	if strings.HasPrefix(src, "/") {
 		return path.Clean(src), nil
+	}
+	if p.Dir != "" {
+		// As Compose does: relative to the file, wherever that leads.
+		return path.Join(p.Dir, src), nil
 	}
 	if appdata == "" {
 		return "", errors.New("relative paths need HLM_APPDATA_ROOT")

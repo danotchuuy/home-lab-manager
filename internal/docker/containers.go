@@ -125,9 +125,20 @@ type CreateRequest struct {
 	NetworkingConfig *NetworkingConfig `json:"NetworkingConfig,omitempty"`
 }
 
+// Mount is a mount in HostConfig.Mounts.
+type Mount struct {
+	Type     string `json:"Type"` // "bind"
+	Source   string `json:"Source"`
+	Target   string `json:"Target"`
+	ReadOnly bool   `json:"ReadOnly,omitempty"`
+}
+
 // HostConfig holds the host-specific parts of a container's configuration.
 type HostConfig struct {
-	Binds          []string                 `json:"Binds,omitempty"`
+	Binds []string `json:"Binds,omitempty"`
+	// Mounts are mounts in the long form: unlike Binds, a bind mount of a
+	// path that doesn't exist fails rather than creating it.
+	Mounts         []Mount                  `json:"Mounts,omitempty"`
 	PortBindings   map[string][]PortBinding `json:"PortBindings,omitempty"`
 	NetworkMode    string                   `json:"NetworkMode,omitempty"`
 	RestartPolicy  RestartPolicy            `json:"RestartPolicy"`

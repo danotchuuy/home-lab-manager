@@ -1,10 +1,14 @@
 package stack
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"path"
 	"strings"
 	"sync"
 	"testing"
@@ -20,9 +24,51 @@ type memDocker struct {
 	containers map[string]docker.ContainerSummary // by ID
 	networks   []docker.Network
 	n          int
+	reqs       map[string]docker.CreateRequest // by ID
+	// files are the host's files, by path, for containers' bind mounts.
+	files map[string]string
 }
 
-func newMemDocker() *memDocker { return &memDocker{containers: map[string]docker.ContainerSummary{}} }
+func newMemDocker() *memDocker {
+	return &memDocker{containers: map[string]docker.ContainerSummary{}, reqs: map[string]docker.CreateRequest{}, files: map[string]string{}}
+}
+
+// isDir says whether p is a folder of the host's files.
+func (m *memDocker) isDir(p string) bool {
+	for f := range m.files {
+		if strings.HasPrefix(f, strings.TrimSuffix(p, "/")+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// CopyFrom serves a container's bind-mounted host files as Docker does.
+func (m *memDocker) CopyFrom(_ context.Context, id, p string) (io.ReadCloser, docker.PathStat, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key, _ := m.find(id)
+	for _, mt := range m.reqs[key].HostConfig.Mounts {
+		rel, ok := strings.CutPrefix(p, mt.Target)
+		if !ok {
+			continue
+		}
+		host := path.Join(mt.Source, rel)
+		var buf bytes.Buffer
+		tw := tar.NewWriter(&buf)
+		if data, ok := m.files[host]; ok {
+			tw.WriteHeader(&tar.Header{Name: path.Base(host), Typeflag: tar.TypeReg, Size: int64(len(data)), Mode: 0o644})
+			tw.Write([]byte(data))
+		} else if m.isDir(host) {
+			tw.WriteHeader(&tar.Header{Name: path.Base(host), Typeflag: tar.TypeDir, Mode: 0o755})
+		} else {
+			return nil, docker.PathStat{}, &docker.APIError{Status: 404, Message: "Could not find the file " + p}
+		}
+		tw.Close()
+		return io.NopCloser(&buf), docker.PathStat{}, nil
+	}
+	return nil, docker.PathStat{}, &docker.APIError{Status: 404, Message: "Could not find the file " + p}
+}
 
 func (m *memDocker) find(idOrName string) (string, bool) {
 	for id, c := range m.containers {
@@ -69,11 +115,17 @@ func (m *memDocker) InspectContainer(_ context.Context, id string) (docker.Conta
 func (m *memDocker) CreateContainer(_ context.Context, name string, req docker.CreateRequest) (string, []string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.find(name); ok {
+	if _, ok := m.find(name); ok && name != "" {
 		return "", nil, fmt.Errorf("conflict: %s exists", name)
+	}
+	for _, mt := range req.HostConfig.Mounts {
+		if mt.Type == "bind" && !m.isDir(mt.Source) {
+			return "", nil, &docker.APIError{Status: 400, Message: "invalid mount config for type \"bind\": bind source path does not exist: " + mt.Source}
+		}
 	}
 	m.n++
 	id := fmt.Sprintf("c%d", m.n)
+	m.reqs[id] = req
 	m.containers[id] = docker.ContainerSummary{ID: id, Names: []string{"/" + name}, Image: req.Image, State: "created", Labels: req.Labels}
 	return id, nil, nil
 }

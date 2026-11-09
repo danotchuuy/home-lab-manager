@@ -38,6 +38,9 @@ export function AdoptPage() {
     <div className="page adopt-page">
       <div className="page-header">
         <h1>Adopt a container</h1>
+        <Link className="btn small ghost" to={`/stacks/adopt?host=${encodeURIComponent(host)}`}>
+          Adopt a Compose stack
+        </Link>
         {hosts && hosts.length > 1 && (
           <select value={host} onChange={(e) => setHost(e.target.value)} aria-label="Docker host">
             {hosts.map((h) => (
@@ -111,6 +114,13 @@ function ContainerCard({
           <button className="btn small" onClick={onOpen}>
             {open ? "Close" : "Adopt…"}
           </button>
+        ) : c.compose ? (
+          <Link
+            className="btn small"
+            to={`/stacks/adopt?host=${encodeURIComponent(c.host)}${c.composeFile ? `&path=${encodeURIComponent(c.composeFile)}` : ""}`}
+          >
+            Adopt the stack…
+          </Link>
         ) : null}
       </div>
       {!c.adoptable && c.reason && <p className="muted small no-margin">{c.reason}</p>}

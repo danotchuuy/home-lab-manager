@@ -24,7 +24,14 @@ type Project struct {
 	Networks map[string]Network
 	Volumes  map[string]Volume
 	Warnings []string
-	env      map[string]string // the .env's variables
+	// Dir, if set, is the folder on the host the Compose file is in, which
+	// relative bind mounts are relative to (a stack adopted from a file on
+	// the host); otherwise they go in the stack's folder under appdata.
+	Dir string
+	// Names are services' container names when not <project>-<service>
+	// (an adopted stack keeps the names Compose gave them), by service.
+	Names map[string]string
+	env   map[string]string // the .env's variables
 }
 
 // Service is one service.
@@ -397,6 +404,9 @@ func (p *Project) VolumeName(key string) string {
 func (p *Project) ContainerName(s *Service) string {
 	if s.ContainerName != "" {
 		return s.ContainerName
+	}
+	if n := p.Names[s.Name]; n != "" {
+		return n
 	}
 	return p.Name + "-" + s.Name
 }
