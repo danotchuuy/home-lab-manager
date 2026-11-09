@@ -110,6 +110,8 @@ type Options struct {
 	// those whose health keeps failing.
 	Health        *health.Store
 	HealthMonitor *health.Monitor
+	// Prober runs servers' Kubernetes-style probes.
+	Prober *health.Prober
 	// Transfer exports, imports and clones servers.
 	Transfer *transfer.Service
 	// Stacks runs Docker Compose stacks.

@@ -265,6 +265,7 @@ func (s *server) routes() []route {
 		{"GET /api/servers/{id}/health", serverRole(rbac.Viewer), s.serverHealth},
 		{"PUT /api/servers/{id}/health", serverRole(rbac.Manager), s.setServerHealth},
 		{"POST /api/servers/{id}/health/test", serverRole(rbac.Manager), s.testServerHealth},
+		{"POST /api/servers/{id}/health/probe-test", serverRole(rbac.Manager), s.testServerProbe},
 		{"GET /api/servers/{id}/update-policy", serverRole(rbac.Viewer), s.updatePolicy},
 		{"PUT /api/servers/{id}/update-policy", serverRole(rbac.Manager), s.setUpdatePolicy},
 		{"GET /api/updates/auto", signedIn, s.autoUpdates},

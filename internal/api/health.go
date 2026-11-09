@@ -47,6 +47,8 @@ type healthStatus struct {
 	// QueryAvailable says the game's status query works for this server,
 	// so it can be the health signal.
 	QueryAvailable bool `json:"queryAvailable"`
+	// Probes is how its Kubernetes-style probes are doing, while it runs.
+	Probes *health.ProbeStatus `json:"probes,omitempty"`
 }
 
 func (s *server) serverHealth(w http.ResponseWriter, r *http.Request) {
@@ -95,10 +97,16 @@ func (s *server) serverHealth(w http.ResponseWriter, r *http.Request) {
 		out.QueryAvailable = (proto != gamequery.ProtoAuto && proto != gamequery.ProtoOff) ||
 			(proto == gamequery.ProtoAuto && st.Method != nil)
 	}
-	// Commands can carry passwords; viewers don't see them.
+	if s.Prober != nil {
+		if st, ok := s.Prober.Status(name); ok {
+			out.Probes = &st
+		}
+	}
+	// Commands and headers can carry passwords; viewers don't see them.
 	if !s.access(r).Can(name, rbac.Operator) {
 		out.Settings.Check.Command = ""
 		out.CurrentCheck = nil
+		out.Settings.Probes = out.Settings.Probes.Redacted()
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -164,4 +172,28 @@ func (s *server) testServerHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"healthy": code == 0, "exitCode": code, "output": output})
+}
+
+// testServerProbe runs a Kubernetes-style probe against a running server
+// once.
+func (s *server) testServerProbe(w http.ResponseWriter, r *http.Request) {
+	if s.Prober == nil {
+		writeError(w, http.StatusNotFound, errors.New("probes aren't available"))
+		return
+	}
+	name, ok := s.namedServer(w, r)
+	if !ok {
+		return
+	}
+	var pr health.Probe
+	if err := json.NewDecoder(io.LimitReader(r.Body, 16<<10)).Decode(&pr); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	success, msg, err := s.Prober.Test(r.Context(), name, pr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": success, "message": msg})
 }
