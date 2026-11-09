@@ -202,10 +202,29 @@ func TestListenerWakes(t *testing.T) {
 	t.Run("udp", func(t *testing.T) {
 		p := freePort(t, "udp")
 		woke := startListener(t, "--udp", strconv.Itoa(p))
+		// One packet, or a burst, is a scanner; another address's packets
+		// don't add up with them.
 		dial(t, "udp", p).Write([]byte("hello"))
-		if got := woke(3 * time.Second); !strings.Contains(got, `"port":"`+strconv.Itoa(p)+`/udp"`) {
-			t.Errorf("woke = %q", got)
+		burst := dial(t, "udp", p)
+		for range 5 {
+			burst.Write([]byte("probe"))
 		}
+		if got := woke(300 * time.Millisecond); got != "" {
+			t.Fatalf("woken by a stray packet: %s", got)
+		}
+		// A client that keeps resending its connection request is a player.
+		u := dial(t, "udp", p)
+		for range 3 {
+			u.Write([]byte{0x17, 0x2a, 0x00})
+			if got := woke(600 * time.Millisecond); got != "" {
+				if !strings.Contains(got, `"port":"`+strconv.Itoa(p)+`/udp"`) || !strings.Contains(got, "kept trying") ||
+					!strings.Contains(got, "17 2a 00") {
+					t.Errorf("woke = %q", got)
+				}
+				return
+			}
+		}
+		t.Error("a client that kept trying didn't wake it")
 	})
 	t.Run("bedrock join", func(t *testing.T) {
 		p := freePort(t, "udp")
@@ -220,6 +239,54 @@ func TestListenerWakes(t *testing.T) {
 			t.Errorf("woke = %q", got)
 		}
 	})
+}
+
+func TestKeptTrying(t *testing.T) {
+	tries := map[string]*udpTry{}
+	at := time.Unix(1000, 0)
+	try := func(from string, after time.Duration) bool {
+		at = at.Add(after)
+		_, ok := keptTrying(tries, from, []byte{1, 2}, at)
+		return ok
+	}
+	// Three packets at once aren't enough: a client keeps trying.
+	if try("a:1", 0) || try("a:1", 0) || try("a:1", 0) {
+		t.Fatal("a burst woke it")
+	}
+	if !try("a:1", time.Second) {
+		t.Fatal("a second of retries didn't wake it")
+	}
+	// Packets far apart don't add up.
+	for range 5 {
+		if try("b:1", 6*time.Second) {
+			t.Fatal("packets minutes apart woke it")
+		}
+	}
+	// Old addresses are forgotten when there are many.
+	for i := range 5000 {
+		try(strconv.Itoa(i), 0)
+	}
+	if len(tries) > 4096 {
+		t.Errorf("%d addresses remembered", len(tries))
+	}
+}
+
+func TestUDPOtherProtocol(t *testing.T) {
+	stun := make([]byte, 20)
+	stun[1] = 0x01
+	binary.BigEndian.PutUint32(stun[4:], 0x2112a442)
+	for name, b := range map[string][]byte{
+		"SSDP": []byte("M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\n"),
+		"SIP":  []byte("OPTIONS sip:nm SIP/2.0\r\n"),
+		"STUN": stun,
+	} {
+		if got := udpOtherProtocol(b); got != name {
+			t.Errorf("%s: %q", name, got)
+		}
+	}
+	if got := udpOtherProtocol([]byte{0x05, 0x00, 0xff, 0xff, 0x00, 0xfe}); got != "" {
+		t.Errorf("a game's packet is %q", got)
+	}
 }
 
 func TestListenerArgs(t *testing.T) {

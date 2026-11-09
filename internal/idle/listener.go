@@ -214,8 +214,28 @@ func redisCommand(b []byte) bool {
 // constantly; they don't wake a server.
 var a2sPrefix = []byte{0xff, 0xff, 0xff, 0xff}
 
+// A game client joining a server that doesn't answer keeps sending its
+// connection request (Unreal Engine's handshake, Steam networking's and
+// RakNet's connect requests are each resent about every second), while a
+// scanner or a stray packet sends one or two and moves on. So UDP wakes a
+// server only when one address keeps trying: joinTries packets over at
+// least joinSpan, with no gap longer than joinGap.
+var (
+	joinTries = 3
+	joinSpan  = time.Second
+	joinGap   = 5 * time.Second
+)
+
+// udpTry is one address's packets so far.
+type udpTry struct {
+	first, last time.Time
+	n           int
+	head        []byte // the first packet's first bytes
+}
+
 func serveUDP(ctx context.Context, pc net.PacketConn, port int, c listenerConfig, wake func(Contact)) {
 	buf := make([]byte, 2048)
+	tries := map[string]*udpTry{}
 	for ctx.Err() == nil {
 		n, from, err := pc.ReadFrom(buf)
 		if err != nil {
@@ -224,7 +244,7 @@ func serveUDP(ctx context.Context, pc net.PacketConn, port int, c listenerConfig
 		pkt := buf[:n]
 		ct := Contact{Port: strconv.Itoa(port) + "/udp", From: from.String()}
 		switch {
-		case n == 0 || bytes.HasPrefix(pkt, a2sPrefix):
+		case n == 0 || bytes.HasPrefix(pkt, a2sPrefix) || udpOtherProtocol(pkt) != "":
 		case port == c.bedrock:
 			if reply, joining := bedrock(pkt, port, c); reply != nil {
 				pc.WriteTo(reply, from)
@@ -233,9 +253,54 @@ func serveUDP(ctx context.Context, pc net.PacketConn, port int, c listenerConfig
 				wake(ct)
 			}
 		default:
-			wake(ct)
+			if about, ok := keptTrying(tries, ct.From, pkt, time.Now()); ok {
+				ct.About = about
+				wake(ct)
+			}
 		}
 	}
+}
+
+// keptTrying counts a packet from an address, and says whether that
+// address has kept trying long enough to be a player joining.
+func keptTrying(tries map[string]*udpTry, from string, pkt []byte, now time.Time) (string, bool) {
+	t := tries[from]
+	if t == nil || now.Sub(t.last) > joinGap {
+		if len(tries) >= 4096 {
+			for k, o := range tries {
+				if now.Sub(o.last) > joinGap {
+					delete(tries, k)
+				}
+			}
+			if len(tries) >= 4096 {
+				clear(tries) // a flood: start again rather than grow
+			}
+		}
+		t = &udpTry{first: now, head: bytes.Clone(pkt[:min(len(pkt), 8)])}
+		tries[from] = t
+	}
+	t.n++
+	t.last = now
+	if t.n < joinTries || t.last.Sub(t.first) < joinSpan {
+		return "", false
+	}
+	delete(tries, from)
+	return fmt.Sprintf("a client that kept trying to connect (%d packets in %.0fs, starting % x)",
+		t.n, t.last.Sub(t.first).Seconds(), t.head), true
+}
+
+// udpOtherProtocol names the protocol a UDP packet speaks, if it's one
+// internet scanners probe for rather than a game's.
+func udpOtherProtocol(b []byte) string {
+	switch {
+	case bytes.HasPrefix(b, []byte("M-SEARCH ")) || bytes.HasPrefix(b, []byte("NOTIFY ")):
+		return "SSDP"
+	case bytes.Contains(b[:min(len(b), 128)], []byte(" SIP/2.0")):
+		return "SIP"
+	case len(b) >= 20 && b[0]&0xc0 == 0 && binary.BigEndian.Uint32(b[4:8]) == 0x2112a442:
+		return "STUN"
+	}
+	return ""
 }
 
 // --- Minecraft (Java): answer the server list, wake on a login ---

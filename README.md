@@ -978,8 +978,14 @@ playing** (managers) can stop it after a while without players, and start it aga
     starting: join again in a minute or two" and wakes it; list pings don't.
   - **Minecraft Bedrock:** the server list shows it as asleep, and a player joining wakes it; the LAN discovery pings
     clients send all the time don't.
-  - **Other games:** any TCP connection that sends something, or any UDP packet, wakes it, except Steam's server
-    queries (`A2S`), so server browsers refreshing don't start it. A port scan that only connects doesn't either.
+  - **Other games over UDP:** a player's game keeps resending its request to join while nobody answers, so the
+    listener wakes the server when one address keeps sending for a second or more (three packets, none more than five
+    seconds apart). A single packet or a burst from an internet scanner doesn't, nor do Steam's server queries (`A2S`),
+    so server browsers refreshing don't start it, nor SSDP, SIP or STUN probes. The wake in the activity log says how
+    many packets it took and how the first one started.
+  - **Other games over TCP:** a connection that sends something wakes it, unless it's asking for a database, a website
+    or a remote login (MongoDB, HTTP, TLS, SSH, RDP, SMB, PostgreSQL, Redis), as scanners do. A port scan that only
+    connects doesn't either. Games that players join over UDP (the profile's `join_protocols`) are woken only by UDP.
   - It needs published ports or an address of its own (not the host's network). An address Docker chose rather than a
     fixed one is only known while the server runs, so hlm notes it as the server goes to sleep. It also needs a static
     Linux build of hlm (releases are) and an image for the same CPU architecture as hlm. The card says when one is
