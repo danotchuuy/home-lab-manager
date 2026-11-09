@@ -40,3 +40,7 @@ settings_files:
 game_backups:
   - path: Pal/Saved/SaveGames/0/*/backup/world
     note: The world, copied every so often while the server runs
+  # ich777's steamcmd images' backups (BACKUP=true), a .tar.gz an hour.
+  - path: Backups
+    match: "*.tar.gz"
+    note: The image's hourly backups

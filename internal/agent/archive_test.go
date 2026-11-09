@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/danotchuuy/home-lab-manager/internal/files"
 )
 
 // The agent reads a server's bind-mounted folders from the host's disk and
@@ -139,12 +141,34 @@ func TestAgentArchive(t *testing.T) {
 	if _, err := hub.Archive(ctx, "node", ArchiveRequest{ID: "gone", Folders: []string{"/x"}}); err == nil || errors.Is(err, ErrArchiveUnsupported) {
 		t.Errorf("missing container: %v", err)
 	}
+	// Listing a folder: from the host's disk too.
+	l, err := hub.List(ctx, "node", ListRequest{ID: "pal", Path: "/palworld/Saved"})
+	if err != nil || l.Source != "host" || len(l.Entries) != 2 {
+		t.Fatalf("list: %+v %v", l, err)
+	}
+	if _, err := hub.List(ctx, "node", ListRequest{ID: "pal", Path: "/palworld/Nope"}); !errors.Is(err, files.ErrNotFound) {
+		t.Errorf("list missing folder: %v", err)
+	}
+	if _, err := hub.List(ctx, "node", ListRequest{ID: "pal", Path: "/palworld/Saved/world.sav"}); !errors.Is(err, files.ErrNotDir) {
+		t.Errorf("list a file: %v", err)
+	}
+	if _, err := hub.List(ctx, "node", ListRequest{ID: "other", Path: "/palworld"}); err == nil || !strings.Contains(err.Error(), "isn't one of hlm's") {
+		t.Errorf("list unmanaged: %v", err)
+	}
+	mu.Lock()
+	if archiveCalls != 0 {
+		t.Errorf("Docker's archive API called %d times", archiveCalls)
+	}
+	mu.Unlock()
+	if Allowed("POST", ListPath) {
+		t.Error("list path in the Docker allow-list")
+	}
 	if Allowed("POST", ArchivePath) {
 		t.Error("archive path in the Docker allow-list")
 	}
 
 	// An older agent: its Docker allow-list answers.
-	old := httptest.NewServer(Handler(DockerProxy(sock, log), nil, nil, nil))
+	old := httptest.NewServer(Handler(DockerProxy(sock, log), nil, nil, nil, nil))
 	defer old.Close()
 	resp, err := http.Post(old.URL+ArchivePath, "application/json", strings.NewReader(`{}`))
 	if err != nil {

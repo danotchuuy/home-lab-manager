@@ -5,3 +5,12 @@ query:
   a2s_ports: [15637]
 settings_files:
   - names: [enshrouded_server.json]
+game_backups:
+  # Enshrouded keeps its last ten saves of each world here, rotating them
+  # (world0.ksd.backup-0 to -9).
+  - path: savegame/backup
+    note: Enshrouded's own last ten saves of each world, rotated
+  # ich777's steamcmd images' backups (BACKUP=true), a .tar.gz an hour.
+  - path: Backups
+    match: "*.tar.gz"
+    note: The image's hourly backups

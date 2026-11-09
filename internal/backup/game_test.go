@@ -6,6 +6,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -133,6 +134,35 @@ func TestSeaweedFSGameBackups(t *testing.T) {
 	if g := sync(); g.Uploaded != 0 || g.Deleted != 1 {
 		t.Errorf("pruned: %+v", g)
 	}
+	// A listing cut short (a stopped container's big folder, through
+	// Docker): what's listed is uploaded, nothing is cleaned up.
+	servers.mu.Lock()
+	servers.files[dir+"d/Level.sav"] = "d"
+	servers.mtime[dir+"d"] = old.Add(5 * time.Minute)
+	servers.files[dir+"e/Level.sav"] = "e"
+	servers.mtime[dir+"e"] = old.Add(10 * time.Minute)
+	servers.truncate = 3 // b, c and d: e isn't listed
+	servers.mu.Unlock()
+	if g := sync(); g.Uploaded != 1 || g.Deleted != 0 || !slices.ContainsFunc(g.Warnings, func(w string) bool { return strings.Contains(w, "weren't cleaned up") }) {
+		t.Errorf("cut short: %+v", g)
+	}
+	servers.mu.Lock()
+	servers.truncate = 0
+	servers.mu.Unlock()
+	// In full again: e goes up; all four are still in the folder, so kept.
+	if g := sync(); g.Uploaded != 1 || g.Deleted != 0 {
+		t.Errorf("listed in full again: %+v", g)
+	}
+	// The game drops d and e, older than b (the newest): they go.
+	servers.mu.Lock()
+	for _, k := range []string{"d", "e"} {
+		delete(servers.files, dir+k+"/Level.sav")
+	}
+	servers.mu.Unlock()
+	if g := sync(); g.Deleted != 2 {
+		t.Errorf("dropped: %+v", g)
+	}
+
 	o, _ := s.Overview(ctx, "srv")
 	if len(o.GameBackups) != 2 || !strings.HasSuffix(o.GameBackups[0].Key, "/b@"+strconv.FormatInt(old.Add(30*time.Minute).Unix(), 10)+".tar.gz") {
 		t.Fatalf("game backups: %+v", o.GameBackups)

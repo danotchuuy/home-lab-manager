@@ -194,8 +194,9 @@ type Servers interface {
 	RestoreArchive(ctx context.Context, id string, r io.Reader, progress func(files.ArchiveStats)) (files.ArchiveStats, error)
 	Start(ctx context.Context, id string) error
 	Stop(ctx context.Context, id string) error
-	// ListFolder lists a folder in a server's container.
-	ListFolder(ctx context.Context, id, path string) ([]files.Entry, error)
+	// ListFolder lists a folder in a server's container, saying whether
+	// the listing was cut short.
+	ListFolder(ctx context.Context, id, path string) ([]files.Entry, bool, error)
 }
 
 // Service runs backups.

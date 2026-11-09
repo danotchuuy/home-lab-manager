@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -92,7 +93,10 @@ type fakeServers struct {
 	running bool
 	files   map[string]string
 	mtime   map[string]time.Time // by path, for ListFolder
-	calls   []string
+	// truncate cuts listings short to this many entries, as listing a
+	// stopped container's big folder through Docker does.
+	truncate int
+	calls    []string
 }
 
 func (f *fakeServers) Inspect(ctx context.Context, id string) (docker.ContainerJSON, error) {
@@ -170,9 +174,18 @@ func (f *fakeServers) file(name string) string {
 	return f.files[name]
 }
 
-func (f *fakeServers) ListFolder(ctx context.Context, id, dir string) ([]files.Entry, error) {
+func (f *fakeServers) ListFolder(ctx context.Context, id, dir string) ([]files.Entry, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	entries, err := f.listFolder(dir)
+	if f.truncate > 0 && len(entries) > f.truncate {
+		sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
+		return entries[:f.truncate], true, err
+	}
+	return entries, false, err
+}
+
+func (f *fakeServers) listFolder(dir string) ([]files.Entry, error) {
 	dir = strings.TrimPrefix(dir, "/")
 	seen := map[string]files.Entry{}
 	for name := range f.files {

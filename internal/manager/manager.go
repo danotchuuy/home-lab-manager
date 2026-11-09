@@ -73,6 +73,8 @@ type Manager struct {
 	beforeStart func(ctx context.Context, name string)
 	// agentArchive reads servers' folders through their host's agent.
 	agentArchive AgentArchiver
+	// agentList lists servers' folders through their host's agent.
+	agentList AgentLister
 	// removeOldImages says whether to delete a server's old image after it's
 	// recreated with another; see UseOldImageRemoval.
 	removeOldImages func() bool

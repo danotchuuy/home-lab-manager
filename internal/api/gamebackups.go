@@ -72,6 +72,6 @@ func (s *server) folderThere(ctx context.Context, id, p string) bool {
 	if i := strings.Index(p, "/*"); i >= 0 {
 		p = p[:i]
 	}
-	_, err := s.Manager.ListFolder(ctx, id, p)
+	_, _, err := s.Manager.ListFolder(ctx, id, p)
 	return err == nil
 }

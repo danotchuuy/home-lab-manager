@@ -56,11 +56,7 @@ func (m *Manager) ListFiles(ctx context.Context, id, path string) (FileListing, 
 			path = mounts[0].Path
 		}
 	}
-	b, local, err := m.browser(info)
-	if err != nil {
-		return FileListing{}, err
-	}
-	l, err := b.List(ctx, local, path)
+	l, err := m.listFolder(ctx, info, path)
 	if err != nil {
 		return FileListing{}, err
 	}
@@ -71,11 +67,39 @@ func (m *Manager) ListFiles(ctx context.Context, id, path string) (FileListing, 
 	return FileListing{Listing: l, Mounts: mounts}, nil
 }
 
-// ListFolder lists a folder in a server's container: its entries only.
-func (m *Manager) ListFolder(ctx context.Context, id, path string) ([]files.Entry, error) {
+// ListFolder lists a folder in a server's container: its entries, and
+// whether the listing was cut short (a big folder of a stopped container
+// that could only be listed through Docker).
+func (m *Manager) ListFolder(ctx context.Context, id, path string) ([]files.Entry, bool, error) {
 	l, err := m.ListFiles(ctx, id, path)
-	return l.Entries, err
+	return l.Entries, l.Truncated, err
 }
+
+// listFolder lists a folder: through the host's agent, which reads it from
+// the host's disk, on agent hosts; otherwise (or with an older agent) as
+// the file browser does.
+func (m *Manager) listFolder(ctx context.Context, info docker.ContainerJSON, p string) (files.Listing, error) {
+	if host, bare := SplitID(info.ID); host != LocalHost && m.agentList != nil {
+		l, err := m.agentList(ctx, host, bare, p)
+		if err == nil || errors.Is(err, files.ErrNotFound) || errors.Is(err, files.ErrNotDir) {
+			return l, err
+		}
+		m.log.Debug("list a folder through Docker, not the host's agent", "server", info.Name, "err", err)
+	}
+	b, local, err := m.browser(info)
+	if err != nil {
+		return files.Listing{}, err
+	}
+	return b.List(ctx, local, p)
+}
+
+// AgentLister asks host's agent for a listing of a folder in container.
+type AgentLister func(ctx context.Context, host, container, path string) (files.Listing, error)
+
+// UseAgentList has folders on agent hosts listed from the host's disk.
+// Through Docker, a stopped container's folder can only be listed by
+// copying it out, which locks the container and is cut short for big ones.
+func (m *Manager) UseAgentList(f AgentLister) { m.agentList = f }
 
 // ReadFile opens a file in a server's container for editing.
 func (m *Manager) ReadFile(ctx context.Context, id, path string) (files.File, error) {

@@ -32,3 +32,8 @@ args_vars: [GAME_PARAMS, EXTRA_ARGS, SERVER_ARGS, LAUNCH_ARGS, ADDITIONAL_ARGS, 
 settings_files:
   - names: [ServerSettings.ini]
     prefer: /NWX/Config/
+game_backups:
+  # Nightingale keeps a copy of the save for each weekday (0-Sunday to
+  # 6-Saturday), overwriting last week's.
+  - path: NWX/Saved/OfflineBackup
+    note: Nightingale's own copy of the save for each day of the week
