@@ -14,6 +14,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/gamequery"
 	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
 	"github.com/danotchuuy/home-lab-manager/internal/hosts"
+	"github.com/danotchuuy/home-lab-manager/internal/idle"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
 	"github.com/danotchuuy/home-lab-manager/internal/metrics"
 	"github.com/danotchuuy/home-lab-manager/internal/metricstore"
@@ -119,6 +120,11 @@ func (s *server) prometheus(w http.ResponseWriter, r *http.Request) {
 	if s.Query != nil {
 		query = s.Query.Summaries(func(string) bool { return true })
 	}
+	// Servers asleep: stopped by hlm for want of players, to be woken.
+	var asleep map[string]idle.Asleep
+	if s.Idle != nil {
+		asleep = s.Idle.AsleepSince()
+	}
 	names := make([]string, 0, len(latest))
 	for n := range latest {
 		names = append(names, n)
@@ -133,6 +139,18 @@ func (s *server) prometheus(w http.ResponseWriter, r *http.Request) {
 			update = 1
 		}
 		e.Gauge("hlm_server_update_available", "1 if a newer image is available.", update, l...)
+		if s.Idle != nil {
+			a, sleeping := asleep[name]
+			e.Gauge("hlm_server_asleep", "1 if hlm stopped the server because nobody was playing, and it wakes on demand; 0 otherwise (running, or stopped some other way).", b2f(sleeping), l...)
+			if sleeping {
+				e.Gauge("hlm_server_asleep_since_timestamp_seconds", "When the server went to sleep.", float64(a.Since.Unix()), l...)
+				// Only for one that wakes on a connection: it has a listener
+				// or the reason it hasn't.
+				if a.Listener != "" || a.ListenerError != "" {
+					e.Gauge("hlm_server_wake_listener_up", "1 if a sleeping server's wake listener is running, so a player connecting wakes it.", b2f(a.Listener != ""), l...)
+				}
+			}
+		}
 		e.Counter("hlm_server_restarts_total", "Times Docker restarted the container under its restart policy since it was started.", float64(smp.Restarts), l...)
 		if st := smp.Stats; st != nil {
 			e.Gauge("hlm_server_cpu_ratio", "CPU used, in cores (1 = one full core).", st.CPUPercent/100, l...)

@@ -1769,6 +1769,10 @@ hlm keeps a month of resource history itself, without a database, so "why was it
   `hlm_server_memory_bytes`, `hlm_server_memory_limit_bytes`, `hlm_server_network_{receive,transmit}_bytes_total`,
   `hlm_server_block_{read,write}_bytes_total`, `hlm_server_restarts_total`, `hlm_server_update_available`, and from the
   [game status](#is-the-game-up-players-and-status) `hlm_server_query_up`, `hlm_server_players` and `hlm_server_players_max`.
+  With [idle stopping](#stopping-idle-servers) on, `hlm_server_asleep` is 1 for a server hlm stopped because nobody was
+  playing and 0 for every other (running, or stopped some other way), so `hlm_server_up == 0 and hlm_server_asleep == 0`
+  finds servers that are really down. A sleeping one also has `hlm_server_asleep_since_timestamp_seconds`, and
+  `hlm_server_wake_listener_up` (1 if connecting will wake it) when it wakes on a connection.
 - **Backups** (label `server`): `hlm_backup_last_success_timestamp_seconds`, `hlm_backup_last_size_bytes`,
   `hlm_backup_last_duration_seconds`.
 - **Hosts** (label `host`: `local`, or the ID of a host with [hlm's agent](#more-docker-hosts)): `hlm_host_cpu_ratio`,
