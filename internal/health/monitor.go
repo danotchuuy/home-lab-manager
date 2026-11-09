@@ -159,36 +159,43 @@ func (m *Monitor) failing(srv manager.Server, set Settings) (bool, string) {
 }
 
 func (m *Monitor) restart(ctx context.Context, name, reason string) {
-	stopped, err := m.opts.Servers.RestartUnhealthy(ctx, name, reason)
+	restartServer(ctx, m.opts.Servers, m.opts.Audit, m.opts.Notifier, m.opts.Log, m.opts.Now(), name, reason)
 	m.mu.Lock()
 	delete(m.since, name)
 	m.mu.Unlock()
+}
+
+// restartServer restarts a server whose health is failing, records it and
+// says so; failed is true when the restart didn't happen.
+func restartServer(ctx context.Context, servers Servers, rec audit.Recorder, n notify.Notifier, log *slog.Logger,
+	now time.Time, name, reason string) (failed bool) {
+	stopped, err := servers.RestartUnhealthy(ctx, name, reason)
 	if stopped {
-		return // the manager reports the crash loop
+		return false // the manager reports the crash loop
 	}
-	m.opts.Log.Warn("restarted unhealthy server", "server", name, "reason", reason, "err", err)
-	if m.opts.Audit != nil {
+	log.Warn("restarted unhealthy server", "server", name, "reason", reason, "err", err)
+	if rec != nil {
 		e := audit.Entry{Actor: "hlm", ActorKind: audit.ActorHLM, Action: "server.unhealthy_restart", Target: name, Server: name,
 			Result: audit.ResultOK, Details: map[string]string{"reason": reason}}
 		if err != nil {
 			e.Result, e.Error = audit.ResultError, err.Error()
 		}
-		m.opts.Audit.Record(e)
+		rec.Record(e)
 	}
-	if m.opts.Notifier == nil {
-		return
+	if n != nil {
+		e := notify.Event{
+			Kind: notify.KindServerUnhealthy, Title: name + " was restarted: its health was failing",
+			Message: fmt.Sprintf("%s was restarted: %s.", name, reason), Server: name,
+			Link: "/servers/" + name, Time: now,
+			Key: notify.DedupeKey(notify.KindServerUnhealthy, name) + "/restart",
+		}
+		if err != nil {
+			e.Title = name + " is unhealthy, and restarting it failed"
+			e.Message = fmt.Sprintf("%s: %s. hlm tried to restart it, but couldn't: %v", name, reason, err)
+		}
+		n.Notify(e)
 	}
-	e := notify.Event{
-		Kind: notify.KindServerUnhealthy, Title: name + " was restarted: its health was failing",
-		Message: fmt.Sprintf("%s was %s, so hlm restarted it.", name, reason), Server: name,
-		Link: "/servers/" + name, Time: m.opts.Now(),
-		Key: notify.DedupeKey(notify.KindServerUnhealthy, name) + "/restart",
-	}
-	if err != nil {
-		e.Title = name + " is unhealthy, and restarting it failed"
-		e.Message = fmt.Sprintf("%s was %s. hlm tried to restart it, but couldn't: %v", name, reason, err)
-	}
-	m.opts.Notifier.Notify(e)
+	return err != nil
 }
 
 // minutes is n minutes, in words.

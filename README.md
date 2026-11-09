@@ -775,6 +775,47 @@ with `--health-cmd`, `--health-interval`, `--health-timeout`, `--health-retries`
 Game ports are often UDP, which these checks can't test. For servers whose [status query](#is-the-game-up-players-and-status)
 works, the query can be the health signal instead.
 
+**Kubernetes-style probes.** A server can also have a `startupProbe`, `livenessProbe` and `readinessProbe`, written in
+YAML on **Settings → Health and crash loops** as in a Kubernetes pod spec, with the same fields, defaults and meanings:
+
+```yaml
+startupProbe:            # the others wait until this succeeds
+  httpGet:
+    path: /healthz
+    port: 8080           # the container's port, by number
+  periodSeconds: 10
+  failureThreshold: 30   # 5 minutes to start, or it's restarted
+livenessProbe:           # failing failureThreshold times in a row restarts it
+  tcpSocket:
+    port: 8080
+  periodSeconds: 30
+  timeoutSeconds: 5
+readinessProbe:          # failing marks it not ready
+  exec:
+    command: [sh, -c, "test -f /data/ready"]
+  successThreshold: 1
+  failureThreshold: 3
+```
+
+- Each probe has one of `httpGet` (`path`, `port`, `scheme` HTTP or HTTPS, `host`, `httpHeaders`; 200 to 399 succeeds,
+  redirects aren't followed and HTTPS certificates aren't checked), `tcpSocket` (`port`, `host`; connecting succeeds)
+  or `exec` (`command`, run in the container without a shell; exit code 0 succeeds), and `initialDelaySeconds` (0),
+  `periodSeconds` (10), `timeoutSeconds` (1), `successThreshold` (1; only readiness may have more) and
+  `failureThreshold` (3). Named ports aren't supported.
+- hlm runs them itself, as the kubelet does: `httpGet` and `tcpSocket` reach the server the way its
+  [status query](#is-the-game-up-players-and-status) does (its address on a shared network, or the port published on
+  its Docker host, [other hosts](#more-docker-hosts) included), or `host` if given. So they need nothing in the image,
+  and they take effect when saved, without recreating the container.
+- Until the startup probe succeeds, the others don't run; if it fails `failureThreshold` times, the server is
+  restarted. A liveness probe failing `failureThreshold` times in a row restarts it too. These restarts wait while the
+  server is being updated or backed up, count towards the crash-loop limit, are in the activity log and send a
+  `server.unhealthy` notification. After a restart (or any start) the probes start over, after `initialDelaySeconds`.
+- A readiness probe failing `failureThreshold` times in a row marks the server **Not ready** and sends a
+  `server.unhealthy` notification (at most hourly); `successThreshold` successes make it ready again. Without a
+  readiness probe, a server is ready once its startup probe succeeds.
+- The card shows each probe's last result and message, and **Test the probes now** runs each once.
+- They're kept apart from the Docker health check above: a server can have either, or both.
+
 **Restarting unhealthy servers** (off by default): hlm can restart a server once its health has been failing for a
 number of minutes, going by Docker's health check or by the game's status query not answering. Each restart counts
 towards the crash-loop limit, so a server that never recovers is stopped rather than restarted forever. Restarts wait
@@ -1805,7 +1846,9 @@ hlm keeps a month of resource history itself, without a database, so "why was it
   With [idle stopping](#stopping-idle-servers) on, `hlm_server_asleep` is 1 for a server hlm stopped because nobody was
   playing and 0 for every other (running, or stopped some other way), so `hlm_server_up == 0 and hlm_server_asleep == 0`
   finds servers that are really down. A sleeping one also has `hlm_server_asleep_since_timestamp_seconds`, and
-  `hlm_server_wake_listener_up` (1 if connecting will wake it) when it wakes on a connection.
+  `hlm_server_wake_listener_up` (1 if connecting will wake it) when it wakes on a connection. A running server with
+  [Kubernetes-style probes](#health-checks-and-crash-loops) has `hlm_server_ready` and, for each probe that has run,
+  `hlm_server_probe_success` (label `probe`: `startup`, `liveness` or `readiness`).
 - **Backups** (label `server`): `hlm_backup_last_success_timestamp_seconds`, `hlm_backup_last_size_bytes`,
   `hlm_backup_last_duration_seconds`.
 - **Hosts** (label `host`: `local`, or the ID of a host with [hlm's agent](#more-docker-hosts)): `hlm_host_cpu_ratio`,
@@ -2838,7 +2881,7 @@ when the `HLM_*` one isn't set.
 | `GET /api/jobs`                                | Installs and updates in progress, plus those that finished in the last minute.    |
 | `GET /api/updates`                             | When updates were last checked and how many are available.                        |
 | `GET/PUT /api/servers/{id}/update-policy`      | A server's [automatic updates](#automatic-updates): `{mode, windowStart?, windowEnd?, warn?, warnMinutes?, backup}` (`mode` is `auto`, `manual`, or empty to follow the default), plus what it follows, the update's state and the last result. `PUT` takes a manager; the warning is only shown to operators. |
-| `GET/PUT /api/servers/{id}/health`             | A server's [health settings](#health-checks-and-crash-loops): `{crashLoop: {off?, exits?, minutes?}, check: {kind, port?, path?, command?, interval?, timeout?, retries?, startPeriod?}, restartAfter?, signal?}` (`kind` is empty for the image's check, `none`, `tcp`, `http` or `command`; `signal` is empty for Docker's health or `query`), plus Docker's health, the crash loop it was stopped for, recent exits and whether the container has the check yet. `PUT` takes a manager; commands are only shown to operators. |
+| `GET/PUT /api/servers/{id}/health`             | A server's [health settings](#health-checks-and-crash-loops): `{crashLoop: {off?, exits?, minutes?}, check: {kind, port?, path?, command?, interval?, timeout?, retries?, startPeriod?}, restartAfter?, signal?, probes?: {startupProbe?, livenessProbe?, readinessProbe?}}` (`kind` is empty for the image's check, `none`, `tcp`, `http` or `command`; `signal` is empty for Docker's health or `query`), plus Docker's health, the crash loop it was stopped for, recent exits whether the container has the check yet, and its probes' state (`probes`: `started`, `ready`, each probe's last result). `PUT` takes a manager; commands (and probe headers' values) are only shown to operators. |
 | `GET /api/servers/{id}/players`                | A server's [players](#managing-players) (operators): `{game, running, actions, needsId, online: [{name, id}], onlineFrom, onlineError, lists: {allow, ban, admin: {file, path, format, players: [{name, id, reason}], error, editable}}, log}`, or `{unsupported}` for a game without player actions or lists. |
 | `POST /api/servers/{id}/players/{action}`      | `{name, id, reason}`: `kick` (operators), `ban`, `unban`, `allow`, `disallow`, `admin`, `unadmin` (managers). `{output}` is the console's answer. |
 | `GET /api/servers/{id}/mods`                   | A server's [mods](#mods-and-plugins): `{plugins, loader, fit: {loaders, gameVersion}, fitError, dir, running, warnings, mods: [{file, disabled, size, source, project, title, version, versionNumber, by, installed, update: {version, versionNumber, blocked}}], checked, timeoutNs}`, or `{unsupported}`. |
@@ -2849,6 +2892,7 @@ when the `HLM_*` one isn't set.
 | `POST /api/servers/{id}/mods/workshop`         | `{items: [{id, name}]}`: replace a [Steam Workshop](#steam-workshop) list (IDs or links; `name` for images with mod names); streams progress like `apply` (managers). For such servers `GET …/mods` answers `{workshop: {game, appId, env, namesEnv, items: [{id, name, title, updated, size, missing, wrongGame, newer}], running, started, warnings, timeoutNs}}`. |
 | `GET/PUT /api/servers/{id}/idle`               | A server's [idle settings](#stopping-idle-servers) `{minutes, wakeOnConnect, wakeFromStatusPage}`, plus `idleSince`, `asleep` (`since`, `minutes`, `listener`, `listenerError`), `canStop`/`why` and `canListen`/`listenWhy`. `PUT` takes a manager. |
 | `POST /api/servers/{id}/health/test`           | Run a health check `{check}` (or the container's own, without one) in the running server once: `{healthy, exitCode, output}`. Managers only. |
+| `POST /api/servers/{id}/health/probe-test`     | Run a Kubernetes-style probe (the body is one probe, e.g. `{"httpGet": {"port": 80}}`) against the running server once: `{success, message}`. Managers only. |
 | `GET /api/query`                               | Each running server you can see: its [game status](#is-the-game-up-players-and-status) and player count. |
 | `GET /api/servers/{id}/query`                  | A server's game status: the last answer (players' names only for operators), how it's queried, errors, and a day of player counts. |
 | `PUT /api/servers/{id}/query/settings`         | `{protocol, port?}` (`protocol` is empty to find a way, or `a2s`, `minecraft`, `bedrock`, `rcon`, `tcp`, `off`); a manager. |

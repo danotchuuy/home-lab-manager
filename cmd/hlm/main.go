@@ -637,6 +637,12 @@ func run(log *slog.Logger) error {
 		Notifier: notifier, Audit: auditLog, Log: log,
 	})
 	go healthMonitor.Run(ctx)
+	// Kubernetes-style probes: startup, liveness and readiness.
+	prober := health.NewProber(health.ProberOptions{
+		Store: healthStore, Servers: mgr, HostAddresses: hostAddresses, Busy: backups.Busy,
+		Notifier: notifier, Audit: auditLog, Log: log,
+	})
+	go prober.Run(ctx)
 	checkEvery := autoUpdates.CheckInterval
 	if updateCheckEnv != "" {
 		checkEvery = func() time.Duration { return updateCheck }
@@ -769,6 +775,7 @@ func run(log *slog.Logger) error {
 		MetricsConfig: metrics.NewConfig(store),
 		Health:        healthStore,
 		HealthMonitor: healthMonitor,
+		Prober:        prober,
 		Transfer:      transfers,
 		Stacks:        stacks,
 		Hosts:         dockerHosts,

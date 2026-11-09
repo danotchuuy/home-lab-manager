@@ -72,6 +72,8 @@ type Settings struct {
 	// many minutes; 0 is off.
 	RestartAfter int    `json:"restartAfter,omitempty"`
 	Signal       string `json:"signal,omitempty"`
+	// Probes are Kubernetes-style probes, which hlm runs itself.
+	Probes Probes `json:"probes"`
 }
 
 // Store keeps servers' health settings. It's the manager's HealthPolicy.
@@ -251,6 +253,11 @@ func (set Settings) Validate() (Settings, error) {
 	default:
 		return set, fmt.Errorf("unknown health signal %q", set.Signal)
 	}
+	probes, err := set.Probes.validate()
+	if err != nil {
+		return set, err
+	}
+	set.Probes = probes
 	return set, nil
 }
 

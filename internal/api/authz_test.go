@@ -160,6 +160,7 @@ var expected = map[string]string{
 	"GET /api/integrations/backup/targets/{target}/key": "confirmed",
 	"PUT /api/servers/{id}/health":                      "manager",
 	"POST /api/servers/{id}/health/test":                "manager",
+	"POST /api/servers/{id}/health/probe-test":          "manager",
 	"GET /api/query":                                    "signedIn",
 	"GET /api/servers/{id}/query":                       "viewer",
 	"PUT /api/servers/{id}/query/settings":              "manager",

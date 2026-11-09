@@ -1,8 +1,15 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { DockerHealthcheck, HealthCheck, HealthCheckKind, HealthSettings, ServerHealth } from "../types";
+import type {
+  DockerHealthcheck,
+  HealthCheck,
+  HealthCheckKind,
+  HealthSettings,
+  ServerHealth,
+} from "../types";
 
 import { Ago, Spinner } from "./common";
+import { probesFromYaml, probesToYaml, ProbesEditor } from "./ProbesEditor";
 
 /** A container's check, in words. */
 function describeCheck(hc?: DockerHealthcheck): string {
@@ -45,7 +52,9 @@ function NumberInput({
       max={max}
       value={zero ? (value ?? "") : value || ""}
       placeholder={placeholder !== undefined ? String(placeholder) : undefined}
-      onChange={(e) => onChange(e.target.value === "" ? undefined : Number(e.target.value))}
+      onChange={(e) =>
+        onChange(e.target.value === "" ? undefined : Number(e.target.value))
+      }
     />
   );
 }
@@ -65,20 +74,31 @@ export function ServerHealthCard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
-  const [test, setTest] = useState<{ healthy: boolean; exitCode: number; output: string }>();
+  const [test, setTest] = useState<{
+    healthy: boolean;
+    exitCode: number;
+    output: string;
+  }>();
   const [testing, setTesting] = useState(false);
+  const [probesText, setProbesText] = useState("");
 
   useEffect(() => {
     api.serverHealth(server).then(
       (d) => {
         setData(d);
         setForm(d.settings);
+        setProbesText(probesToYaml(d.settings.probes));
       },
       (e) => setError((e as Error).message),
     );
   }, [server]);
 
-  if (!data || !form) return error ? <div className="alert error small">{error}</div> : <Spinner />;
+  if (!data || !form)
+    return error ? (
+      <div className="alert error small">{error}</div>
+    ) : (
+      <Spinner />
+    );
 
   const d = data.defaults;
   const set = (x: Partial<HealthSettings>) => {
@@ -89,10 +109,20 @@ export function ServerHealthCard({
     set({ check: { ...form.check, ...x } });
     setTest(undefined);
   };
-  const setLoop = (x: Partial<HealthSettings["crashLoop"]>) => set({ crashLoop: { ...form.crashLoop, ...x } });
+  const setLoop = (x: Partial<HealthSettings["crashLoop"]>) =>
+    set({ crashLoop: { ...form.crashLoop, ...x } });
   const k = form.check;
   const custom = k.kind === "tcp" || k.kind === "http" || k.kind === "command";
-  const changed = JSON.stringify(form) !== JSON.stringify(data.settings);
+  let probesError: string | undefined;
+  try {
+    probesFromYaml(probesText);
+  } catch (e) {
+    probesError = (e as Error).message;
+  }
+  const changed =
+    JSON.stringify({ ...form, probes: undefined }) !==
+      JSON.stringify({ ...data.settings, probes: undefined }) ||
+    probesText !== probesToYaml(data.settings.probes);
 
   async function save() {
     if (!form) return;
@@ -100,9 +130,13 @@ export function ServerHealthCard({
     setError(undefined);
     setNotice(undefined);
     try {
-      const saved = await api.setServerHealth(server, form);
+      const saved = await api.setServerHealth(server, {
+        ...form,
+        probes: probesFromYaml(probesText),
+      });
       setData(saved);
       setForm(saved.settings);
+      setProbesText(probesToYaml(saved.settings.probes));
       setNotice(
         saved.applied
           ? "Saved."
@@ -128,36 +162,58 @@ export function ServerHealthCard({
     }
   }
 
-  const canTest = running && canManage && k.kind !== "none" && (custom || !!data.currentCheck?.Test?.length);
+  const canTest =
+    running &&
+    canManage &&
+    k.kind !== "none" &&
+    (custom || !!data.currentCheck?.Test?.length);
 
   return (
     <div className="health-settings">
       <h2>Health and crash loops</h2>
       <ul className="muted small health-facts">
         <li>
-          Health check: {data.health ? <strong>{data.health}</strong> : running ? "none" : "not running"}
-          {data.unhealthySince && <> · failing since <Ago iso={data.unhealthySince} /></>}
+          Health check:{" "}
+          {data.health ? (
+            <strong>{data.health}</strong>
+          ) : running ? (
+            "none"
+          ) : (
+            "not running"
+          )}
+          {data.unhealthySince && (
+            <>
+              {" "}
+              · failing since <Ago iso={data.unhealthySince} />
+            </>
+          )}
           {data.custom && data.applied ? (
             <> · hlm&apos;s check, as set below</>
           ) : (
             data.currentCheck !== undefined && (
               <>
                 {" "}
-                · {data.custom ? "hlm's earlier check" : "the container's"}:{" "}
+                · {data.custom
+                  ? "hlm's earlier check"
+                  : "the container's"}:{" "}
                 <code>{describeCheck(data.currentCheck)}</code>
               </>
             )
           )}
-          {!data.currentCheck && !data.custom && running && canManage && <> · the image has none</>}
+          {!data.currentCheck && !data.custom && running && canManage && (
+            <> · the image has none</>
+          )}
         </li>
         <li>
-          Unexpected exits in the last {form.crashLoop.minutes || d.minutes} minutes: {data.recentExits}
+          Unexpected exits in the last {form.crashLoop.minutes || d.minutes}{" "}
+          minutes: {data.recentExits}
         </li>
       </ul>
       {!data.applied && (
         <div className="alert info small">
-          The saved health check isn&apos;t on the container yet: it&apos;s set when the server is next recreated
-          (Update image, or Save &amp; recreate below).
+          The saved health check isn&apos;t on the container yet: it&apos;s set
+          when the server is next recreated (Update image, or Save &amp;
+          recreate below).
         </div>
       )}
       <fieldset className="plain-fieldset config-form" disabled={!canManage}>
@@ -192,9 +248,11 @@ export function ServerHealthCard({
             minutes
           </label>
           <span className="field-help">
-            With Start on boot, Docker restarts a server every time it exits, so one that can&apos;t start (a bad
-            setting, a corrupt save) would restart forever. Stops by hlm, people or backups don&apos;t count, nor do
-            exits during an update. hlm notifies you (Crash loop) and the server stays stopped until someone starts it.
+            With Start on boot, Docker restarts a server every time it exits, so
+            one that can&apos;t start (a bad setting, a corrupt save) would
+            restart forever. Stops by hlm, people or backups don&apos;t count,
+            nor do exits during an update. hlm notifies you (Crash loop) and the
+            server stays stopped until someone starts it.
           </span>
         </div>
 
@@ -205,23 +263,36 @@ export function ServerHealthCard({
               <input
                 type="radio"
                 checked={k.kind === o.kind}
-                onChange={() => setCheck({ kind: o.kind, port: k.port, path: k.path, command: k.command })}
+                onChange={() =>
+                  setCheck({
+                    kind: o.kind,
+                    port: k.port,
+                    path: k.path,
+                    command: k.command,
+                  })
+                }
               />
               {o.label}
             </label>
           ))}
           <span className="field-help">
-            Checks run inside the container, as Docker health checks. The TCP check needs <code>nc</code> or{" "}
-            <code>bash</code> in the image, the web check <code>curl</code> or <code>wget</code>; use Test to see if it
-            works. Game ports are often UDP, which these can&apos;t check: the game&apos;s status query (below) can be
-            the signal instead.
+            Checks run inside the container, as Docker health checks. The TCP
+            check needs <code>nc</code> or <code>bash</code> in the image, the
+            web check <code>curl</code> or <code>wget</code>; use Test to see if
+            it works. Game ports are often UDP, which these can&apos;t check:
+            the game&apos;s status query (below) can be the signal instead.
           </span>
         </div>
         {(k.kind === "tcp" || k.kind === "http") && (
           <div className="field-grid">
             <label className="field">
               <span className="field-label">Port (in the container)</span>
-              <NumberInput value={k.port} min={1} max={65535} onChange={(v) => setCheck({ port: v })} />
+              <NumberInput
+                value={k.port}
+                min={1}
+                max={65535}
+                onChange={(v) => setCheck({ port: v })}
+              />
             </label>
             {k.kind === "http" && (
               <label className="field">
@@ -246,7 +317,9 @@ export function ServerHealthCard({
               maxLength={1000}
               spellCheck={false}
             />
-            <span className="field-help">Run with /bin/sh in the container; exit code 0 is healthy.</span>
+            <span className="field-help">
+              Run with /bin/sh in the container; exit code 0 is healthy.
+            </span>
           </label>
         )}
         {custom && (
@@ -272,7 +345,9 @@ export function ServerHealthCard({
               />
             </label>
             <label className="field">
-              <span className="field-label">Unhealthy after (failures in a row)</span>
+              <span className="field-label">
+                Unhealthy after (failures in a row)
+              </span>
               <NumberInput
                 value={k.retries}
                 placeholder={d.retries}
@@ -292,24 +367,47 @@ export function ServerHealthCard({
                 onChange={(v) => setCheck({ startPeriod: v })}
               />
               <span className="field-help">
-                Failures don&apos;t count this long after a start, while the world loads.
+                Failures don&apos;t count this long after a start, while the
+                world loads.
               </span>
             </label>
           </div>
         )}
         {canTest && (
           <div className="btn-row">
-            <button type="button" className="btn small" disabled={testing} onClick={runTest}>
+            <button
+              type="button"
+              className="btn small"
+              disabled={testing}
+              onClick={runTest}
+            >
               {testing ? "Testing…" : "Test now"}
             </button>
             {test && (
-              <span className={test.healthy ? "run-ok small" : "run-failed small"}>
-                {test.healthy ? "Healthy" : `Unhealthy (exit code ${test.exitCode})`}
+              <span
+                className={test.healthy ? "run-ok small" : "run-failed small"}
+              >
+                {test.healthy
+                  ? "Healthy"
+                  : `Unhealthy (exit code ${test.exitCode})`}
               </span>
             )}
           </div>
         )}
         {test?.output && <pre className="op-output">{test.output}</pre>}
+
+        <ProbesEditor
+          server={server}
+          text={probesText}
+          onChange={(v) => {
+            setProbesText(v);
+            setNotice(undefined);
+          }}
+          error={probesError}
+          status={data.probes}
+          running={running}
+          canManage={canManage}
+        />
 
         <div className="field">
           <span className="field-label">When its health fails</span>
@@ -317,18 +415,29 @@ export function ServerHealthCard({
             <input
               type="checkbox"
               checked={!!form.restartAfter}
-              onChange={(e) => set({ restartAfter: e.target.checked ? 10 : undefined })}
+              onChange={(e) =>
+                set({ restartAfter: e.target.checked ? 10 : undefined })
+              }
             />
             Restart the server once it has been failing for
             <span className="inline-input">
-              <NumberInput value={form.restartAfter} min={1} max={1440} onChange={(v) => set({ restartAfter: v })} />
+              <NumberInput
+                value={form.restartAfter}
+                min={1}
+                max={1440}
+                onChange={(v) => set({ restartAfter: v })}
+              />
             </span>
             minutes
           </label>
           {!!form.restartAfter && (
             <>
               <label className="radio small">
-                <input type="radio" checked={!form.signal} onChange={() => set({ signal: "" })} />
+                <input
+                  type="radio"
+                  checked={!form.signal}
+                  onChange={() => set({ signal: "" })}
+                />
                 Failing means Docker&apos;s health check says unhealthy
               </label>
               <label className="radio small">
@@ -339,13 +448,19 @@ export function ServerHealthCard({
                   onChange={() => set({ signal: "query" })}
                 />
                 Failing means the game&apos;s status query stopped answering
-                {!data.queryAvailable && <span className="muted"> (not available: set up its status query first)</span>}
+                {!data.queryAvailable && (
+                  <span className="muted">
+                    {" "}
+                    (not available: set up its status query first)
+                  </span>
+                )}
               </label>
             </>
           )}
           <span className="field-help">
-            Off by default. Each restart counts towards the crash-loop limit, so a server that never recovers is stopped
-            instead of restarted forever.
+            Off by default. Each restart counts towards the crash-loop limit, so
+            a server that never recovers is stopped instead of restarted
+            forever.
           </span>
         </div>
       </fieldset>
@@ -353,7 +468,11 @@ export function ServerHealthCard({
       {notice && <div className="alert success small">{notice}</div>}
       {canManage && (
         <div className="btn-row">
-          <button className="btn small primary" onClick={save} disabled={busy || !changed}>
+          <button
+            className="btn small primary"
+            onClick={save}
+            disabled={busy || !changed || !!probesError}
+          >
             {busy ? "Saving…" : "Save"}
           </button>
         </div>

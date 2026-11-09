@@ -12,6 +12,7 @@ import (
 
 	"github.com/danotchuuy/home-lab-manager/internal/auth"
 	"github.com/danotchuuy/home-lab-manager/internal/gamequery"
+	"github.com/danotchuuy/home-lab-manager/internal/health"
 	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
 	"github.com/danotchuuy/home-lab-manager/internal/hosts"
 	"github.com/danotchuuy/home-lab-manager/internal/idle"
@@ -125,6 +126,11 @@ func (s *server) prometheus(w http.ResponseWriter, r *http.Request) {
 	if s.Idle != nil {
 		asleep = s.Idle.AsleepSince()
 	}
+	// Servers' Kubernetes-style probes, while they run.
+	var probes map[string]health.ProbeStatus
+	if s.Prober != nil {
+		probes = s.Prober.Statuses()
+	}
 	names := make([]string, 0, len(latest))
 	for n := range latest {
 		names = append(names, n)
@@ -160,6 +166,14 @@ func (s *server) prometheus(w http.ResponseWriter, r *http.Request) {
 			e.Counter("hlm_server_network_transmit_bytes_total", "Network bytes sent since the container started.", float64(st.NetworkTx), l...)
 			e.Counter("hlm_server_block_read_bytes_total", "Bytes read from disk since the container started.", float64(st.BlockRead), l...)
 			e.Counter("hlm_server_block_write_bytes_total", "Bytes written to disk since the container started.", float64(st.BlockWrite), l...)
+		}
+		if ps, ok := probes[name]; ok {
+			e.Gauge("hlm_server_ready", "1 if the server's readiness probe (or, with none, its startup probe) says it's ready.", b2f(ps.Ready), l...)
+			for _, kind := range []string{health.ProbeStartup, health.ProbeLiveness, health.ProbeReadiness} {
+				if pr, ok := ps.Probes[kind]; ok && pr.Result != "" {
+					e.Gauge("hlm_server_probe_success", "1 if the probe's last run succeeded.", b2f(pr.Result == health.ResultSuccess), slices.Concat(l, []string{"probe", kind})...)
+				}
+			}
 		}
 		if q, ok := query[name]; ok {
 			e.Gauge("hlm_server_query_up", "1 if the game answers queries.", b2f(q.Status == gamequery.StatusOnline), l...)

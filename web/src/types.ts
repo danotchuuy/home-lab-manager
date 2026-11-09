@@ -222,7 +222,8 @@ export interface Server {
   unresponsive?: string;
 }
 
-export type PlayerAction = "kick" | "ban" | "unban" | "allow" | "disallow" | "admin" | "unadmin";
+export type PlayerAction =
+  "kick" | "ban" | "unban" | "allow" | "disallow" | "admin" | "unadmin";
 export type PlayerListName = "allow" | "ban" | "admin";
 
 export interface PlayerEntry {
@@ -351,7 +352,14 @@ export interface ModPlan {
     op: "add" | "replace" | "remove" | "disable" | "enable";
     file?: string;
     title?: string;
-    new?: { project: string; version: string; versionNumber: string; file: string; size: number; sha512: string };
+    new?: {
+      project: string;
+      version: string;
+      versionNumber: string;
+      file: string;
+      size: number;
+      sha512: string;
+    };
     fromVersion?: string;
     why?: string;
   }[];
@@ -458,7 +466,12 @@ export interface IdleStatus extends IdleSettings {
   /** The public status page is on and the server is on it (where "start it from the status page" shows a button). */
   onStatusPage?: boolean;
   idleSince?: string;
-  asleep?: { since: string; minutes: number; listener?: string; listenerError?: string };
+  asleep?: {
+    since: string;
+    minutes: number;
+    listener?: string;
+    listenerError?: string;
+  };
   canStop: boolean;
   why?: string;
   canListen: boolean;
@@ -633,6 +646,54 @@ export interface HealthCheck {
   startPeriod?: number;
 }
 
+/** A Kubernetes-style probe, with Kubernetes's field names. */
+export interface Probe {
+  exec?: { command: string[] };
+  httpGet?: {
+    path?: string;
+    port: number | string;
+    host?: string;
+    scheme?: "HTTP" | "HTTPS";
+    httpHeaders?: { name: string; value: string }[];
+  };
+  tcpSocket?: { port: number | string; host?: string };
+  initialDelaySeconds?: number;
+  periodSeconds?: number;
+  timeoutSeconds?: number;
+  successThreshold?: number;
+  failureThreshold?: number;
+}
+
+export interface Probes {
+  startupProbe?: Probe;
+  livenessProbe?: Probe;
+  readinessProbe?: Probe;
+}
+
+export type ProbeKind = "startup" | "liveness" | "readiness";
+
+/** How a running server's probes are doing. */
+export interface ProbeStatus {
+  started: boolean;
+  ready: boolean;
+  readySince?: string;
+  restarting?: boolean;
+  probes: Partial<
+    Record<
+      ProbeKind,
+      {
+        result?: "success" | "failure";
+        successes: number;
+        failures: number;
+        message?: string;
+        checked?: string;
+        next?: string;
+        waiting?: boolean;
+      }
+    >
+  >;
+}
+
 /** A server's health settings (PUT /api/servers/{id}/health). */
 export interface HealthSettings {
   crashLoop: { off?: boolean; exits?: number; minutes?: number };
@@ -641,6 +702,8 @@ export interface HealthSettings {
   restartAfter?: number;
   /** "" for Docker's health check, "query" for the game's status query. */
   signal?: "" | "query";
+  /** Kubernetes-style probes, run by hlm. */
+  probes?: Probes;
 }
 
 export interface DockerHealthcheck {
@@ -654,7 +717,14 @@ export interface DockerHealthcheck {
 /** GET /api/servers/{id}/health. */
 export interface ServerHealth {
   settings: HealthSettings;
-  defaults: { exits: number; minutes: number; interval: number; timeout: number; retries: number; startPeriod: number };
+  defaults: {
+    exits: number;
+    minutes: number;
+    interval: number;
+    timeout: number;
+    retries: number;
+    startPeriod: number;
+  };
   /** Docker's view, while running: starting, healthy or unhealthy. */
   health?: string;
   crashLoop?: CrashLoop;
@@ -667,6 +737,8 @@ export interface ServerHealth {
   applied: boolean;
   unhealthySince?: string;
   queryAvailable: boolean;
+  /** Its probes' state, while it runs. */
+  probes?: ProbeStatus;
 }
 
 /** A role on a server, each including the ones before. */
@@ -828,7 +900,13 @@ export interface CopyProgress {
 
 export interface Status {
   /** host is only sent to admins. */
-  docker: { ok: boolean; host?: string; error?: string; version?: string; apiVersion?: string };
+  docker: {
+    ok: boolean;
+    host?: string;
+    error?: string;
+    version?: string;
+    apiVersion?: string;
+  };
   catalog: { apps: number; fetchedAt?: string; feedUpdated?: string };
   /** Only sent to admins. */
   appdataRoot?: string;
@@ -842,12 +920,44 @@ export interface HostSnapshot {
   uptime: number;
   sampledAt: string;
   interval: number;
-  cpu: { cores: number; percent: number; load1: number; load5: number; load15: number };
-  memory: { total: number; used: number; available: number; cached: number; swapTotal: number; swapUsed: number };
-  network: { name: string; rxRate: number; txRate: number; rxTotal: number; txTotal: number }[] | null;
-  filesystems: { device: string; mount: string; fsType: string; total: number; used: number; free: number }[] | null;
+  cpu: {
+    cores: number;
+    percent: number;
+    load1: number;
+    load5: number;
+    load15: number;
+  };
+  memory: {
+    total: number;
+    used: number;
+    available: number;
+    cached: number;
+    swapTotal: number;
+    swapUsed: number;
+  };
+  network:
+    | {
+        name: string;
+        rxRate: number;
+        txRate: number;
+        rxTotal: number;
+        txTotal: number;
+      }[]
+    | null;
+  filesystems:
+    | {
+        device: string;
+        mount: string;
+        fsType: string;
+        total: number;
+        used: number;
+        free: number;
+      }[]
+    | null;
   diskIO: { device: string; readRate: number; writeRate: number }[] | null;
-  history: { t: string; cpu: number; memUsed: number; rx: number; tx: number }[] | null;
+  history:
+    | { t: string; cpu: number; memUsed: number; rx: number; tx: number }[]
+    | null;
 }
 
 export interface DataFolder {
@@ -890,7 +1000,12 @@ export interface ServerStorage {
 }
 
 export interface StorageReport {
-  docker?: { images: number; containers: number; volumes: number; buildCache: number };
+  docker?: {
+    images: number;
+    containers: number;
+    volumes: number;
+    buildCache: number;
+  };
   dockerError?: string;
   servers: ServerStorage[];
   deleted?: DeletedStorage[];
@@ -902,7 +1017,13 @@ export interface StorageReport {
 export interface SelfUpdateStatus {
   current: string;
   mode: "binary" | "container";
-  latest?: { version: string; name?: string; notes?: string; url?: string; published?: string };
+  latest?: {
+    version: string;
+    name?: string;
+    notes?: string;
+    url?: string;
+    published?: string;
+  };
   available: boolean;
   canUpdate: boolean;
   reason?: string;
@@ -910,7 +1031,13 @@ export interface SelfUpdateStatus {
   checkedAt?: string;
   checkError?: string;
   updating: boolean;
-  lastResult?: { from: string; to: string; ok: boolean; error?: string; at: string };
+  lastResult?: {
+    from: string;
+    to: string;
+    ok: boolean;
+    error?: string;
+    at: string;
+  };
 }
 
 export interface SystemInfo {
@@ -1142,7 +1269,13 @@ export interface WireGuardStatus {
   homePublicKey?: string;
   configuredAt?: string;
   /** The container running this host's end. */
-  home: { state?: string; running: boolean; exitCode?: number; error?: string; lanAddress?: string };
+  home: {
+    state?: string;
+    running: boolean;
+    exitCode?: number;
+    error?: string;
+    lanAddress?: string;
+  };
   /** The proxy's home address is the tunnel. */
   inUse: boolean;
   image: string;
@@ -1152,7 +1285,12 @@ export interface WireGuardStatus {
   /** The fixed address asked for there, if any. */
   lanAddress?: string;
   /** Networks LAN mode can use. */
-  lanNetworks: { name: string; driver: string; subnet: string; parent?: string }[];
+  lanNetworks: {
+    name: string;
+    driver: string;
+    subnet: string;
+    parent?: string;
+  }[];
   /** The tunnel's ends on other Docker hosts. */
   hosts?: WireGuardHostEnd[];
 }
@@ -1166,7 +1304,13 @@ export interface WireGuardHostEnd {
   lanNetwork?: string;
   lanSubnet?: string;
   lanAddress?: string;
-  home: { state?: string; running: boolean; exitCode?: number; error?: string; lanAddress?: string };
+  home: {
+    state?: string;
+    running: boolean;
+    exitCode?: number;
+    error?: string;
+    lanAddress?: string;
+  };
 }
 
 export interface WireGuardInput {
@@ -1184,7 +1328,12 @@ export interface WireGuardInput {
 export interface WireGuardResult {
   status: WireGuardStatus;
   output: string;
-  apply?: { config: string; output: string; servers: ProxiedServer[]; firewall?: FirewallSync };
+  apply?: {
+    config: string;
+    output: string;
+    servers: ProxiedServer[];
+    firewall?: FirewallSync;
+  };
   applyError?: string;
   firewall?: FirewallSync;
 }
@@ -1263,7 +1412,12 @@ export interface InternetPort {
 export interface ServerPorts {
   ports: InternetPort[];
   unifi: boolean;
-  proxy: { configured: boolean; relayed: boolean; applied: boolean; route?: ProxyRoute };
+  proxy: {
+    configured: boolean;
+    relayed: boolean;
+    applied: boolean;
+    route?: ProxyRoute;
+  };
   firewall: boolean;
 }
 
@@ -1360,13 +1514,25 @@ export interface TunnelStatus {
     health?: string;
     connections: TunnelConnection[];
     /** The hlm-cloudflared container. */
-    connector: { state?: string; running: boolean; exitCode?: number; error?: string; lanAddress?: string; startedAt?: string };
+    connector: {
+      state?: string;
+      running: boolean;
+      exitCode?: number;
+      error?: string;
+      lanAddress?: string;
+      startedAt?: string;
+    };
     lanNetwork?: string;
     lanSubnet?: string;
     lanAddress?: string;
   };
   image: string;
-  lanNetworks: { name: string; driver: string; subnet: string; parent?: string }[];
+  lanNetworks: {
+    name: string;
+    driver: string;
+    subnet: string;
+    parent?: string;
+  }[];
   /** Cloudflare couldn't be asked. */
   error?: string;
   /** Tunnels on other Docker hosts, each with cloudflared there. */
@@ -1418,7 +1584,13 @@ export interface WebPort {
 
 export interface TunnelRoutes {
   routes: TunnelRouteState[];
-  servers: { name: string; running: boolean; ports: WebPort[]; webuiPort?: number; webuiScheme?: string }[];
+  servers: {
+    name: string;
+    running: boolean;
+    ports: WebPort[];
+    webuiPort?: number;
+    webuiScheme?: string;
+  }[];
   /** The tunnel is set up, so routes are published when saved. */
   tunnel: boolean;
   /** Something isn't published yet. */
@@ -1725,7 +1897,12 @@ export interface AuthStatus {
   /** The caller's global role, if they're let in at all. */
   role?: Role;
   /** The signed-in local account's two-factor. */
-  twoFactor?: { enabled: boolean; recoveryLeft: number; required: boolean; passkeys?: number };
+  twoFactor?: {
+    enabled: boolean;
+    recoveryLeft: number;
+    required: boolean;
+    passkeys?: number;
+  };
   /** When the session's confirmation (see ConfirmPrompt) runs out, if it's confirmed. */
   confirmedUntil?: string;
 }
@@ -2008,7 +2185,15 @@ export interface TaskWhen {
   cron?: string;
 }
 
-export type StepKind = "start" | "stop" | "restart" | "update" | "backup" | "command" | "wait" | "if_players";
+export type StepKind =
+  | "start"
+  | "stop"
+  | "restart"
+  | "update"
+  | "backup"
+  | "command"
+  | "wait"
+  | "if_players";
 
 export interface TaskStep {
   kind: StepKind;
@@ -2152,7 +2337,8 @@ export interface AutoUpdates {
   states: Record<string, AutoUpdateState>;
 }
 
-export type QueryProtocol = "" | "a2s" | "minecraft" | "bedrock" | "http-status" | "rcon" | "tcp" | "off";
+export type QueryProtocol =
+  "" | "a2s" | "minecraft" | "bedrock" | "http-status" | "rcon" | "tcp" | "off";
 
 /** One of a server's game's launch options (from its game profile), and whether it's on. */
 export interface LaunchOption {
@@ -2193,7 +2379,8 @@ export interface QueryResult {
   hasPlayers: boolean;
 }
 
-export type GameStatusKind = "online" | "starting" | "not_responding" | "unknown" | "off" | "stopped";
+export type GameStatusKind =
+  "online" | "starting" | "not_responding" | "unknown" | "off" | "stopped";
 
 /** GET /api/servers/{id}/query */
 export interface GameStatus {
@@ -2233,7 +2420,17 @@ export interface ConfigFiles {
 }
 
 export type AuditResult = "ok" | "denied" | "error";
-export type AuditActorKind = "local" | "sso" | "key" | "ssh" | "token" | "anonymous" | "hlm" | "host" | "discord" | "";
+export type AuditActorKind =
+  | "local"
+  | "sso"
+  | "key"
+  | "ssh"
+  | "token"
+  | "anonymous"
+  | "hlm"
+  | "host"
+  | "discord"
+  | "";
 
 /** One thing someone (or hlm) did. */
 export interface AuditEntry {
@@ -2429,7 +2626,8 @@ export interface HostInspection {
   notes?: string[];
 }
 
-export type CleanupKind = "old-image" | "unused-image" | "helper" | "build-cache" | "volume";
+export type CleanupKind =
+  "old-image" | "unused-image" | "helper" | "build-cache" | "volume";
 
 /** Something disk cleanup can delete. */
 export interface CleanupItem {
@@ -2535,7 +2733,12 @@ export interface PublicStatusPage {
   servers: PublicStatusServer[];
   updated: string;
   /** What the visitor's password (if any) lets them see. */
-  access?: { level: number; viewLocked: boolean; detailsLocked: boolean; unlocked: boolean };
+  access?: {
+    level: number;
+    viewLocked: boolean;
+    detailsLocked: boolean;
+    unlocked: boolean;
+  };
 }
 
 /** A container on a Docker host that hlm doesn't manage. */
