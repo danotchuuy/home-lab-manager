@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -30,7 +31,10 @@ type fakeServers struct {
 func (f *fakeServers) Inspect(_ context.Context, id string) (docker.ContainerJSON, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.info, nil
+	// A copy, as Docker's is: Stop changes the networks.
+	info := f.info
+	info.NetworkSettings.Networks = maps.Clone(f.info.NetworkSettings.Networks)
+	return info, nil
 }
 
 func (f *fakeServers) Start(context.Context, string) error {
@@ -188,7 +192,10 @@ type rig struct {
 	now     time.Time
 	online  int
 	known   bool
-	mu      sync.Mutex
+	// dockerErr is what reaching the Docker host fails with (an agent
+	// that isn't connected), if anything.
+	dockerErr error
+	mu        sync.Mutex
 }
 
 func newRig(t *testing.T) *rig {
@@ -212,9 +219,16 @@ func newRig(t *testing.T) *rig {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	r.s = New(Options{
-		Secrets:   store,
-		Servers:   r.servers,
-		DockerFor: func(string) (Docker, error) { return r.docker, nil },
+		Secrets: store,
+		Servers: r.servers,
+		DockerFor: func(string) (Docker, error) {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			if r.dockerErr != nil {
+				return nil, r.dockerErr
+			}
+			return r.docker, nil
+		},
 		Players: func(string) (int, int, bool) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
@@ -357,6 +371,33 @@ func TestStartedBySomeoneElse(t *testing.T) {
 	r.s.Check(ctx)
 	if a, _ := r.s.AsleepInfo("mc"); a {
 		t.Error("still asleep while running")
+	}
+}
+
+func TestListenerRetried(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	r.s.Save(ctx, "mc", Settings{Minutes: 5, WakeOnConnect: true})
+	r.mu.Lock()
+	r.dockerErr = errors.New("the host's agent isn't connected")
+	r.mu.Unlock()
+	r.s.Check(ctx)
+	r.set(0, true, 5*time.Minute)
+	r.s.Check(ctx)
+	waitFor(t, "asleep without a listener", func() bool {
+		st, _ := r.s.Status(ctx, "mc")
+		return st.Asleep != nil && st.Asleep.ListenerError != ""
+	})
+
+	// The agent's back: the next checks start it.
+	r.mu.Lock()
+	r.dockerErr = nil
+	r.mu.Unlock()
+	r.set(0, true, retryListener)
+	r.s.Check(ctx)
+	r.s.Check(ctx)
+	if st, _ := r.s.Status(ctx, "mc"); st.Asleep == nil || st.Asleep.Listener == "" || st.Asleep.ListenerError != "" {
+		t.Errorf("after the agent's back: %+v", st.Asleep)
 	}
 }
 

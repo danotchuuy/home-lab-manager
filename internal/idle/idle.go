@@ -163,6 +163,9 @@ type Service struct {
 	idleSince map[string]time.Time
 	busy      map[string]bool // going to sleep or waking
 	watching  map[string]string
+	// tried is when each sleeping server's listener was last started
+	// again after it couldn't be.
+	tried map[string]time.Time
 }
 
 // New creates the service.
@@ -184,7 +187,7 @@ func New(o Options) *Service {
 		}
 	}
 	s := &Service{opts: o, runCtx: context.Background(), idleSince: map[string]time.Time{}, busy: map[string]bool{},
-		watching: map[string]string{}}
+		watching: map[string]string{}, tried: map[string]time.Time{}}
 	s.listenerProblem = checkExecutable(o.Executable)
 	return s
 }
@@ -413,6 +416,12 @@ func (s *Service) Check(ctx context.Context) {
 			}
 			s.setAsleep(name, nil)
 			s.opts.Log.Info("sleeping server was started", "server", name)
+			continue
+		}
+		// Its listener couldn't start (its host's agent hadn't connected
+		// yet when hlm started, say): try again now and then.
+		if !info.State.Running && all[name].WakeOnConnect && a.Listener == "" && a.ListenerError != "" && s.retryDue(name, now) {
+			s.listen(ctx, name)
 		}
 	}
 	for name, set := range all {
@@ -445,6 +454,18 @@ func (s *Service) Check(ctx context.Context) {
 			}()
 		}
 	}
+}
+
+// retryDue says whether it's time to try starting a sleeping server's
+// listener again, and if so notes that it's being tried now.
+func (s *Service) retryDue(name string, now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if last, ok := s.tried[name]; ok && now.Sub(last) < retryListener {
+		return false
+	}
+	s.tried[name] = now
+	return true
 }
 
 func (s *Service) isBusy(name string) bool {
