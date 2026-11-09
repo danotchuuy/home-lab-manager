@@ -436,3 +436,57 @@ func TestCandidatesUnraidPorts(t *testing.T) {
 		t.Errorf("candidates = %+v", got)
 	}
 }
+
+// A server left out of the list for a while (its host didn't answer) isn't
+// taken as stopped: when it's back, it isn't a fresh start, so there's no
+// second "is ready". One listed as stopped, or gone for good, is forgotten.
+func TestServerMissingFromList(t *testing.T) {
+	r := newRig(t)
+	c := ctr("valheim", "ghcr.io/ich777/steamcmd:valheim", "192.168.11.20", r.now.Add(time.Minute))
+	r.w.servers["valheim"] = c
+	r.w.apps["valheim"] = &catalog.App{Config: []catalog.Config{{Type: catalog.TypePort, Name: "Game Port", Target: "2456", Mode: "udp"}}}
+	r.w.answering["a2s 192.168.11.20:2457"] = Result{Players: 0, MaxPlayers: 10, HasPlayers: true}
+	r.step(2 * time.Minute)
+	if st := r.s.Status("valheim", false); st.Status != StatusOnline || len(r.w.events) != 1 {
+		t.Fatalf("online: %+v, events %d", st, len(r.w.events))
+	}
+
+	// Its host drops out of the list, a few times, and comes back.
+	for i := 0; i < 3; i++ {
+		delete(r.w.servers, "valheim")
+		r.step(time.Minute)
+		r.w.servers["valheim"] = c
+		r.step(time.Minute)
+	}
+	if st := r.s.Status("valheim", false); st.Status != StatusOnline {
+		t.Errorf("after the host came back: %+v", st)
+	}
+	if len(r.w.events) != 1 {
+		t.Errorf("notified %d times: %+v", len(r.w.events), r.w.events)
+	}
+
+	// Gone for longer than missingFor: forgotten.
+	delete(r.w.servers, "valheim")
+	r.step(time.Minute)
+	r.step(missingFor)
+	r.s.mu.Lock()
+	_, kept := r.s.servers["valheim"]
+	r.s.mu.Unlock()
+	if kept {
+		t.Error("still remembered after it was gone for good")
+	}
+
+	// Listed as stopped: forgotten straight away.
+	r.w.servers["valheim"] = c
+	r.step(time.Minute)
+	stopped := c
+	stopped.State.Running = false
+	r.w.servers["valheim"] = stopped
+	r.step(time.Minute)
+	r.s.mu.Lock()
+	_, kept = r.s.servers["valheim"]
+	r.s.mu.Unlock()
+	if kept {
+		t.Error("still remembered once stopped")
+	}
+}

@@ -71,6 +71,8 @@ type Manager struct {
 	// UseBeforeStop.
 	beforeStop  func(ctx context.Context, id string)
 	beforeStart func(ctx context.Context, name string)
+	// agentArchive reads servers' folders through their host's agent.
+	agentArchive AgentArchiver
 	// removeOldImages says whether to delete a server's old image after it's
 	// recreated with another; see UseOldImageRemoval.
 	removeOldImages func() bool
@@ -208,9 +210,16 @@ type Server struct {
 	GameProfile *gameprofile.Ref `json:"gameProfile,omitempty"`
 	// Asleep is set while hlm has it stopped because nobody played; the API
 	// fills it in.
-	Asleep  *Asleep `json:"asleep,omitempty"`
-	imageID string
+	Asleep *Asleep `json:"asleep,omitempty"`
+	// Unresponsive is set when its Docker host listed it but didn't answer
+	// for it in time (the rest of the host did): what's shown is from the
+	// list alone.
+	Unresponsive string `json:"unresponsive,omitempty"`
+	imageID      string
 }
+
+// unresponsive is Server.Unresponsive's message.
+const unresponsive = "Docker isn't answering for this server right now, though the rest of its host is. Usually something long is running on it, like a backup copying its files; it clears once that's done."
 
 // Asleep says since when hlm has had a server stopped, and after how many
 // minutes without players.
@@ -328,17 +337,22 @@ func (m *Manager) List(ctx context.Context) ([]Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	infos, err := m.inspectAll(ctx, list)
+	infos, stuck, err := m.inspectAll(ctx, list)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]Server, 0, len(list))
 	for i, c := range list {
-		if infos[i] == nil {
+		srv := serverFromSummary(c)
+		switch {
+		case infos[i] != nil:
+			m.enrich(&srv, *infos[i])
+		case stuck[i]:
+			// What the list says, rather than leaving it out.
+			srv.Unresponsive = unresponsive
+		default:
 			continue
 		}
-		srv := serverFromSummary(c)
-		m.enrich(&srv, *infos[i])
 		out = append(out, srv)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
@@ -348,12 +362,18 @@ func (m *Manager) List(ctx context.Context) ([]Server, error) {
 // inspectAll inspects listed containers, several at a time, rather than
 // one round trip after another (which adds up on another host). Entries
 // are nil for containers removed since they were listed, and for those on
-// another host that couldn't be inspected in time: that host is then taken
-// as down, so the next listing doesn't wait for it. An error on this host
+// another host that couldn't be inspected in time; stuck says which those
+// were. A host none of whose containers answered, and which doesn't answer
+// Docker's version call either, is taken as down, so the next listing
+// doesn't wait for it. One container that doesn't answer while the rest
+// do isn't the host being down: Docker keeps a container locked while a
+// long call about it runs (an archive copy, say). An error on this host
 // fails the call.
-func (m *Manager) inspectAll(ctx context.Context, list []docker.ContainerSummary) ([]*docker.ContainerJSON, error) {
-	out := make([]*docker.ContainerJSON, len(list))
+func (m *Manager) inspectAll(ctx context.Context, list []docker.ContainerSummary) (out []*docker.ContainerJSON, stuck []bool, err error) {
+	out = make([]*docker.ContainerJSON, len(list))
+	stuck = make([]bool, len(list))
 	errs := make([]error, len(list))
+	failed := make([]error, len(list))
 	sem := make(chan struct{}, 8)
 	var wg sync.WaitGroup
 	for i, c := range list {
@@ -376,17 +396,51 @@ func (m *Manager) inspectAll(ctx context.Context, list []docker.ContainerSummary
 			case docker.IsNotFound(err):
 				// Removed since the list call.
 			case host != LocalHost:
-				if ctx.Err() == nil {
-					m.docker.setStatus(host, err)
-				}
+				stuck[i], failed[i] = true, err
 			default:
 				errs[i] = err
 			}
 		}()
 	}
 	wg.Wait()
-	return out, errors.Join(errs...)
+	if ctx.Err() == nil {
+		m.checkStuckHosts(ctx, list, out, failed)
+	}
+	return out, stuck, errors.Join(errs...)
 }
+
+// checkStuckHosts takes a host as down when none of its containers could
+// be inspected and it doesn't answer Docker's version call either.
+func (m *Manager) checkStuckHosts(ctx context.Context, list []docker.ContainerSummary, out []*docker.ContainerJSON, failed []error) {
+	answered, why := map[string]bool{}, map[string]error{}
+	for i, c := range list {
+		host := HostOf(c.ID)
+		if out[i] != nil {
+			answered[host] = true
+		} else if failed[i] != nil && why[host] == nil {
+			why[host] = failed[i]
+		}
+	}
+	for host, err := range why {
+		if answered[host] {
+			continue
+		}
+		c, cerr := m.docker.client(host)
+		if cerr != nil {
+			continue
+		}
+		vctx, cancel := context.WithTimeout(ctx, stuckCheckTimeout)
+		_, verr := c.Version(vctx)
+		cancel()
+		if verr != nil {
+			m.docker.setStatus(host, err)
+		}
+	}
+}
+
+// stuckCheckTimeout bounds asking a host whose containers didn't answer
+// whether Docker itself does.
+var stuckCheckTimeout = 3 * time.Second
 
 // Get returns one managed server by container ID or name.
 func (m *Manager) Get(ctx context.Context, id string) (Server, error) {
@@ -420,6 +474,9 @@ func (m *Manager) inspect(ctx context.Context, id string) (docker.ContainerJSON,
 	info, err := m.docker.InspectContainer(ctx, id)
 	if docker.IsNotFound(err) {
 		return info, ErrNotFound
+	}
+	if errors.Is(err, context.DeadlineExceeded) && HostOf(id) != LocalHost {
+		return info, fmt.Errorf("%s (%w)", unresponsive, err)
 	}
 	if err != nil {
 		return info, err

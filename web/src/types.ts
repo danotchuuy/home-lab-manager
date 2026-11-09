@@ -218,6 +218,8 @@ export interface Server {
   gameProfile?: GameProfileRef;
   /** Set while hlm has it stopped because nobody played. */
   asleep?: { since: string; minutes: number };
+  /** Set when its Docker host listed it but didn't answer for it in time (a backup copying its files, say). */
+  unresponsive?: string;
 }
 
 export type PlayerAction = "kick" | "ban" | "unban" | "allow" | "disallow" | "admin" | "unadmin";

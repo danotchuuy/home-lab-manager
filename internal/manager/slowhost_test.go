@@ -110,3 +110,63 @@ func TestSilentHost(t *testing.T) {
 		t.Errorf("status %+v", m.HostStatuses()["nas"])
 	}
 }
+
+// lockedDocker never answers inspects of one container, as Docker does
+// while a long archive copy holds the container's lock.
+type lockedDocker struct {
+	locked string
+	next   http.Handler
+	stop   chan struct{}
+}
+
+func (l *lockedDocker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(r.URL.Path, "/containers/"+l.locked+"/json") {
+		select {
+		case <-r.Context().Done():
+		case <-l.stop:
+		}
+		return
+	}
+	if strings.HasSuffix(r.URL.Path, "/version") {
+		w.Write([]byte(`{"Version":"27.0.0","ApiVersion":"1.45"}`))
+		return
+	}
+	l.next.ServeHTTP(w, r)
+}
+
+// One container that doesn't answer (a backup copying its files) isn't its
+// host being down: the host's other servers stay listed, and so does that
+// one, from the list's own details and marked as not answering.
+func TestStuckContainer(t *testing.T) {
+	oldTimeout, oldRetry := remoteTimeout, retryDown
+	remoteTimeout, retryDown = 300*time.Millisecond, 200*time.Millisecond
+	t.Cleanup(func() { remoteTimeout, retryDown = oldTimeout, oldRetry })
+
+	nas := &lockedDocker{locked: "n2", next: &labelDocker{containers: []docker.ContainerJSON{gameServer("n1", "valheim"), gameServer("n2", "palworld")}}, stop: make(chan struct{})}
+	srv := httptest.NewServer(nas)
+	t.Cleanup(func() { close(nas.stop); srv.Close() })
+	nasClient, _ := docker.NewClient(docker.Config{Host: "tcp://" + strings.TrimPrefix(srv.URL, "http://")})
+	m := New(fakeClient(t, &labelDocker{}), nil, "/srv/appdata", slog.New(slog.DiscardHandler))
+	m.SetHosts([]RemoteHost{{ID: "nas", Docker: nasClient}})
+	ctx := context.Background()
+
+	for i := 0; i < 3; i++ {
+		list, err := m.List(ctx)
+		if err != nil || len(list) != 2 {
+			t.Fatalf("listing %d: %+v %v", i, list, err)
+		}
+		for _, s := range list {
+			if stuck := s.ID == "n2@nas"; (s.Unresponsive != "") != stuck {
+				t.Errorf("listing %d: %s unresponsive %q", i, s.ID, s.Unresponsive)
+			}
+		}
+		if st := m.HostStatuses()["nas"]; !st.OK {
+			t.Fatalf("listing %d: host taken as down: %+v", i, st)
+		}
+	}
+	gctx, cancel := context.WithTimeout(ctx, remoteTimeout)
+	defer cancel()
+	if _, err := m.Get(gctx, "n2@nas"); err == nil || !strings.Contains(err.Error(), "isn't answering") {
+		t.Errorf("getting it: %v", err)
+	}
+}

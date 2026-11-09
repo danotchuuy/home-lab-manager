@@ -121,6 +121,9 @@ type server struct {
 	fails    int
 	answered bool // since this start
 	busy     bool // a query is in flight
+	// missing is when it was first left out of the server list (its host
+	// couldn't be reached, say), while it's out.
+	missing  time.Time
 	history  []Point
 	settings Settings
 }
@@ -324,6 +327,11 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
+// missingFor is how long a server left out of the server list (rather
+// than listed as stopped) is remembered: its host may just not have
+// answered for a while.
+var missingFor = 10 * time.Minute
+
 // tick updates the list of running servers and starts the queries that
 // are due.
 func (s *Service) tick(ctx context.Context, start func(name string)) {
@@ -333,10 +341,11 @@ func (s *Service) tick(ctx context.Context, start func(name string)) {
 	}
 	all, _ := s.allSettings()
 	now := s.opts.Now()
-	running := map[string]bool{}
+	running, listed := map[string]bool{}, map[string]bool{}
 	var due []string
 	s.mu.Lock()
 	for _, srv := range list {
+		listed[srv.Name] = true
 		if srv.State != "running" {
 			continue
 		}
@@ -346,6 +355,7 @@ func (s *Service) tick(ctx context.Context, start func(name string)) {
 			sv = &server{id: srv.ID, status: StatusStarting, since: now}
 			s.servers[srv.Name] = sv
 		}
+		sv.missing = time.Time{}
 		sv.settings = all[srv.Name]
 		if sv.settings.Protocol == ProtoOff {
 			sv.status, sv.result, sv.err = StatusOff, nil, ""
@@ -356,9 +366,18 @@ func (s *Service) tick(ctx context.Context, start func(name string)) {
 			due = append(due, srv.Name)
 		}
 	}
-	for name := range s.servers {
-		if !running[name] {
+	for name, sv := range s.servers {
+		switch {
+		case running[name]:
+		case listed[name]:
 			delete(s.servers, name) // stopped: start over when it runs again
+		case sv.missing.IsZero():
+			// Left out of the list, not seen stopped: its host didn't answer
+			// this time. Forgetting it would take it as a fresh start (and
+			// say it's ready again) when the host's back.
+			sv.missing = now
+		case now.Sub(sv.missing) >= missingFor:
+			delete(s.servers, name) // gone
 		}
 	}
 	s.mu.Unlock()

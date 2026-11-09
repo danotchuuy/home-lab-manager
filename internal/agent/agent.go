@@ -26,6 +26,7 @@ import (
 
 	"github.com/hashicorp/yamux"
 
+	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
 )
 
@@ -201,7 +202,12 @@ func Run(ctx context.Context, cfg Config) error {
 	go metrics.Run(ctx)
 	cur := &current{creds: creds}
 	move := func(ctx context.Context, server string) error { return cfg.move(ctx, client, cur, server) }
-	proxy := Handler(DockerProxy(cfg.Socket, cfg.Log), metrics, move)
+	dc, err := docker.NewClient(docker.Config{Host: "unix://" + cfg.Socket})
+	if err != nil {
+		return err
+	}
+	defer dc.Close()
+	proxy := Handler(DockerProxy(cfg.Socket, cfg.Log), metrics, move, archiveHandler(dc, cfg.RootPath))
 	backoff = firstRetry
 	failures := 0
 	for {
@@ -502,9 +508,14 @@ func DockerProxy(socket string, log *slog.Logger) http.Handler {
 }
 
 // Handler is what the agent serves hlm: the host's metrics, moving to hlm's
-// new address (with move), and the Docker API calls it passes on.
-func Handler(docker http.Handler, metrics *hostmetrics.Collector, move func(ctx context.Context, server string) error) http.Handler {
+// new address (with move), servers' folders as tar (with archive), and the
+// Docker API calls it passes on.
+func Handler(docker http.Handler, metrics *hostmetrics.Collector, move func(ctx context.Context, server string) error, archive http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == ArchivePath && r.Method == http.MethodPost && archive != nil {
+			archive.ServeHTTP(w, r)
+			return
+		}
 		if r.URL.Path == HostMetricsPath && r.Method == http.MethodGet {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(metrics.Snapshot())
