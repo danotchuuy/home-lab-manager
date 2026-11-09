@@ -571,6 +571,8 @@ export interface Stack {
   busy?: boolean;
   /** The stored file can't be read any more. */
   error?: string;
+  /** The Compose file on its host it was adopted from. */
+  source?: string;
 }
 
 /** What applying a Compose file would do. */
@@ -582,10 +584,27 @@ export interface StackPlan {
     ports: string[];
     mounts: string[];
     dependsOn?: string[];
-    change: "create" | "update" | "unchanged" | "remove";
+    change: "create" | "update" | "unchanged" | "remove" | "adopt";
   }[];
   networks: string[];
   warnings: string[];
+}
+
+/** A Compose stack on a host, and what adopting it would do. */
+export interface StackAdoptPlan {
+  found: {
+    name: string;
+    host: string;
+    /** The Compose file, and its folder. */
+    source: string;
+    dir: string;
+    yaml: string;
+    env?: string;
+    /** The containers Compose made, by service. */
+    containers: Record<string, StackMember>;
+    warnings: string[];
+  };
+  plan: StackPlan;
 }
 
 /** A server hlm stopped because it exited too often in a short time. */
@@ -2536,6 +2555,8 @@ export interface UnmanagedContainer {
   mounts?: string[];
   unraid?: boolean;
   compose?: string;
+  /** Its Compose project's file on the host (or folder), for adopting the whole stack. */
+  composeFile?: string;
   adoptable: boolean;
   reason?: string;
 }

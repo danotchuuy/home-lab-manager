@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/danotchuuy/home-lab-manager/internal/compose"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
 	"github.com/danotchuuy/home-lab-manager/internal/secrets"
@@ -134,5 +137,71 @@ func TestDockerStack(t *testing.T) {
 		if strings.HasPrefix(n.Name, name+"_") {
 			t.Errorf("network left: %s", n.Name)
 		}
+	}
+}
+
+// A stack Docker Compose started, adopted from its file on the host.
+// Enable with HLM_DOCKER_TESTS=1 (it needs docker compose).
+func TestDockerAdopt(t *testing.T) {
+	if os.Getenv("HLM_DOCKER_TESTS") == "" {
+		t.Skip("set HLM_DOCKER_TESTS=1 to run tests against Docker")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	d, err := docker.NewClient(docker.ConfigFromEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := fmt.Sprintf("hlmadopt%d", time.Now().UnixNano()%1_000_000)
+	dir := filepath.Join(t.TempDir(), name)
+	os.MkdirAll(filepath.Join(dir, "data"), 0o755)
+	os.WriteFile(filepath.Join(dir, "data", "hello"), []byte("kept"), 0o644)
+	os.WriteFile(filepath.Join(dir, ".env"), []byte("GREETING=hi\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(`
+services:
+  app:
+    image: busybox:1.37
+    command: sh -c "cat /data/hello; sleep 600"
+    volumes: ["./data:/data:ro"]
+    environment:
+      GREETING: ${GREETING}
+`), 0o644)
+	up := exec.CommandContext(ctx, "docker", "compose", "up", "-d")
+	up.Dir = dir
+	if out, err := up.CombinedOutput(); err != nil {
+		t.Skipf("docker compose: %v\n%s", err, out)
+	}
+	store, _ := secrets.Open(t.TempDir(), "k")
+	s := New(store, func(string) (Docker, error) { return d, nil }, fakeManager{d}, slog.New(slog.DiscardHandler))
+	t.Cleanup(func() {
+		s.Delete(context.Background(), name)
+		down := exec.Command("docker", "compose", "down", "-v")
+		down.Dir = dir
+		down.Run()
+	})
+
+	ap, err := s.AdoptPreview(ctx, "", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ap.Found.Name != name || len(ap.Found.Containers) != 1 || ap.Plan.Services[0].Change != ChangeAdopt {
+		t.Fatalf("preview %+v", ap)
+	}
+	var events []string
+	if err := s.Adopt(ctx, "", filepath.Join(dir, "compose.yaml"), func(e Event) { events = append(events, e.Stage+": "+e.Message) }); err != nil {
+		t.Fatalf("adopt: %v\n%s", err, strings.Join(events, "\n"))
+	}
+	c, err := d.InspectContainer(ctx, name+"-app-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.State.Running || c.Config.Labels[compose.LabelStack] != name || c.Config.Labels[composeProject] != "" ||
+		!strings.Contains(strings.Join(c.HostConfig.Binds, " "), filepath.Join(dir, "data")+":/data:ro") ||
+		!strings.Contains(strings.Join(c.Config.Env, " "), "GREETING=hi") {
+		t.Errorf("adopted container: running %v labels %v binds %v env %v", c.State.Running, c.Config.Labels, c.HostConfig.Binds, c.Config.Env)
+	}
+	// No helper containers are left behind.
+	if left, _ := d.ListContainers(ctx, "io.hlm.helper=compose-read"); len(left) != 0 {
+		t.Errorf("%d helpers left", len(left))
 	}
 }

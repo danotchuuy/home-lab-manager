@@ -3864,6 +3864,7 @@ textarea.code-input {
 }
 
 .change-create,
+.change-adopt,
 .change-update {
   color: var(--accent);
   font-weight: 600;

@@ -31,6 +31,7 @@ import type {
   MetricHistory,
   MetricsSettings,
   Stack,
+  StackAdoptPlan,
   StackPlan,
   TwoFactorSetup,
   BackupTarget,
@@ -493,6 +494,12 @@ export const api = {
   stackAction: (name: string, action: "start" | "stop" | "restart" | "update", onEvent: (e: DeployEvent) => void) =>
     stream(`/api/stacks/${encodeURIComponent(name)}/${action}`, { method: "POST" }, onEvent),
   deleteStack: (name: string) => json<void>(`/api/stacks/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  /** Reads a Compose file (or the folder it's in) on a host, and says what adopting its stack would do. */
+  previewAdoptStack: (host: string, path: string) =>
+    json<StackAdoptPlan>("/api/stacks/adopt/preview", { method: "POST", body: JSON.stringify({ host, path }) }),
+  /** Makes a Compose stack on a host one of hlm's; streams the progress. */
+  adoptStack: (host: string, path: string, onEvent: (e: DeployEvent) => void) =>
+    stream("/api/stacks/adopt", { method: "POST", body: JSON.stringify({ host, path }) }, onEvent),
   /** Installs a server on a Docker host (the local one if none). */
   install: (req: DeployRequest, onEvent: (e: DeployEvent) => void, host?: string) =>
     stream("/api/servers", { method: "POST", body: JSON.stringify({ ...req, host }) }, onEvent),
