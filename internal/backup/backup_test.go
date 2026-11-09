@@ -291,6 +291,14 @@ func TestSeaweedFS(t *testing.T) {
 	if !strings.HasPrefix(o.Plan.Last.Key, "homelab/srv/srv-") {
 		t.Errorf("key = %s", o.Plan.Last.Key)
 	}
+	// The list of every server's backups has the same ones.
+	all, err := s.All(ctx, func(string) bool { return true }, true)
+	if err != nil || !all.Configured || len(all.Servers) != 1 {
+		t.Fatalf("all = %+v %v", all, err)
+	}
+	if sb := all.Servers[0]; sb.Server != "srv" || len(sb.Stored) != 2 || sb.Stored[0].Key != o.Plan.Last.Key || sb.StoredSize == 0 || sb.StoredError != "" {
+		t.Errorf("all: %+v", sb)
+	}
 	servers.mu.Lock()
 	if want := []string{"stop", "archive /data", "start"}; !slices.Equal(servers.calls[:3], want) {
 		t.Errorf("calls = %v, want %v first", servers.calls, want)

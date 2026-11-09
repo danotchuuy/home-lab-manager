@@ -92,6 +92,7 @@ func (s *server) routes() []route {
 		{"POST /api/connections/{id}/update", admin, s.updateConnection},
 		{"POST /api/connections/{id}/{action}", admin, s.connectionAction},
 		{"GET /api/jobs", signedIn, s.listJobs},
+		{"GET /api/backups", signedIn, s.allBackups},
 		// The Discord bot's rules give people in Discord access.
 		{"GET /api/integrations/discord", admin, s.discordSettings},
 		{"PUT /api/integrations/discord", confirmed, s.saveDiscord},

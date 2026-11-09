@@ -1576,6 +1576,32 @@ export interface BackupObject {
   lastModified: string;
 }
 
+/** One server's backups, in the list of every server's (the Backups page). */
+export interface ServerBackupsSummary {
+  server: string;
+  folders: string[];
+  intervalHours?: number;
+  at?: BackupAt;
+  /** When the next scheduled backup is due. */
+  next?: string;
+  running?: BackupProgress;
+  last?: BackupRun;
+  lastOk?: BackupRun;
+  /** Its backups in the primary storage, newest first (only when asked for). */
+  stored: BackupObject[];
+  storedSize: number;
+  storedError?: string;
+}
+
+export interface AllBackups {
+  configured: boolean;
+  target: BackupTargetRef;
+  servers: ServerBackupsSummary[];
+  /** hlm's own settings backup, while one runs (admins only). */
+  config?: BackupProgress;
+  error?: string;
+}
+
 export interface BackupOverview {
   configured: boolean;
   plan: BackupPlan;

@@ -1,6 +1,7 @@
 import type { CreationOptionsJSON, NewPasskeyJSON, RequestOptionsJSON, UsedPasskeyJSON } from "./passkeys";
 import type {
   Account,
+  AllBackups,
   UpdateStatus,
   AgentMove,
   AuditFilter,
@@ -391,6 +392,8 @@ export const api = {
     json<BackupSettings>("/api/integrations/backup", { method: "PUT", body: JSON.stringify(cfg) }),
   deleteBackupSettings: () => json<void>("/api/integrations/backup", { method: "DELETE" }),
   serverBackups: (id: string) => json<BackupOverview>(`/api/servers/${encodeURIComponent(id)}/backups`),
+  /** Every server's backups the caller can see, with those running now; stored also lists each one's backups in the bucket. */
+  allBackups: (stored: boolean) => json<AllBackups>(`/api/backups${stored ? "?stored=1" : ""}`),
   setBackupPlan: (id: string, plan: Omit<BackupPlan, "last">) =>
     json<BackupPlan>(`/api/servers/${encodeURIComponent(id)}/backups/plan`, { method: "PUT", body: JSON.stringify(plan) }),
   /** Starts a backup in the background; serverBackups shows its progress. */
