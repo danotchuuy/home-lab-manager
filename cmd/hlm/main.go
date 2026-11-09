@@ -41,6 +41,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/deploy"
 	"github.com/danotchuuy/home-lab-manager/internal/discord"
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
+	"github.com/danotchuuy/home-lab-manager/internal/files"
 	"github.com/danotchuuy/home-lab-manager/internal/forwarding"
 	"github.com/danotchuuy/home-lab-manager/internal/gameprofile"
 	"github.com/danotchuuy/home-lab-manager/internal/gamequery"
@@ -352,6 +353,9 @@ func run(log *slog.Logger) error {
 	// SSH with the same key as the proxy.
 	// Hosts can also have hlm's agent, which connects out to hlm.
 	agents := agent.NewHub(log)
+	mgr.UseAgentList(func(ctx context.Context, host, container, path string) (files.Listing, error) {
+		return agents.List(ctx, host, agent.ListRequest{ID: container, Path: path})
+	})
 	mgr.UseAgentArchive(func(ctx context.Context, host, container string, folders, exclude []string) (manager.AgentArchive, error) {
 		a, err := agents.Archive(ctx, host, agent.ArchiveRequest{ID: container, Folders: folders, Exclude: exclude})
 		if err != nil {

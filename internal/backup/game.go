@@ -135,8 +135,9 @@ func checkGameFolders(in []GameFolder) ([]GameFolder, error) {
 	return out, nil
 }
 
-// expand finds the folders a game backup folder's * stand for.
-func (s *Service) expand(ctx context.Context, name, p string) ([]string, error) {
+// expand finds the folders a game backup folder's * stand for. cut is set
+// if a listing was cut short.
+func (s *Service) expand(ctx context.Context, name, p string, cut *bool) ([]string, error) {
 	segs := strings.Split(strings.TrimPrefix(p, "/"), "/")
 	dirs := []string{"/"}
 	for i, seg := range segs {
@@ -146,13 +147,14 @@ func (s *Service) expand(ctx context.Context, name, p string) ([]string, error) 
 				next = append(next, path.Join(d, seg))
 				continue
 			}
-			entries, err := s.servers.ListFolder(ctx, name, d)
+			entries, truncated, err := s.servers.ListFolder(ctx, name, d)
 			if err != nil {
 				if errors.Is(err, files.ErrNotFound) {
 					continue
 				}
 				return nil, err
 			}
+			*cut = *cut || truncated
 			for _, e := range entries {
 				if e.Type == "dir" {
 					next = append(next, path.Join(d, e.Name))
@@ -174,11 +176,12 @@ type gameEntry struct {
 	mtime        time.Time
 }
 
-// gameEntries lists the backups in a plan's game backup folders.
-func (s *Service) gameEntries(ctx context.Context, name string, folders []GameFolder, warn func(string)) ([]gameEntry, error) {
+// gameEntries lists the backups in a plan's game backup folders. cut is
+// set if a listing was cut short, so some may be missing.
+func (s *Service) gameEntries(ctx context.Context, name string, folders []GameFolder, cut *bool, warn func(string)) ([]gameEntry, error) {
 	var out []gameEntry
 	for _, f := range folders {
-		dirs, err := s.expand(ctx, name, f.Path)
+		dirs, err := s.expand(ctx, name, f.Path, cut)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", f.Path, err)
 		}
@@ -186,13 +189,17 @@ func (s *Service) gameEntries(ctx context.Context, name string, folders []GameFo
 			warn(f.Path + " isn't there (yet)")
 		}
 		for _, d := range dirs {
-			entries, err := s.servers.ListFolder(ctx, name, d)
+			entries, truncated, err := s.servers.ListFolder(ctx, name, d)
 			if errors.Is(err, files.ErrNotFound) {
 				warn(d + " isn't there (yet)")
 				continue
 			}
 			if err != nil {
 				return nil, fmt.Errorf("%s: %w", d, err)
+			}
+			if truncated {
+				*cut = true
+				warn(d + " has more backups than could be listed through Docker while the server is stopped; the rest are uploaded once it runs (or once the host's agent is updated)")
 			}
 			for _, e := range entries {
 				if e.Type != "dir" && e.Type != "file" {
@@ -275,7 +282,8 @@ func (s *Service) syncGame(ctx context.Context, name string, plan Plan, prog *Pr
 	for _, o := range stored {
 		have[o.Key] = true
 	}
-	entries, err := s.gameEntries(ctx, name, plan.GameFolders, func(w string) { sync.Warnings = append(sync.Warnings, w) })
+	cut := false
+	entries, err := s.gameEntries(ctx, name, plan.GameFolders, &cut, func(w string) { sync.Warnings = append(sync.Warnings, w) })
 	if err != nil {
 		return fail(err)
 	}
@@ -302,7 +310,11 @@ func (s *Service) syncGame(ctx context.Context, name string, plan Plan, prog *Pr
 		have[key] = true
 		stored = append(stored, s3.Object{Key: key, Size: run.Size, LastModified: time.Now()})
 	}
-	if plan.GameKeep > 0 {
+	// A listing cut short doesn't show every backup the game still has:
+	// cleaning up from it could delete those, only to upload them again.
+	if plan.GameKeep > 0 && cut {
+		sync.Warnings = append(sync.Warnings, "old game backups weren't cleaned up, as not every folder could be listed in full")
+	} else if plan.GameKeep > 0 {
 		s.setStage(prog, "cleaning")
 		n, err := pruneGame(ctx, st, keys, stored, present, plan.GameKeep)
 		sync.Deleted = n
