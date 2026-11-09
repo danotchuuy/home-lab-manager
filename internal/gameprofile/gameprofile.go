@@ -47,6 +47,9 @@ type Profile struct {
 	// in (GAME_PARAMS, …), tried in order; without one of them, launch
 	// options go in the server's post arguments (its command).
 	ArgsVars []string `yaml:"args_vars" json:"argsVars,omitempty"`
+	// GameBackups are where the game keeps its own backups, so hlm can
+	// upload each new one (see backup.GameFolder).
+	GameBackups []GameBackupFolder `yaml:"game_backups" json:"gameBackups,omitempty"`
 
 	// Source is where it came from (BuiltIn or Custom), File its file, and
 	// Replaces whether a custom profile takes a built-in one's place.
@@ -179,6 +182,18 @@ const (
 	FormatLines = "lines"
 )
 
+// GameBackupFolder is a folder a game keeps its own backups in. Path is
+// relative to a data folder of the server (images mount the game's files
+// in different places); * stands for one folder's name, such as a world's
+// ID. Match, if set, picks the backups out by name, for games that keep
+// them beside the live save.
+type GameBackupFolder struct {
+	Path  string `yaml:"path" json:"path"`
+	Match string `yaml:"match" json:"match,omitempty"`
+	// Note says what's in it, for the person choosing.
+	Note string `yaml:"note" json:"note,omitempty"`
+}
+
 // ListFile is a file a game keeps a player list in.
 type ListFile struct {
 	File   string `yaml:"file" json:"file"`
@@ -309,6 +324,16 @@ func (p *Profile) Validate() error {
 	}
 	if err := p.validateLaunchOptions(); err != nil {
 		return err
+	}
+	for _, g := range p.GameBackups {
+		if g.Path == "" || strings.HasPrefix(g.Path, "/") || slices.Contains(strings.Split(g.Path, "/"), "..") {
+			return fmt.Errorf("game_backups: %q should be a path inside a data folder, such as Pal/Saved/SaveGames/0/*/backup/world", g.Path)
+		}
+		if g.Match != "" {
+			if _, err := path.Match(g.Match, ""); err != nil || strings.Contains(g.Match, "/") {
+				return fmt.Errorf("game_backups: match %q isn't a name pattern", g.Match)
+			}
+		}
 	}
 	if q.PortEnv != "" && !envRE.MatchString(q.PortEnv) {
 		return fmt.Errorf("query: port_env %q isn't a variable name", q.PortEnv)

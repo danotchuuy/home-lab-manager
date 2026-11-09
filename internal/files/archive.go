@@ -281,7 +281,9 @@ func (b *Browser) archiveDocker(ctx context.Context, id, src string, skip []stri
 			return dockerErr(err)
 		}
 		if st.Mode&os.ModeSymlink == 0 {
-			if !st.Mode.IsDir() {
+			// A folder, or one file (a game's own backup, say), as when
+			// it's read from the host.
+			if !st.Mode.IsDir() && !st.Mode.IsRegular() {
 				return ErrNotDir
 			}
 			break

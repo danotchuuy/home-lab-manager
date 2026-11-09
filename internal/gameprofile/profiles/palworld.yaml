@@ -35,3 +35,8 @@ console:
 settings_files:
   - names: [PalWorldSettings.ini]
     prefer: /Saved/Config/
+# Palworld copies the world into backup/world now and then (a folder per
+# copy, named by its time), and players' own data into backup/local.
+game_backups:
+  - path: Pal/Saved/SaveGames/0/*/backup/world
+    note: The world, copied every so often while the server runs

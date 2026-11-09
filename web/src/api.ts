@@ -391,7 +391,11 @@ export const api = {
   saveBackupSettings: (cfg: BackupSettingsInput) =>
     json<BackupSettings>("/api/integrations/backup", { method: "PUT", body: JSON.stringify(cfg) }),
   deleteBackupSettings: () => json<void>("/api/integrations/backup", { method: "DELETE" }),
-  serverBackups: (id: string) => json<BackupOverview>(`/api/servers/${encodeURIComponent(id)}/backups`),
+  /** suggest also finds where the server's game keeps its own backups. */
+  serverBackups: (id: string, suggest = false) =>
+    json<BackupOverview>(`/api/servers/${encodeURIComponent(id)}/backups${suggest ? "?suggest=1" : ""}`),
+  /** Uploads the game's own new backups in the background; serverBackups shows its progress. */
+  syncGameBackups: (id: string) => json<void>(`/api/servers/${encodeURIComponent(id)}/backups/game`, { method: "POST" }),
   /** Every server's backups the caller can see, with those running now; stored also lists each one's backups in the bucket. */
   allBackups: (stored: boolean) => json<AllBackups>(`/api/backups${stored ? "?stored=1" : ""}`),
   setBackupPlan: (id: string, plan: Omit<BackupPlan, "last">) =>

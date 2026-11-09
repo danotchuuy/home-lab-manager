@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path"
 	"slices"
 	"strings"
 	"sync"
@@ -90,6 +91,7 @@ type fakeServers struct {
 	mu      sync.Mutex
 	running bool
 	files   map[string]string
+	mtime   map[string]time.Time // by path, for ListFolder
 	calls   []string
 }
 
@@ -115,6 +117,14 @@ func (f *fakeServers) ArchiveFolders(ctx context.Context, id string, folders, ex
 	}
 	slices.Sort(names)
 	for _, name := range names {
+		in := len(folders) == 0
+		for _, d := range folders {
+			d = strings.TrimPrefix(d, "/")
+			in = in || name == d || strings.HasPrefix(name, d+"/")
+		}
+		if !in {
+			continue
+		}
 		body := f.files[name]
 		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
 			return st, err
@@ -158,6 +168,36 @@ func (f *fakeServers) file(name string) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.files[name]
+}
+
+func (f *fakeServers) ListFolder(ctx context.Context, id, dir string) ([]files.Entry, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	dir = strings.TrimPrefix(dir, "/")
+	seen := map[string]files.Entry{}
+	for name := range f.files {
+		rest, ok := strings.CutPrefix(name, dir+"/")
+		if dir == "" {
+			rest, ok = name, true
+		}
+		if !ok || rest == "" {
+			continue
+		}
+		first, more, _ := strings.Cut(rest, "/")
+		e := files.Entry{Name: first, Type: "file", Mtime: f.mtime[path.Join(dir, first)]}
+		if more != "" {
+			e.Type = "dir"
+		}
+		seen[first] = e
+	}
+	if len(seen) == 0 {
+		return nil, files.ErrNotFound
+	}
+	var out []files.Entry
+	for _, e := range seen {
+		out = append(out, e)
+	}
+	return out, nil
 }
 
 func (f *fakeServers) Start(ctx context.Context, id string) error {

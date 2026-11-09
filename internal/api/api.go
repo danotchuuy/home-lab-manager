@@ -2360,7 +2360,16 @@ func (s *server) serverBackups(w http.ResponseWriter, r *http.Request) {
 		writeBackupError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, o)
+	out := struct {
+		backup.Overview
+		// GameSuggestions are where the server's game keeps its own
+		// backups, from its profile.
+		GameSuggestions []GameBackupSuggestion `json:"gameSuggestions,omitempty"`
+	}{Overview: o}
+	if r.URL.Query().Get("suggest") == "1" {
+		out.GameSuggestions = s.gameBackupSuggestions(r.Context(), r.PathValue("id"))
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *server) setBackupPlan(w http.ResponseWriter, r *http.Request) {
@@ -2381,6 +2390,16 @@ func (s *server) setBackupPlan(w http.ResponseWriter, r *http.Request) {
 // progress.
 func (s *server) startBackup(w http.ResponseWriter, r *http.Request) {
 	if err := s.Backup.Start(r.Context(), r.PathValue("id")); err != nil {
+		writeBackupError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// syncGameBackups uploads the game's own new backups in the background;
+// GET .../backups shows its progress.
+func (s *server) syncGameBackups(w http.ResponseWriter, r *http.Request) {
+	if err := s.Backup.SyncGame(r.Context(), r.PathValue("id")); err != nil {
 		writeBackupError(w, err)
 		return
 	}

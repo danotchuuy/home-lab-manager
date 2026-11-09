@@ -2,12 +2,13 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAdmin } from "../access";
 import { api, download } from "../api";
-import type { BackupObject, BackupOverview, BackupPlan, BackupRun, BackupTargetRef, FileListing } from "../types";
+import type { BackupObject, BackupOverview, BackupPlan, BackupRun, BackupTargetRef, FileListing, GameBackupSuggestion } from "../types";
 import { usePoll } from "../usePoll";
 import { formatBytes } from "../util";
 import { AtFields, describeAt, KeepingFields, VerifyBadge } from "./BackupOptions";
 import { RestoreTests } from "./RestoreTests";
 import { Ago, Spinner } from "./common";
+import { gameBackupName, gameBackupTime, GameBackups } from "./GameBackups";
 
 export const INTERVALS: [number, string][] = [
   [0, "Off (only when asked)"],
@@ -34,7 +35,7 @@ export const STAGES: Record<string, string> = {
 
 export const baseName = (key: string) => key.split("/").pop() ?? key;
 
-type Draft = Omit<BackupPlan, "last" | "lastOk" | "lastRestore" | "checks">;
+type Draft = Omit<BackupPlan, "last" | "lastOk" | "lastRestore" | "checks" | "lastGame">;
 
 /** The editable part of a plan, in a fixed shape for comparing. */
 const toDraft = (p: BackupPlan): Draft => ({
@@ -49,6 +50,8 @@ const toDraft = (p: BackupPlan): Draft => ({
   exclude: p.exclude ?? [],
   verify: p.verify ?? "",
   copyTo: p.copyTo,
+  gameFolders: p.gameFolders ?? [],
+  gameKeep: p.gameKeep ?? 0,
 });
 
 const sameDraft = (a: Draft, b: Draft) => JSON.stringify(toDraft(a as BackupPlan)) === JSON.stringify(toDraft(b as BackupPlan));
@@ -83,27 +86,30 @@ export function ServerBackups({
   const [notice, setNotice] = useState<string>();
   const [busy, setBusy] = useState<string>();
   // Which card the error belongs to: the plan's actions or the list's.
-  const [errorIn, setErrorIn] = useState<"plan" | "list">("plan");
+  const [errorIn, setErrorIn] = useState<"plan" | "list" | "game">("plan");
+  // Where the game keeps its own backups, from its profile (asked for once).
+  const [suggestions, setSuggestions] = useState<GameBackupSuggestion[]>();
   // The backup whose restore is being confirmed, and whether to back up the current files first.
   const [restoring, setRestoring] = useState<string>();
   const [backupFirst, setBackupFirst] = useState(true);
 
   const load = useCallback(async () => {
     try {
-      const o = await api.serverBackups(server);
+      const o = await api.serverBackups(server, suggestions === undefined);
+      if (o.gameSuggestions || suggestions === undefined) setSuggestions(o.gameSuggestions ?? []);
       setOverview(o);
       setDraft((d) => d ?? toDraft(o.plan));
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [server]);
+  }, [server, suggestions]);
 
   // Quick while a backup runs, to show its progress.
   usePoll(load, overview?.running ? 1500 : 15000, [load, !!overview?.running]);
 
   async function run(label: string, fn: () => Promise<void>) {
     setBusy(label);
-    setErrorIn(label === "save" || label === "start" ? "plan" : "list");
+    setErrorIn(label === "save" || label === "start" ? "plan" : label === "save-game" || label === "game" ? "game" : "list");
     setError(undefined);
     setNotice(undefined);
     try {
@@ -142,6 +148,19 @@ export function ServerBackups({
       setNotice("Saved.");
     });
 
+  const saveGame = () =>
+    run("save-game", async () => {
+      const p = await api.setBackupPlan(server, draft);
+      setDraft(toDraft(p));
+      await load();
+    });
+
+  const syncGame = () =>
+    run("game", async () => {
+      await api.syncGameBackups(server);
+      await load();
+    });
+
   const backupNow = () =>
     run("start", async () => {
       await api.startBackup(server);
@@ -171,9 +190,10 @@ export function ServerBackups({
       if (!v.ok) setError(`${baseName(key)} is damaged: ${v.error}`);
     });
 
-  const list = (backups: BackupObject[], target: BackupTargetRef, primary: boolean) => (
+  const list = (backups: BackupObject[], target: BackupTargetRef, primary: boolean, game = false) => (
     <BackupList
       server={server}
+      game={game}
       backups={backups}
       target={primary ? "" : target.id}
       checks={plan.checks ?? {}}
@@ -189,7 +209,7 @@ export function ServerBackups({
       serverRunning={serverRunning}
       canRun={canRun}
       canManage={canManage}
-      admin={admin && primary}
+      admin={admin && primary && !game}
       onRestore={(k) => restore(k, primary ? "" : target.id)}
       onDelete={(k) => remove(k, primary ? "" : target.id)}
       onVerify={(k) => verify(k, primary ? "" : target.id)}
@@ -391,6 +411,28 @@ export function ServerBackups({
         )}
         {plan.at && !dirty && <p className="muted small">Backs up {describeAt(plan.at)}.</p>}
       </div>
+      <GameBackups
+        folders={draft.gameFolders ?? []}
+        keep={draft.gameKeep ?? 0}
+        onChange={(gameFolders, gameKeep) => setDraft({ ...draft, gameFolders, gameKeep })}
+        suggestions={suggestions ?? []}
+        last={plan.lastGame}
+        running={prog?.kind === "game"}
+        dirty={dirty}
+        busy={busy === "save-game" ? "save" : busy}
+        canManage={canManage}
+        canRun={canRun}
+        onSave={saveGame}
+        onSync={syncGame}
+        error={errorIn === "game" ? error : undefined}
+      >
+        {overview.gameBackups.length > 0 && (
+          <>
+            <h3 className="backup-copies-title">Uploaded ({overview.gameBackups.length})</h3>
+            {list(overview.gameBackups, overview.target, true, true)}
+          </>
+        )}
+      </GameBackups>
       </fieldset>
 
       <div className="card">
@@ -398,7 +440,7 @@ export function ServerBackups({
         {prog && (
           <div className="alert info">
             <Spinner /> {prog.kind === "restore" && prog.key && <>Restoring {baseName(prog.key)}. </>}
-            {STAGES[prog.stage] ?? prog.stage}
+            {prog.kind === "game" && prog.stage === "uploading" ? "Uploading the game's new backups…" : STAGES[prog.stage] ?? prog.stage}
             {prog.stage === "uploading" && (
               <>
                 {" "}
@@ -533,6 +575,8 @@ function lastExtras(r: BackupRun): string {
 /** A list of backups in one storage, with their actions. */
 function BackupList(p: {
   server: string;
+  /** The game's own backups: named by their folder, dated when the game wrote them. */
+  game?: boolean;
   backups: BackupObject[];
   /** The storage's ID, or "" for the primary. */
   target: string;
@@ -561,12 +605,15 @@ function BackupList(p: {
         <div className="backup-item" role="listitem" key={b.key}>
           <div className="backup-row">
             <code className="file-name" title={b.key}>
-              {b.key.split("/").pop()}
+              {p.game ? gameBackupName(b.key) : b.key.split("/").pop()}
             </code>
             <VerifyBadge v={p.checks[p.checkPrefix + b.key]} />
             <span className="muted small">{formatBytes(b.size)}</span>
-            <span className="muted small" title={new Date(b.lastModified).toLocaleString()}>
-              <Ago iso={b.lastModified} />
+            <span
+              className="muted small"
+              title={p.game ? `The game wrote it ${new Date(gameBackupTime(b.key) ?? b.lastModified).toLocaleString()}; uploaded ${new Date(b.lastModified).toLocaleString()}` : new Date(b.lastModified).toLocaleString()}
+            >
+              <Ago iso={p.game ? (gameBackupTime(b.key) ?? b.lastModified) : b.lastModified} />
             </span>
             <span className="btn-row">
               {p.canManage && (
@@ -624,9 +671,18 @@ function BackupList(p: {
           {p.restoring === id(b.key) && !p.prog && (
             <div className="restore-confirm">
               <p className="small no-margin">
-                Put back the files in <strong>{baseName(b.key)}</strong> from {new Date(b.lastModified).toLocaleString()}?{" "}
+                {p.game ? (
+                  <>
+                    Put <strong>{gameBackupName(b.key)}</strong> back in the game&apos;s backup folder? Load it from there
+                    the way the game restores its own backups.{" "}
+                  </>
+                ) : (
+                  <>
+                    Put back the files in <strong>{baseName(b.key)}</strong> from {new Date(b.lastModified).toLocaleString()}?{" "}
+                  </>
+                )}
                 {p.serverRunning ? "The server is stopped, the files are restored, and it's started again. " : ""}
-                Files in the backup replace the current ones; files created since then are left in place.
+                {!p.game && "Files in the backup replace the current ones; files created since then are left in place."}
               </p>
               <label className="radio small">
                 <input

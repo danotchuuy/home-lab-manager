@@ -27,6 +27,12 @@ type ServerBackups struct {
 	Stored      []s3.Object `json:"stored"`
 	StoredSize  int64       `json:"storedSize"`
 	StoredError string      `json:"storedError,omitempty"`
+	// GameFolders are where the game keeps its own backups, LastGame how
+	// the last upload of them went, and GameStored those uploaded.
+	GameFolders []GameFolder `json:"gameFolders,omitempty"`
+	LastGame    *GameSync    `json:"lastGame,omitempty"`
+	GameStored  []s3.Object  `json:"gameStored,omitempty"`
+	GameSize    int64        `json:"gameSize,omitempty"`
 }
 
 // AllBackups is every server's backups, and whatever is running now.
@@ -60,12 +66,13 @@ func (s *Service) All(ctx context.Context, can func(server string) bool, stored 
 	}
 	now, loc := time.Now(), s.loc()
 	for name, p := range plans {
-		if !can(name) || (len(p.Folders) == 0 && p.Last == nil) {
+		if !can(name) || (len(p.Folders) == 0 && p.Last == nil && len(p.GameFolders) == 0 && p.LastGame == nil) {
 			continue
 		}
 		sb := add(name)
 		sb.Folders = append(sb.Folders, p.Folders...)
 		sb.IntervalHours, sb.At, sb.Last, sb.LastOK = p.IntervalHours, p.At, p.Last, p.LastOK
+		sb.GameFolders, sb.LastGame = p.GameFolders, p.LastGame
 		if next := nextDue(p, now, loc); !next.IsZero() {
 			sb.Next = &next
 		}
@@ -126,6 +133,17 @@ func (s *Service) All(ctx context.Context, can func(server string) bool, stored 
 			sb.Stored = newestFirst(objs)
 			for _, o := range objs {
 				sb.StoredSize += o.Size
+			}
+			if len(sb.GameFolders) > 0 || sb.LastGame != nil {
+				g, err := gameBackups(ctx, st, gameSeries(st.t.Settings, s.seriesName(sb.Server)))
+				if err != nil {
+					sb.StoredError = err.Error()
+					return
+				}
+				sb.GameStored = g
+				for _, o := range g {
+					sb.GameSize += o.Size
+				}
 			}
 		}()
 	}

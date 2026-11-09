@@ -9,3 +9,12 @@ player_lists:
   allow: { file: permittedlist.txt, format: lines }
   ban: { file: bannedlist.txt, format: lines }
   admin: { file: adminlist.txt, format: lines }
+game_backups:
+  # Valheim's own backups (its -backups option), beside the live world.
+  - path: worlds_local
+    match: "*_backup_*"
+    note: Valheim's own backups of the world, beside the live one
+  # lloesche/valheim-server's zip backups.
+  - path: backups
+    match: "*.zip"
+    note: The image's zip backups of the world
