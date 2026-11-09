@@ -41,6 +41,7 @@ var expected = map[string]string{
 	"GET /api/catalog/apps":                              "signedIn",
 	"GET /api/catalog/apps/{id}":                         "signedIn",
 	"GET /api/jobs":                                      "signedIn",
+	"GET /api/backups":                                   "signedIn",
 	"GET /api/updates":                                   "signedIn",
 	"POST /api/updates/apply":                            "signedIn",
 	"GET /api/servers":                                   "signedIn",

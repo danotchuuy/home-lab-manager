@@ -1655,6 +1655,28 @@ func (s *server) refreshStorage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, s.Manager.Storage(r.URL.Query().Get("host")))
 }
 
+// allBackups lists every server's backups the caller can see, with those
+// running now; ?stored=1 also lists each one's backups in the bucket.
+func (s *server) allBackups(w http.ResponseWriter, r *http.Request) {
+	access := s.access(r)
+	can := func(server string) bool {
+		if server == "" {
+			return access.Admin() // hlm's own settings
+		}
+		return access.Admin() || access.Can(server, rbac.Viewer)
+	}
+	if s.Backup == nil {
+		writeJSON(w, http.StatusOK, backup.AllBackups{Servers: []backup.ServerBackups{}})
+		return
+	}
+	out, err := s.Backup.All(r.Context(), can, r.URL.Query().Get("stored") == "1")
+	if err != nil {
+		writeBackupError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // listJobs returns installs and updates in progress (and those that finished
 // in the last minute), whoever started them.
 func (s *server) listJobs(w http.ResponseWriter, r *http.Request) {

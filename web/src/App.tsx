@@ -12,6 +12,7 @@ import { ConnectionDetailPage } from "./pages/ConnectionDetail";
 import { HostPage } from "./pages/Host";
 import { ProxyPage } from "./pages/Proxy";
 import { TunnelPage } from "./pages/Tunnel";
+import { BackupsPage } from "./pages/Backups";
 import { InstallPage } from "./pages/Install";
 import { ImportServerPage } from "./pages/ImportServer";
 import { AdoptPage } from "./pages/Adopt";
@@ -75,6 +76,7 @@ export function App() {
           <NavLink to="/" end>
             Servers
           </NavLink>
+          <NavLink to="/backups">Backups</NavLink>
           {admin && (
             <>
               <NavLink to="/catalog">Catalog</NavLink>
@@ -145,6 +147,7 @@ export function App() {
           <Route path="/stacks/new" element={<StackEditorPage />} />
           <Route path="/stacks/:name" element={<StackEditorPage />} />
           <Route path="/connections/:name" element={<ConnectionDetailPage />} />
+          <Route path="/backups" element={<BackupsPage />} />
           <Route path="/host" element={<HostPage />} />
           <Route path="/system" element={<SystemPage />} />
           <Route path="/proxy" element={<ProxyPage />} />

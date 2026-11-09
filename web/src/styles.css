@@ -4801,3 +4801,99 @@ pre .muted {
   opacity: 0.6;
   cursor: default;
 }
+
+/* Backups page */
+.backup-running {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.backup-running li + li {
+  border-top: 1px solid var(--border);
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+}
+.backup-running .backup-running-numbers {
+  text-align: right;
+}
+.backup-running progress {
+  width: 100%;
+  margin-top: 0.5rem;
+}
+.backups-table td .badge {
+  margin-left: 0.4rem;
+}
+.backups-table td > .muted.small {
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.backups-stored td {
+  background: var(--surface-2);
+}
+.backups-stored-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.backups-stored-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  padding: 0.25rem 0;
+}
+.backups-stored-list li span:first-child {
+  font-family: var(--mono, monospace);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.backups-stored-list li a {
+  margin-left: auto;
+}
+@media (max-width: 640px) {
+  .backup-running .backup-running-numbers {
+    text-align: left;
+  }
+}
+.backups-page .card + .card {
+  margin-top: 1rem;
+}
+.backups-page .settings-actions {
+  margin-bottom: 1rem;
+}
+/* Phones: each server is a block of labelled lines, not a wide table. */
+@media (max-width: 640px) {
+  .backups-table thead {
+    display: none;
+  }
+  .backups-table,
+  .backups-table tbody,
+  .backups-table tr,
+  .backups-table td {
+    display: block;
+  }
+  .backups-table tr {
+    border-bottom: 1px solid var(--border);
+    padding: 0.5rem 0;
+  }
+  .backups-table td {
+    border: 0;
+    padding: 0.15rem 0;
+  }
+  .backups-table td[data-label]:not([data-label="Server"])::before {
+    content: attr(data-label) ": ";
+    color: var(--muted);
+  }
+  .backups-table td[data-label] > div {
+    display: inline;
+    margin-left: 0.3rem;
+  }
+  .backups-table td[data-label="Server"] > div {
+    display: block;
+    margin-left: 0;
+  }
+  .backups-stored td {
+    padding: 0.5rem;
+  }
+}
