@@ -320,6 +320,7 @@ func (s *server) routes() []route {
 		{"GET /api/servers/{id}/backups", serverRole(rbac.Viewer), s.serverBackups},
 		{"PUT /api/servers/{id}/backups/plan", serverRole(rbac.Manager), s.setBackupPlan},
 		{"POST /api/servers/{id}/backups", serverRole(rbac.Operator), s.startBackup},
+		{"POST /api/servers/{id}/backups/game", serverRole(rbac.Operator), s.syncGameBackups},
 		{"GET /api/servers/{id}/backups/download", serverRole(rbac.Operator), s.downloadBackup},
 		{"POST /api/servers/{id}/backups/restore", serverRole(rbac.Manager), s.restoreBackup},
 		{"POST /api/servers/{id}/backups/verify", serverRole(rbac.Operator), s.verifyBackup},

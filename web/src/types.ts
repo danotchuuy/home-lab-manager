@@ -1527,6 +1527,36 @@ export interface BackupPlan {
   last?: BackupRun;
   lastOk?: BackupRun;
   lastRestore?: BackupRun;
+  /** Folders the game keeps its own backups in; each new one is uploaded. */
+  gameFolders?: GameBackupFolder[];
+  /** How many of each folder's uploaded game backups to keep (0: all); those still in the folder are kept either way. */
+  gameKeep?: number;
+  lastGame?: GameBackupSync;
+}
+
+/** A folder a game keeps its own backups in: a container path, where * stands for one folder's name. */
+export interface GameBackupFolder {
+  path: string;
+  /** Only entries whose names match (e.g. *_backup_*). */
+  match?: string;
+}
+
+/** Where the server's game profile says the game keeps its backups, found in this server. */
+export interface GameBackupSuggestion extends GameBackupFolder {
+  note?: string;
+}
+
+/** How an upload of a game's own backups went. */
+export interface GameBackupSync {
+  trigger: "manual" | "schedule";
+  started: string;
+  finished: string;
+  found: number;
+  uploaded: number;
+  bytes: number;
+  deleted?: number;
+  error?: string;
+  warnings?: string[];
 }
 
 /** A backup storage, by ID. */
@@ -1549,7 +1579,8 @@ export interface BackupTarget extends BackupSettings {
 
 /** A backup or restore in progress. */
 export interface BackupProgress {
-  kind: "backup" | "restore";
+  /** game: uploading the game's own new backups. */
+  kind: "backup" | "restore" | "game";
   trigger: "manual" | "schedule" | "restore";
   started: string;
   stage:
@@ -1591,6 +1622,10 @@ export interface ServerBackupsSummary {
   stored: BackupObject[];
   storedSize: number;
   storedError?: string;
+  gameFolders?: GameBackupFolder[];
+  lastGame?: GameBackupSync;
+  gameStored?: BackupObject[];
+  gameSize?: number;
 }
 
 export interface AllBackups {
@@ -1615,6 +1650,10 @@ export interface BackupOverview {
   copies?: { target: BackupTargetRef; backups: BackupObject[]; error?: string };
   /** The other storage the plan can copy to. */
   targets: BackupTargetRef[];
+  /** The game's own backups hlm uploaded, newest first. */
+  gameBackups: BackupObject[];
+  /** Only when asked for. */
+  gameSuggestions?: GameBackupSuggestion[];
 }
 
 /** When hlm backs up its own configuration. */

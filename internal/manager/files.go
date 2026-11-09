@@ -71,6 +71,12 @@ func (m *Manager) ListFiles(ctx context.Context, id, path string) (FileListing, 
 	return FileListing{Listing: l, Mounts: mounts}, nil
 }
 
+// ListFolder lists a folder in a server's container: its entries only.
+func (m *Manager) ListFolder(ctx context.Context, id, path string) ([]files.Entry, error) {
+	l, err := m.ListFiles(ctx, id, path)
+	return l.Entries, err
+}
+
 // ReadFile opens a file in a server's container for editing.
 func (m *Manager) ReadFile(ctx context.Context, id, path string) (files.File, error) {
 	info, err := m.inspect(ctx, id)

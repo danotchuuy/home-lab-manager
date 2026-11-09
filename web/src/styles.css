@@ -4897,3 +4897,36 @@ pre .muted {
     padding: 0.5rem;
   }
 }
+
+.backups-stored-title {
+  margin-top: 0.5rem;
+}
+.game-backup-suggestions {
+  margin: 0.75rem 0;
+}
+.game-backup-suggestion {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.game-backup-suggestion code {
+  overflow-wrap: anywhere;
+}
+.game-backups .input-row input:first-child {
+  flex: 2 1 16rem;
+  min-width: 0;
+}
+.game-backups .game-backup-match {
+  flex: 1 1 9rem;
+  min-width: 0;
+}
+.game-backup-keep {
+  margin-top: 0.75rem;
+  max-width: 24rem;
+}
+.game-backups > .btn-row {
+  margin-top: 0.75rem;
+}

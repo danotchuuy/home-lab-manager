@@ -12,3 +12,7 @@ mods:
     images:
       # https://github.com/Renegade-Master/zomboid-dedicated-server: each Workshop item, and the mod name inside it.
       - { image: renegademaster/zomboid-dedicated-server, env: MOD_WORKSHOP_IDS, separator: ";", names_env: MOD_NAMES }
+game_backups:
+  # Copies Project Zomboid makes as the server starts.
+  - path: Zomboid/backups/startup
+    note: Copies of the world taken as the server starts

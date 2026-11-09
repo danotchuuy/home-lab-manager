@@ -111,6 +111,14 @@ type Plan struct {
 	LastOK *Run `json:"lastOk,omitempty"`
 	// LastRestore is the last restore from a backup.
 	LastRestore *Run `json:"lastRestore,omitempty"`
+	// GameFolders are folders a game keeps its own backups in: each
+	// backup it writes there is uploaded once (see SyncGame).
+	GameFolders []GameFolder `json:"gameFolders,omitempty"`
+	// GameKeep is how many of each folder's uploaded game backups to keep
+	// (0: all). Those still in the folder are kept either way.
+	GameKeep int `json:"gameKeep,omitempty"`
+	// LastGame is how the last upload of the game's backups went.
+	LastGame *GameSync `json:"lastGame,omitempty"`
 }
 
 // Run is the outcome of one backup.
@@ -164,7 +172,7 @@ func (p Plan) keeping() Keeping { return Keeping{Keep: p.Keep, Retention: p.Rete
 
 // Progress is a backup or restore in progress.
 type Progress struct {
-	Kind    string    `json:"kind"` // backup or restore
+	Kind    string    `json:"kind"` // backup, restore, or game (uploading the game's own backups)
 	Trigger string    `json:"trigger"`
 	Started time.Time `json:"started"`
 	// Stage is preparing, stopping, uploading, restoring, cleaning or
@@ -186,6 +194,8 @@ type Servers interface {
 	RestoreArchive(ctx context.Context, id string, r io.Reader, progress func(files.ArchiveStats)) (files.ArchiveStats, error)
 	Start(ctx context.Context, id string) error
 	Stop(ctx context.Context, id string) error
+	// ListFolder lists a folder in a server's container.
+	ListFolder(ctx context.Context, id, path string) ([]files.Entry, error)
 }
 
 // Service runs backups.
@@ -618,6 +628,8 @@ type Overview struct {
 	Copies *CopiesOverview `json:"copies,omitempty"`
 	// Targets are the other storage a plan can copy to.
 	Targets []TargetRef `json:"targets"`
+	// GameBackups are the game's own backups hlm uploaded, newest first.
+	GameBackups []s3.Object `json:"gameBackups"`
 }
 
 // TargetRef names a backup storage.
@@ -645,7 +657,7 @@ func (s *Service) Overview(ctx context.Context, id string) (Overview, error) {
 	if err != nil {
 		return Overview{}, err
 	}
-	o := Overview{Plan: plans[name], Backups: []s3.Object{}}
+	o := Overview{Plan: plans[name], Backups: []s3.Object{}, GameBackups: []s3.Object{}}
 	if o.Plan.Folders == nil {
 		o.Plan.Folders = []string{}
 	}
@@ -684,6 +696,16 @@ func (s *Service) Overview(ctx context.Context, id string) (Overview, error) {
 	}
 	if o.Backups == nil {
 		o.Backups = []s3.Object{}
+	}
+	o.GameBackups = []s3.Object{}
+	if len(o.Plan.GameFolders) > 0 {
+		if st, err := s.store(""); err == nil {
+			if g, err := gameBackups(ctx, st, gameSeries(st.t.Settings, s.seriesName(name))); err == nil {
+				o.GameBackups = g
+			} else if o.Error == "" {
+				o.Error = err.Error()
+			}
+		}
 	}
 	if cp := o.Plan.CopyTo; cp != nil {
 		c := &CopiesOverview{Target: TargetRef{ID: cp.Target, Name: cp.Target}, Backups: []s3.Object{}}
@@ -798,6 +820,13 @@ func (s *Service) SetPlan(ctx context.Context, id string, in Plan) (Plan, error)
 	if err != nil {
 		return Plan{}, err
 	}
+	game, err := checkGameFolders(in.GameFolders)
+	if err != nil {
+		return Plan{}, err
+	}
+	if in.GameKeep < 0 {
+		return Plan{}, errors.New("the number of game backups to keep can't be negative")
+	}
 	switch in.Verify {
 	case VerifyAuto, VerifyAlways, VerifyOff:
 	default:
@@ -830,6 +859,7 @@ func (s *Service) SetPlan(ctx context.Context, id string, in Plan) (Plan, error)
 		}
 		p.Folders, p.IntervalHours, p.At, p.Keep, p.Retention, p.StopServer = folders, in.IntervalHours, in.At, in.Keep, in.Retention, in.StopServer
 		p.PreCommand, p.PostCommand, p.Exclude, p.Verify, p.CopyTo = pre, post, exclude, in.Verify, in.CopyTo
+		p.GameFolders, p.GameKeep = game, in.GameKeep
 		out = *p
 	})
 	if out.Folders == nil {
@@ -1152,7 +1182,11 @@ func (s *Service) pause(ctx context.Context, name string, prog *Progress, run *R
 // checksum, counts and warnings.
 func (s *Service) upload(ctx context.Context, st *store, name string, folders, exclude []string, prog *Progress, run *Run) error {
 	s.setStage(prog, "uploading")
-	key := serverSeries(st.t.Settings, s.seriesName(name)).newKey(time.Now())
+	return s.uploadAs(ctx, st, name, serverSeries(st.t.Settings, s.seriesName(name)).newKey(time.Now()), folders, exclude, prog, run)
+}
+
+// uploadAs archives folders into a backup stored as key; see upload.
+func (s *Service) uploadAs(ctx context.Context, st *store, name, key string, folders, exclude []string, prog *Progress, run *Run) error {
 	pr, pw := io.Pipe()
 	type result struct {
 		stats files.ArchiveStats
@@ -1410,7 +1444,7 @@ func (s *Service) backupKey(ctx context.Context, id, key, target string) (*store
 	if err != nil {
 		return nil, "", err
 	}
-	if !serverSeries(st.t.Settings, s.seriesName(name)).has(key) {
+	if !serverSeries(st.t.Settings, s.seriesName(name)).has(key) && !gameSeries(st.t.Settings, s.seriesName(name)).has(key) {
 		return nil, "", ErrBadKey
 	}
 	return st, name, nil
@@ -1544,14 +1578,25 @@ func (s *Service) RunScheduler(ctx context.Context) {
 		}
 		s.checkStale(plans, now)
 		for name, p := range plans {
-			if !due(p, now, s.loc()) {
+			isDue := due(p, now, s.loc())
+			if !isDue && len(p.GameFolders) == 0 {
 				continue
 			}
-			if _, err := s.servers.Inspect(ctx, name); err != nil {
+			info, err := s.servers.Inspect(ctx, name)
+			if err != nil {
 				continue // deleted, or Docker is unreachable; try again later
 			}
-			if err := s.start(name, "schedule"); err != nil && !errors.Is(err, ErrRunning) {
-				s.log.Warn("start scheduled backup", "server", name, "err", err)
+			if isDue {
+				if err := s.start(name, "schedule"); err != nil && !errors.Is(err, ErrRunning) {
+					s.log.Warn("start scheduled backup", "server", name, "err", err)
+				}
+				continue
+			}
+			stopped, _ := time.Parse(time.RFC3339Nano, info.State.FinishedAt)
+			if gameDue(p, info.State.Running, stopped, now) {
+				if err := s.startGame(name, "schedule"); err != nil && !errors.Is(err, ErrRunning) {
+					s.log.Warn("start uploading the game's backups", "server", name, "err", err)
+				}
 			}
 		}
 	}

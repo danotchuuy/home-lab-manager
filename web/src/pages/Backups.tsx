@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useAdmin } from "../access";
 import { api, download } from "../api";
 import { describeAt } from "../components/BackupOptions";
+import { gameBackupName, gameBackupTime } from "../components/GameBackups";
 import { Ago, Spinner } from "../components/common";
 import { baseName, INTERVALS, STAGES } from "../components/ServerBackups";
 import type { AllBackups, BackupObject, BackupProgress, ServerBackupsSummary } from "../types";
@@ -16,7 +17,7 @@ export function BackupsPage() {
   const admin = useAdmin();
   const [data, setData] = useState<AllBackups>();
   // The bucket listing, kept between the quick polls while something runs.
-  const [stored, setStored] = useState<Record<string, Pick<ServerBackupsSummary, "stored" | "storedSize" | "storedError">>>({});
+  const [stored, setStored] = useState<Record<string, Pick<ServerBackupsSummary, "stored" | "storedSize" | "storedError" | "gameStored" | "gameSize">>>({});
   const [listedAt, setListedAt] = useState(0);
   const [error, setError] = useState<string>();
   const [open, setOpen] = useState<string>();
@@ -32,7 +33,7 @@ export function BackupsPage() {
         return d;
       });
       if (full) {
-        setStored(Object.fromEntries(d.servers.map((s) => [s.server, { stored: s.stored, storedSize: s.storedSize, storedError: s.storedError }])));
+        setStored(Object.fromEntries(d.servers.map((s) => [s.server, { stored: s.stored, storedSize: s.storedSize, storedError: s.storedError, gameStored: s.gameStored, gameSize: s.gameSize }])));
         setListedAt(Date.now());
       }
       setError(undefined);
@@ -53,8 +54,8 @@ export function BackupsPage() {
 
   const now = data.servers.filter((s) => s.running);
   const servers = data.servers.map((s) => ({ ...s, ...(stored[s.server] ?? {}) }));
-  const total = servers.reduce((n, s) => n + (s.storedSize ?? 0), 0);
-  const count = servers.reduce((n, s) => n + (s.stored?.length ?? 0), 0);
+  const total = servers.reduce((n, s) => n + (s.storedSize ?? 0) + (s.gameSize ?? 0), 0);
+  const count = servers.reduce((n, s) => n + (s.stored?.length ?? 0) + (s.gameStored?.length ?? 0), 0);
 
   return (
     <div className="page backups-page">
@@ -121,14 +122,17 @@ export function BackupsPage() {
                         <Link to={backupsTab(s.server)}>{s.server}</Link>
                         {s.running && (
                           <span className="badge state-restarting" title={STAGES[s.running.stage] ?? s.running.stage}>
-                            {s.running.kind === "restore" ? "restoring" : "backing up"}
+                            {s.running.kind === "restore" ? "restoring" : s.running.kind === "game" ? "uploading" : "backing up"}
                           </span>
                         )}
                         <div className="muted small" title={s.folders.join("\n")}>
                           {s.folders.length ? s.folders.join(", ") : "no folders chosen"}
                         </div>
                       </td>
-                      <td className="small" data-label="Schedule">{schedule(s)}</td>
+                      <td className="small" data-label="Schedule">
+                        {schedule(s)}
+                        {!!s.gameFolders?.length && <GameLine s={s} />}
+                      </td>
                       <td className="small" data-label="Last backup">
                         <LastRun s={s} />
                       </td>
@@ -138,7 +142,7 @@ export function BackupsPage() {
                           <span className="form-error" title={s.storedError}>
                             couldn&apos;t list
                           </span>
-                        ) : !s.stored?.length ? (
+                        ) : !s.stored?.length && !s.gameStored?.length ? (
                           <span className="muted">none</span>
                         ) : (
                           <button
@@ -147,15 +151,22 @@ export function BackupsPage() {
                             onClick={() => setOpen(open === s.server ? undefined : s.server)}
                             aria-expanded={open === s.server}
                           >
-                            {s.stored.length} · {formatBytes(s.storedSize)} {open === s.server ? "▴" : "▾"}
+                            {s.stored.length + (s.gameStored?.length ?? 0)} · {formatBytes(s.storedSize + (s.gameSize ?? 0))}{" "}
+                            {open === s.server ? "▴" : "▾"}
                           </button>
                         )}
                       </td>
                     </tr>
-                    {open === s.server && s.stored?.length > 0 && (
+                    {open === s.server && (s.stored?.length > 0 || !!s.gameStored?.length) && (
                       <tr className="backups-stored">
                         <td colSpan={5}>
-                          <StoredList server={s.server} backups={s.stored} />
+                          {s.stored.length > 0 && <StoredList server={s.server} backups={s.stored} />}
+                          {!!s.gameStored?.length && (
+                            <>
+                              <div className="muted small backups-stored-title">The game&apos;s own backups</div>
+                              <StoredList server={s.server} backups={s.gameStored} game />
+                            </>
+                          )}
                         </td>
                       </tr>
                     )}
@@ -174,6 +185,27 @@ function schedule(s: ServerBackupsSummary): string {
   if (s.at) return describeAt(s.at);
   if (s.intervalHours) return INTERVALS.find(([h]) => h === s.intervalHours)?.[1] ?? `Every ${s.intervalHours} hours`;
   return "Only when asked";
+}
+
+/** How uploading the game's own backups last went. */
+function GameLine({ s }: { s: ServerBackupsSummary }) {
+  const g = s.lastGame;
+  return (
+    <div className="muted" title={s.gameFolders?.map((f) => f.path + (f.match ? ` (${f.match})` : "")).join("\n")}>
+      + the game&apos;s own backups
+      {g &&
+        (g.error ? (
+          <>
+            : <span className="form-error" title={g.error}>failed</span> <Ago iso={g.started} />
+          </>
+        ) : (
+          <>
+            , checked <Ago iso={g.finished} />
+            {g.uploaded ? `, ${g.uploaded} new` : ""}
+          </>
+        ))}
+    </div>
+  );
 }
 
 function LastRun({ s }: { s: ServerBackupsSummary }) {
@@ -228,7 +260,7 @@ function RunningRow({ label, to, prog, last }: { label: string; to: string; prog
             <strong>{label}</strong>
           </Link>{" "}
           <span className="muted small">
-            {prog.kind === "restore" ? "restore" : "backup"} · {prog.trigger === "schedule" ? "scheduled" : prog.trigger} · started {timeAgo(prog.started)}
+            {prog.kind === "restore" ? "restore" : prog.kind === "game" ? "the game's own backups" : "backup"} · {prog.trigger === "schedule" ? "scheduled" : prog.trigger} · started {timeAgo(prog.started)}
           </span>
           <div className="small">{STAGES[prog.stage] ?? prog.stage}</div>
         </div>
@@ -251,14 +283,14 @@ function RunningRow({ label, to, prog, last }: { label: string; to: string; prog
   );
 }
 
-function StoredList({ server, backups }: { server: string; backups: BackupObject[] }) {
+function StoredList({ server, backups, game }: { server: string; backups: BackupObject[]; game?: boolean }) {
   return (
     <ul className="backups-stored-list small">
       {backups.map((b) => (
         <li key={b.key}>
-          <span title={b.key}>{baseName(b.key)}</span>
+          <span title={b.key}>{game ? gameBackupName(b.key) : baseName(b.key)}</span>
           <span className="muted">
-            <Ago iso={b.lastModified} /> · {formatBytes(b.size)}
+            <Ago iso={game ? (gameBackupTime(b.key) ?? b.lastModified) : b.lastModified} /> · {formatBytes(b.size)}
           </span>
           <a
             href={api.backupDownloadUrl(server, b.key)}

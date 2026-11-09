@@ -182,6 +182,7 @@ var expected = map[string]string{
 	"GET /api/servers/{id}/config-files":                "operator",
 	"PUT /api/servers/{id}/config-files":                "manager",
 	"POST /api/servers/{id}/backups":                    "operator",
+	"POST /api/servers/{id}/backups/game":               "operator",
 	"GET /api/servers/{id}/backups/download":            "operator",
 
 	"POST /api/servers": "deployer",
