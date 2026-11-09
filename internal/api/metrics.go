@@ -131,6 +131,11 @@ func (s *server) prometheus(w http.ResponseWriter, r *http.Request) {
 	if s.Prober != nil {
 		probes = s.Prober.Statuses()
 	}
+	// Servers' exits, by why they happened.
+	var exits map[string]map[string]int64
+	if s.Manager != nil {
+		exits = s.Manager.ExitCounts()
+	}
 	names := make([]string, 0, len(latest))
 	for n := range latest {
 		names = append(names, n)
@@ -155,6 +160,19 @@ func (s *server) prometheus(w http.ResponseWriter, r *http.Request) {
 				if a.Listener != "" || a.ListenerError != "" {
 					e.Gauge("hlm_server_wake_listener_up", "1 if a sleeping server's wake listener is running, so a player connecting wakes it.", b2f(a.Listener != ""), l...)
 				}
+			}
+		}
+		down := downReason(smp.Server, asleep)
+		for _, reason := range downReasons {
+			e.Gauge("hlm_server_down", "1 for why the server isn't running (reason: stopped, asleep, exited, crashed, unhealthy, crash_loop or unknown); 0 for the other reasons, and for all of them while it runs.",
+				b2f(down == reason), slices.Concat(l, []string{"reason", reason})...)
+		}
+		e.Gauge("hlm_server_down_unexpectedly", "1 if the server isn't running and nobody stopped it: it crashed, exited on its own, kept exiting (crash loop) or couldn't be restarted for failing health.",
+			b2f(unexpectedDown[down]), l...)
+		if c, ok := exits[name]; ok {
+			for _, reason := range manager.ExitReasons {
+				e.Counter("hlm_server_exits_total", "Times the server's container exited, by why: stopped (someone asked), exited (cleanly, on its own), crashed (an error or out of memory, on its own) or unhealthy (restarted by hlm for failing health).",
+					float64(c[reason]), slices.Concat(l, []string{"reason", reason})...)
 			}
 		}
 		e.Counter("hlm_server_restarts_total", "Times Docker restarted the container under its restart policy since it was started.", float64(smp.Restarts), l...)
@@ -245,4 +263,24 @@ func b2f(b bool) float64 {
 		return 1
 	}
 	return 0
+}
+
+// downReasons are hlm_server_down's reasons.
+var downReasons = []string{manager.StopRequested, "asleep", manager.StopExited, manager.StopCrashed,
+	manager.StopUnhealthy, manager.StopCrashLoop, manager.StopUnknown}
+
+// unexpectedDown are the reasons nobody asked for.
+var unexpectedDown = map[string]bool{manager.StopExited: true, manager.StopCrashed: true,
+	manager.StopUnhealthy: true, manager.StopCrashLoop: true}
+
+// downReason is why a server isn't running, or "" while it is: a server
+// hlm put to sleep is asleep rather than stopped.
+func downReason(srv manager.Server, asleep map[string]idle.Asleep) string {
+	if srv.State == "running" {
+		return ""
+	}
+	if _, ok := asleep[srv.Name]; ok && srv.StopReason != manager.StopCrashLoop {
+		return "asleep"
+	}
+	return cmp.Or(srv.StopReason, manager.StopUnknown)
 }

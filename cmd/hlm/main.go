@@ -308,6 +308,9 @@ func run(log *slog.Logger) error {
 	if err := mgr.UseCrashLoopStore(filepath.Join(dataDir, "crash-loops.json")); err != nil {
 		log.Warn("read servers stopped for crash loops", "err", err)
 	}
+	if err := mgr.UseExitStore(filepath.Join(dataDir, "server-exits.json")); err != nil {
+		log.Warn("read servers' last exits", "err", err)
+	}
 	fwd := forwarding.New(store, mgr, host.LANAddress, log)
 	mgr.UseIPChecker(func(ctx context.Context, ip string, ignore []string) (string, string, error) {
 		if !fwd.Configured() {

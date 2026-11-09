@@ -64,7 +64,9 @@ type Manager struct {
 	// notifier gets crashes, updates and the like; see UseNotifier.
 	notifier notify.Notifier
 	// crashes counts unexpected exits; see health.go.
-	crashes      *crashTracker
+	crashes *crashTracker
+	// exits keeps why servers last stopped; see exits.go.
+	exits        *exitLog
 	healthPolicy HealthPolicy
 	audit        audit.Recorder
 	// beforeStop saves a running server's world before hlm stops it; see
@@ -142,7 +144,7 @@ func (m *Manager) checkLANAddress(ctx context.Context, spec *deploy.Spec, req de
 // placed under appdataRoot instead.
 func New(d *docker.Client, c *catalog.Catalog, appdataRoot string, log *slog.Logger) *Manager {
 	m := &Manager{docker: newRouter(d), catalog: c, appdataRoot: appdataRoot, log: log, updates: newUpdateTracker(), jobs: newJobTracker(), storage: &storageTracker{},
-		crashes: newCrashTracker()}
+		crashes: newCrashTracker(), exits: newExitLog()}
 	if u, err := url.Parse(d.Host()); err == nil && u.Scheme != "unix" {
 		m.remoteHost = u.Hostname()
 	}
@@ -207,6 +209,9 @@ type Server struct {
 	Favourite bool     `json:"favourite,omitempty"`
 	// CrashLoop is set when hlm stopped the server because it kept exiting.
 	CrashLoop *CrashLoop `json:"crashLoop,omitempty"`
+	// StopReason says why a server that isn't running stopped: someone
+	// stopped it, it exited or crashed on its own, and so on (Stop*).
+	StopReason string `json:"stopReason,omitempty"`
 	// GameProfile is the game profile its image matches, if any; the API
 	// fills it in.
 	GameProfile *gameprofile.Ref `json:"gameProfile,omitempty"`
@@ -257,6 +262,7 @@ func (m *Manager) enrich(srv *Server, info docker.ContainerJSON) {
 	}
 	m.fillWebUI(srv, info.Config.Labels)
 	m.fillCrashLoop(srv, info)
+	m.fillStopReason(srv, info)
 }
 
 // fillWebUI finishes a server's Web UI link. Servers created without one
@@ -1086,6 +1092,9 @@ func (m *Manager) Remove(ctx context.Context, id string) error {
 		return err
 	}
 	m.ClearCrashLoop(strings.TrimPrefix(info.Name, "/"))
+	if err := m.exits.forget(strings.TrimPrefix(info.Name, "/")); err != nil {
+		m.log.Warn("forget deleted server's exits", "server", info.Name, "err", err)
+	}
 	return nil
 }
 

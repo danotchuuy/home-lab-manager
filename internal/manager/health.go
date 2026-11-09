@@ -288,6 +288,7 @@ func (m *Manager) RestartUnhealthy(ctx context.Context, name, reason string) (st
 		return true, nil
 	}
 	m.prepareStop(ctx, info)
+	m.exits.restarting(name, time.Now())
 	return false, m.docker.RestartContainer(ctx, info.ID, -1)
 }
 

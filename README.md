@@ -1849,6 +1849,24 @@ hlm keeps a month of resource history itself, without a database, so "why was it
   `hlm_server_wake_listener_up` (1 if connecting will wake it) when it wakes on a connection. A running server with
   [Kubernetes-style probes](#health-checks-and-crash-loops) has `hlm_server_ready` and, for each probe that has run,
   `hlm_server_probe_success` (label `probe`: `startup`, `liveness` or `readiness`).
+- **Stopped on purpose, or down by accident:** `hlm_server_down` has a series for each `reason`, and the one for why the
+  server isn't running is 1 (all are 0 while it runs). The reasons are:
+  - `stopped`: someone asked for it. That covers hlm, a schedule, a person in hlm, `docker stop`, and the host
+    shutting down.
+  - `asleep`: [idle stopping](#stopping-idle-servers) put it to sleep.
+  - `exited`: it exited cleanly (code 0) without anyone asking, such as after an in-game shutdown command.
+  - `crashed`: it exited with an error or ran out of memory without anyone asking. This includes a container Docker is
+    restarting.
+  - `unhealthy`: hlm restarted it for failing health, and it didn't come back.
+  - `crash_loop`: hlm stopped it because it kept exiting.
+  - `unknown`: it stopped while hlm wasn't watching.
+
+  `hlm_server_down_unexpectedly` is 1 when the reason is `exited`, `crashed`, `unhealthy` or `crash_loop`, so
+  `hlm_server_down_unexpectedly == 1` is an alert for a server that's down and shouldn't be.
+  `hlm_server_exits_total` counts every exit by `reason` (`stopped`, `exited`, `crashed` or `unhealthy`), including
+  crashes Docker restarted straight away. For example, `increase(hlm_server_exits_total{reason="crashed"}[1h]) > 0`
+  catches a server that crashed and came back. The last exits and the counts are kept in `server-exits.json` in the
+  data directory, so they survive a restart of hlm.
 - **Backups** (label `server`): `hlm_backup_last_success_timestamp_seconds`, `hlm_backup_last_size_bytes`,
   `hlm_backup_last_duration_seconds`.
 - **Hosts** (label `host`: `local`, or the ID of a host with [hlm's agent](#more-docker-hosts)): `hlm_host_cpu_ratio`,
