@@ -10,3 +10,6 @@ console:
   commands: [status, players, server.save, "say ", "kick ", "ban "]
 settings_files:
   - names: [server.cfg]
+# Players join over UDP only, so a connection to its TCP ports (its
+# console, or a scanner) doesn't wake it while it sleeps.
+join_protocols: [udp]

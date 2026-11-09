@@ -13,3 +13,6 @@ mods:
     images:
       # https://github.com/alinmear/docker-conanexiles
       - { image: alinmear/docker-conanexiles, env: CONANEXILES_MODS, separator: "," }
+# Players join over UDP only, so a connection to its TCP ports (its
+# console, or a scanner) doesn't wake it while it sleeps.
+join_protocols: [udp]

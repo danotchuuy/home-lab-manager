@@ -32,3 +32,6 @@ mods:
     images:
       # https://github.com/Hermsi1337/docker-ark-server: the first mod wins when two change the same thing.
       - { image: hermsi/ark-server, env: GAME_MOD_IDS, separator: "," }
+# Players join over UDP only, so a connection to its TCP ports (its
+# console, or a scanner) doesn't wake it while it sleeps.
+join_protocols: [udp]

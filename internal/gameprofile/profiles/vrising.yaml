@@ -6,3 +6,6 @@ query:
 settings_files:
   - names: [ServerHostSettings.json, ServerGameSettings.json]
     prefer: /Settings/
+# Players join over UDP only, so a connection to its TCP ports (its
+# console, or a scanner) doesn't wake it while it sleeps.
+join_protocols: [udp]

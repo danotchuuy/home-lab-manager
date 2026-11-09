@@ -3,3 +3,6 @@ name: Soulmask
 match: [[soulmask]]
 settings_files:
   - names: [GameXishu.json]
+# Players join over UDP only, so a connection to its TCP ports (its
+# console, or a scanner) doesn't wake it while it sleeps.
+join_protocols: [udp]

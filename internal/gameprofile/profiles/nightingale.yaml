@@ -37,3 +37,6 @@ game_backups:
   # 6-Saturday), overwriting last week's.
   - path: NWX/Saved/OfflineBackup
     note: Nightingale's own copy of the save for each day of the week
+# Players join over UDP only, so a connection to its TCP ports (its
+# console, or a scanner) doesn't wake it while it sleeps.
+join_protocols: [udp]

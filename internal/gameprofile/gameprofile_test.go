@@ -136,6 +136,7 @@ func TestValidation(t *testing.T) {
 		"unknown list":     good + "player_lists: {friends: {file: f.txt, format: lines}}\n",
 		"list format":      good + "player_lists: {ban: {file: f.txt, format: xml}}\n",
 		"list path":        good + "player_lists: {ban: {file: a/f.txt, format: lines}}\n",
+		"join protocol":    good + "join_protocols: [quic]\n",
 	} {
 		if _, err := Parse([]byte(y)); err == nil {
 			t.Errorf("%s: accepted", name)

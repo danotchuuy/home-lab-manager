@@ -135,13 +135,79 @@ func serveTCP(ctx context.Context, ln net.Listener, port int, c listenerConfig, 
 				}
 				return
 			}
-			// A port scan connects and leaves; a client says something.
-			var b [1]byte
-			if n, _ := conn.Read(b[:]); n > 0 {
+			// A port scan connects and leaves, or asks for some other
+			// server (a database, a website); a client says something else.
+			var b [64]byte
+			n, _ := conn.Read(b[:])
+			if n > 0 && otherProtocol(b[:n]) == "" {
 				wake(ct)
 			}
 		}()
 	}
+}
+
+// otherProtocol names the protocol a TCP connection's first bytes start,
+// if it's one internet scanners look for rather than a game's: the
+// databases, websites and remote logins they probe every address for. A
+// connection asking for one of those isn't a player.
+func otherProtocol(b []byte) string {
+	switch {
+	case len(b) >= 16 && mongoOp(b):
+		return "MongoDB"
+	case httpRequest(b):
+		return "HTTP"
+	case len(b) >= 3 && b[0] == 0x16 && b[1] == 0x03 && b[2] <= 0x04:
+		return "TLS"
+	case bytes.HasPrefix(b, []byte("SSH-")):
+		return "SSH"
+	case len(b) >= 4 && b[0] == 0x03 && b[1] == 0x00 && int(binary.BigEndian.Uint16(b[2:4])) >= 7:
+		return "RDP" // a TPKT header: RDP's connection request
+	case len(b) >= 8 && (bytes.Equal(b[4:8], []byte("\xffSMB")) || bytes.Equal(b[4:8], []byte("\xfeSMB"))):
+		return "SMB"
+	case len(b) >= 8 && binary.BigEndian.Uint32(b[0:4]) == 8 && binary.BigEndian.Uint32(b[4:8]) == 80877103:
+		return "PostgreSQL" // its SSL request
+	case len(b) >= 8 && binary.BigEndian.Uint32(b[4:8]) == 196608 && int(binary.BigEndian.Uint32(b[0:4])) > 8:
+		return "PostgreSQL" // its startup message, protocol 3.0
+	case redisCommand(b):
+		return "Redis"
+	}
+	return ""
+}
+
+// mongoOp is MongoDB's message header: its length (little-endian, at least
+// the header's own) and one of the operations a client sends.
+func mongoOp(b []byte) bool {
+	length := binary.LittleEndian.Uint32(b[0:4])
+	switch binary.LittleEndian.Uint32(b[12:16]) {
+	case 2004, 2012, 2013: // OP_QUERY, OP_COMPRESSED, OP_MSG
+		return length >= 16 && length <= 48<<20
+	}
+	return false
+}
+
+var httpMethods = []string{"GET ", "HEAD ", "POST ", "PUT ", "DELETE ", "OPTIONS ", "CONNECT ", "PATCH ", "TRACE ", "PRI * HTTP/2"}
+
+func httpRequest(b []byte) bool {
+	for _, m := range httpMethods {
+		if bytes.HasPrefix(b, []byte(m)) {
+			return true
+		}
+	}
+	return false
+}
+
+// redisCommand is a command in Redis's protocol (*1\r\n$4\r\nPING…) or
+// inline (INFO\r\n).
+func redisCommand(b []byte) bool {
+	if len(b) >= 4 && b[0] == '*' && b[1] >= '0' && b[1] <= '9' && bytes.Contains(b[:min(len(b), 8)], []byte("\r\n$")) {
+		return true
+	}
+	for _, c := range []string{"PING\r\n", "INFO\r\n", "INFO ", "AUTH "} {
+		if bytes.HasPrefix(b, []byte(c)) {
+			return true
+		}
+	}
+	return false
 }
 
 // a2sPrefix starts Steam's server queries, which server browsers send
