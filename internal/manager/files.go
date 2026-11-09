@@ -121,11 +121,76 @@ func (m *Manager) ArchiveFolders(ctx context.Context, id string, folders, exclud
 	if err != nil {
 		return files.ArchiveStats{}, err
 	}
+	if host, bare := SplitID(info.ID); host != LocalHost && m.agentArchive != nil {
+		a, err := m.agentArchive(ctx, host, bare, folders, exclude)
+		if err == nil {
+			return copyArchive(a, tw, progress)
+		}
+		// An older agent, or not an agent at all: through Docker.
+		m.log.Debug("read folders through Docker, not the host's agent", "server", info.Name, "err", err)
+	}
 	b, local, err := m.browser(info)
 	if err != nil {
 		return files.ArchiveStats{}, err
 	}
 	return b.ArchiveExcluding(ctx, local, folders, exclude, tw, progress)
+}
+
+// AgentArchive is a tar of a server's folders from its host's agent, read
+// from the host's disk; Result says how it went once read to the end.
+type AgentArchive interface {
+	io.ReadCloser
+	Result() (files.ArchiveStats, error)
+}
+
+// AgentArchiver asks host's agent for container's folders. It fails, and
+// hlm reads them through Docker instead, for a host without an agent or
+// with one too old to.
+type AgentArchiver func(ctx context.Context, host, container string, folders, exclude []string) (AgentArchive, error)
+
+// UseAgentArchive has backups on agent hosts read servers' folders from the
+// host's disk. Docker's archive API, used otherwise, locks the container
+// for the whole copy: a long backup would leave every other call about it
+// (hlm's server list, say) waiting.
+func (m *Manager) UseAgentArchive(f AgentArchiver) { m.agentArchive = f }
+
+// copyArchive writes an agent's archive's entries to tw.
+func copyArchive(a AgentArchive, tw *tar.Writer, progress func(files.ArchiveStats)) (files.ArchiveStats, error) {
+	defer a.Close()
+	var st files.ArchiveStats
+	tr := tar.NewReader(a)
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			// Cut short: the agent's own error says why, if it sent one.
+			if _, rerr := a.Result(); rerr != nil {
+				return st, rerr
+			}
+			return st, err
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return st, err
+		}
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		if _, err := io.Copy(tw, tr); err != nil {
+			return st, err
+		}
+		st.Files++
+		st.Bytes += hdr.Size
+		if progress != nil {
+			progress(st)
+		}
+	}
+	// The trailers come after the end of the tar.
+	_, _ = io.Copy(io.Discard, a)
+	res, err := a.Result()
+	st.Excluded, st.Warnings = res.Excluded, res.Warnings
+	return st, err
 }
 
 // RestoreArchive extracts a tar stream made by ArchiveFolders back into a

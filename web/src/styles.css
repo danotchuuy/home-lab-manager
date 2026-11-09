@@ -367,6 +367,7 @@ select:disabled {
 }
 
 .badge.state-restarting,
+.badge.state-unresponsive,
 .badge.state-paused {
   background: color-mix(in srgb, var(--warn) 18%, transparent);
   color: var(--warn);

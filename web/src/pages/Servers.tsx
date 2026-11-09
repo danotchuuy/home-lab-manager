@@ -593,6 +593,11 @@ export function ServersPage() {
               </Link>
               <div className="server-side">
                 <StateBadge state={s.state} asleep={s.asleep} />
+                {s.unresponsive && (
+                  <span className="badge state-unresponsive" title={s.unresponsive}>
+                    busy
+                  </span>
+                )}
                 <CrashLoopBadge crashLoop={s.crashLoop} />
                 <HealthBadge state={s.state} health={s.health} />
                 <GameStatusBadge s={games[s.name]} />

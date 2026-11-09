@@ -120,7 +120,7 @@ func (m *Manager) Connections(ctx context.Context) ([]Connection, error) {
 			kinds = append(kinds, f.kind)
 		}
 	}
-	infos, err := m.inspectAll(ctx, list)
+	infos, _, err := m.inspectAll(ctx, list)
 	if err != nil {
 		return nil, err
 	}

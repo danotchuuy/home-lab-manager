@@ -352,6 +352,13 @@ func run(log *slog.Logger) error {
 	// SSH with the same key as the proxy.
 	// Hosts can also have hlm's agent, which connects out to hlm.
 	agents := agent.NewHub(log)
+	mgr.UseAgentArchive(func(ctx context.Context, host, container string, folders, exclude []string) (manager.AgentArchive, error) {
+		a, err := agents.Archive(ctx, host, agent.ArchiveRequest{ID: container, Folders: folders, Exclude: exclude})
+		if err != nil {
+			return nil, err
+		}
+		return a, nil
+	})
 	defer agents.Close()
 	dockerHosts := hosts.New(hosts.Options{
 		Secrets: store, SSHKey: relay.KeyPair, Credentials: registries.For, OnChange: mgr.SetHosts, Agents: agents, Version: version, Log: log,
