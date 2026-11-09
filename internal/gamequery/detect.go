@@ -37,15 +37,8 @@ func candidates(info docker.ContainerJSON, app *catalog.App, consoleReplies bool
 	}
 	// The game's own status protocol, then on the other ports it may
 	// answer on (an image's own, say).
-	if c, ok := gameCandidate(info, game); ok {
+	for _, c := range gameCandidates(info, game) {
 		add(c)
-	}
-	if game != nil {
-		if proto := gameProtocol(game.Query.Protocol); proto != "" {
-			for _, port := range game.Query.Ports {
-				add(candidate{proto, port})
-			}
-		}
 	}
 
 	// The template's ports, with Steam query ports first.
@@ -135,6 +128,25 @@ func argPort(info docker.ContainerJSON, arg string) int {
 		}
 	}
 	return 0
+}
+
+// gameCandidates are the ways a server's game profile says to ask it: its
+// protocol on the usual port, then on the other ports it may answer on.
+func gameCandidates(info docker.ContainerJSON, game *gameprofile.Profile) []candidate {
+	var out []candidate
+	if c, ok := gameCandidate(info, game); ok {
+		out = append(out, c)
+	}
+	if game != nil {
+		if proto := gameProtocol(game.Query.Protocol); proto != "" {
+			for _, port := range game.Query.Ports {
+				if c := (candidate{proto, port}); !slices.Contains(out, c) {
+					out = append(out, c)
+				}
+			}
+		}
+	}
+	return out
 }
 
 // gameProtocol is the query protocol for a profile's protocol name.
