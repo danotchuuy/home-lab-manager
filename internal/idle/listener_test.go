@@ -4,14 +4,18 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"io"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/danotchuuy/home-lab-manager/internal/gameprofile"
 )
 
 func freePort(t *testing.T, network string) int {
@@ -169,6 +173,32 @@ func TestListenerWakes(t *testing.T) {
 			t.Errorf("woke = %q", got)
 		}
 	})
+	t.Run("not by scanners", func(t *testing.T) {
+		p := freePort(t, "tcp")
+		woke := startListener(t, "--tcp", strconv.Itoa(p))
+		mongo := make([]byte, 58)
+		binary.LittleEndian.PutUint32(mongo[0:], 58)
+		binary.LittleEndian.PutUint32(mongo[12:], 2013) // OP_MSG: hello
+		for name, b := range map[string][]byte{
+			"mongodb": mongo,
+			"http":    []byte("GET / HTTP/1.1\r\nHost: x\r\n\r\n"),
+			"tls":     {0x16, 0x03, 0x01, 0x02, 0x00, 0x01},
+			"ssh":     []byte("SSH-2.0-Go\r\n"),
+			"rdp":     {0x03, 0x00, 0x00, 0x13, 0x0e, 0xe0},
+			"redis":   []byte("*1\r\n$4\r\nINFO\r\n"),
+		} {
+			c := dial(t, "tcp", p)
+			c.Write(b)
+			if got := woke(200 * time.Millisecond); got != "" {
+				t.Fatalf("woken by %s: %s", name, got)
+			}
+			c.Close()
+		}
+		dial(t, "tcp", p).Write([]byte{0x10, 0x00, 0x2f})
+		if got := woke(3 * time.Second); got == "" {
+			t.Error("a game's own bytes didn't wake it")
+		}
+	})
 	t.Run("udp", func(t *testing.T) {
 		p := freePort(t, "udp")
 		woke := startListener(t, "--udp", strconv.Itoa(p))
@@ -197,5 +227,19 @@ func TestListenerArgs(t *testing.T) {
 		if _, err := parseListenerArgs(args); err == nil {
 			t.Errorf("%v accepted", args)
 		}
+	}
+}
+
+func TestJoinPorts(t *testing.T) {
+	udp := &gameprofile.Profile{JoinProtocols: []string{"udp"}}
+	ports := []string{"27017/tcp", "7777/tcp", "7777/udp"}
+	if got := joinPorts(udp, ports); !slices.Equal(got, []string{"7777/udp"}) {
+		t.Errorf("udp only = %v", got)
+	}
+	if got := joinPorts(nil, ports); !slices.Equal(got, ports) {
+		t.Errorf("no profile = %v", got)
+	}
+	if got := joinPorts(udp, []string{"25565/tcp"}); !slices.Equal(got, []string{"25565/tcp"}) {
+		t.Errorf("none left = %v", got)
 	}
 }

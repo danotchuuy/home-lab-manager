@@ -155,9 +155,13 @@ func (s *Service) SetOptions(ctx context.Context, server string, in map[string]P
 			opts[key] = o
 		}
 	}
-	// Two of the server's ports can't share an internet port.
+	// Two of the server's ports can't share an internet port, unless one
+	// of them isn't on the internet at all.
 	used := map[Port]string{}
 	for _, m := range Mappings(info, opts) {
+		if !m.Forward && !m.Proxy && !m.Firewall {
+			continue
+		}
 		k := Port{m.Port, m.Proto}
 		if other, dup := used[k]; dup {
 			return nil, fmt.Errorf("internet port %s is set for both %s and %s", k, other, m.Key())

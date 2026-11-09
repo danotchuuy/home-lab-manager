@@ -50,6 +50,11 @@ type Profile struct {
 	// GameBackups are where the game keeps its own backups, so hlm can
 	// upload each new one (see backup.GameFolder).
 	GameBackups []GameBackupFolder `yaml:"game_backups" json:"gameBackups,omitempty"`
+	// JoinProtocols are the protocols players join the game over ("udp",
+	// "tcp"). A sleeping server is only woken by a connection over one of
+	// them: a game that's all UDP isn't woken by a scanner knocking on its
+	// TCP ports. Empty means any.
+	JoinProtocols []string `yaml:"join_protocols" json:"joinProtocols,omitempty"`
 
 	// Source is where it came from (BuiltIn or Custom), File its file, and
 	// Replaces whether a custom profile takes a built-in one's place.
@@ -333,6 +338,11 @@ func (p *Profile) Validate() error {
 			if _, err := path.Match(g.Match, ""); err != nil || strings.Contains(g.Match, "/") {
 				return fmt.Errorf("game_backups: match %q isn't a name pattern", g.Match)
 			}
+		}
+	}
+	for _, proto := range p.JoinProtocols {
+		if proto != "udp" && proto != "tcp" {
+			return fmt.Errorf("join_protocols: %q should be udp or tcp", proto)
 		}
 	}
 	if q.PortEnv != "" && !envRE.MatchString(q.PortEnv) {

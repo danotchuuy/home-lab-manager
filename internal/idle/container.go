@@ -157,6 +157,8 @@ func lanPlan(info docker.ContainerJSON, seen *Address) (listenerNet, error) {
 
 // listenerArgs are a listener's command line for a server.
 func (s *Service) listenerArgs(name string, info docker.ContainerJSON, ports []string) []string {
+	profile := gameprofile.Match(info.Config.Image)
+	ports = joinPorts(profile, ports)
 	var tcp, udp []string
 	for _, k := range ports {
 		port, proto, _ := strings.Cut(k, "/")
@@ -173,7 +175,7 @@ func (s *Service) listenerArgs(name string, info docker.ContainerJSON, ports []s
 	if len(udp) > 0 {
 		args = append(args, "--udp", strings.Join(udp, ","))
 	}
-	if p := gameprofile.Match(info.Config.Image); p != nil && p.Query.Port > 0 {
+	if p := profile; p != nil && p.Query.Port > 0 {
 		port := p.Query.Port
 		for _, kv := range info.Config.Env {
 			if k, v, _ := strings.Cut(kv, "="); k == p.Query.PortEnv && p.Query.PortEnv != "" {
@@ -193,6 +195,26 @@ func (s *Service) listenerArgs(name string, info docker.ContainerJSON, ports []s
 		args = append(args, "--max", strconv.Itoa(max))
 	}
 	return args
+}
+
+// joinPorts are the ports, of those given, over the protocols players join
+// the game over, which are the ones that wake it; all of them if its profile
+// doesn't say, or none of them would be left.
+func joinPorts(p *gameprofile.Profile, ports []string) []string {
+	if p == nil || len(p.JoinProtocols) == 0 {
+		return ports
+	}
+	var out []string
+	for _, k := range ports {
+		_, proto, _ := strings.Cut(k, "/")
+		if slices.Contains(p.JoinProtocols, cmp.Or(proto, "tcp")) {
+			out = append(out, k)
+		}
+	}
+	if len(out) == 0 {
+		return ports
+	}
+	return out
 }
 
 // listen starts a sleeping server's wake listener, recording it or why it

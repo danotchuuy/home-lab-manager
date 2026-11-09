@@ -332,6 +332,13 @@ func TestInternetPorts(t *testing.T) {
 		}
 	}
 
+	// A port that's on the internet nowhere doesn't clash with one that is.
+	off := all(2466, 2467, 2468)
+	off["2457/udp"] = PortSetting{Port: 2466}
+	if _, err := s.SetOptions(ctx, "valheim2", off); err != nil {
+		t.Errorf("an unused port sharing an internet port: %v", err)
+	}
+
 	ports, err := s.SetOptions(ctx, "valheim2", all(2466, 2467, 2468))
 	if err != nil || len(ports) != 3 || ports[0] != (Mapping{2466, 2456, "udp", true, true, true}) {
 		t.Fatalf("set = %+v, %v", ports, err)
