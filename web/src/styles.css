@@ -3839,6 +3839,25 @@ code.secret {
   color: var(--warn);
 }
 
+/* A stack's servers, under its header. */
+.stack-servers {
+  margin-top: 0.5rem;
+  margin-left: 1.25rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--border);
+}
+
+.stack-missing {
+  margin-top: 0.5rem;
+}
+
+@media (max-width: 640px) {
+  .stack-servers {
+    margin-left: 0.25rem;
+    padding-left: 0.5rem;
+  }
+}
+
 ul.stack-services {
   list-style: none;
   padding: 0;
