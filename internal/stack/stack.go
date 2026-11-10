@@ -40,6 +40,10 @@ type Definition struct {
 	Source string            `json:"source,omitempty"`
 	Dir    string            `json:"dir,omitempty"`
 	Names  map[string]string `json:"names,omitempty"`
+	// Track are the services whose image follows a tag (latest) from one
+	// version to the next, by service: their images were pinned to
+	// versions when the stack was adopted. See pin.go.
+	Track map[string]Follow `json:"track,omitempty"`
 }
 
 // project reads a stack's Compose file as its definition says.
@@ -93,6 +97,8 @@ type Service struct {
 	busy   map[string]bool // stacks being changed
 	// healthWait is how long a service_healthy dependency is waited for.
 	healthWait time.Duration
+	// versions finds images' version tags; see UseVersions.
+	versions Versions
 }
 
 // New creates the service; dockerFor is a Docker host's API (manager.LocalHost
@@ -241,6 +247,9 @@ type Stack struct {
 	Error    string    `json:"error,omitempty"` // the file can't be read any more
 	// Source is the Compose file on the host it was adopted from, if it was.
 	Source string `json:"source,omitempty"`
+	// Track are the services whose images follow a tag (latest), by
+	// service; see Definition.Track.
+	Track map[string]Follow `json:"track,omitempty"`
 }
 
 // List returns the stacks, by name.
@@ -271,7 +280,7 @@ func (s *Service) Get(ctx context.Context, name string) (Stack, error) {
 
 func (s *Service) get(ctx context.Context, name string, d Definition) (Stack, error) {
 	ctx = onHost(ctx, d.Host)
-	st := Stack{Name: name, Host: hostOf(ctx), Created: d.Created, Updated: d.Updated, Services: []Member{}, Source: d.Source}
+	st := Stack{Name: name, Host: hostOf(ctx), Created: d.Created, Updated: d.Updated, Services: []Member{}, Source: d.Source, Track: followed(d.YAML, d.Track)}
 	s.mu.Lock()
 	st.Busy = s.busy[name]
 	s.mu.Unlock()
@@ -346,6 +355,9 @@ type ServicePlan struct {
 	Mounts    []string `json:"mounts"`
 	DependsOn []string `json:"dependsOn,omitempty"`
 	Change    string   `json:"change"`
+	// Pinned is set when adopting changes its image from latest to the
+	// version it is.
+	Pinned *Pin `json:"pinned,omitempty"`
 }
 
 // Preview reads a Compose file for a stack (new, on host, or replacing the
@@ -357,7 +369,7 @@ func (s *Service) Preview(ctx context.Context, name, yaml, env string, existing 
 	} else if errors.Is(err, ErrNotFound) && existing {
 		return Plan{}, ErrNotFound
 	} else if err == nil {
-		d.Host, d.Source, d.Dir, d.Names = def.Host, def.Source, def.Dir, def.Names
+		d.Host, d.Source, d.Dir, d.Names, d.Track = def.Host, def.Source, def.Dir, def.Names, def.Track
 	}
 	return s.preview(ctx, name, d, nil)
 }
@@ -481,7 +493,7 @@ func (s *Service) Apply(ctx context.Context, name, yaml, env string, existing bo
 	}
 	def := Definition{Host: host, YAML: yaml, Env: env}
 	if old, err := s.Definition(name); err == nil {
-		def.Created, def.Source, def.Dir, def.Names = old.Created, old.Source, old.Dir, old.Names
+		def.Created, def.Source, def.Dir, def.Names, def.Track = old.Created, old.Source, old.Dir, old.Names, followed(yaml, old.Track)
 	}
 	return s.run(ctx, name, def, plan, emit)
 }
@@ -797,6 +809,10 @@ func (s *Service) Update(ctx context.Context, name string, emit func(Event)) err
 		return err
 	}
 	defer s.release(name)
+	// Services following latest move to the version it is now.
+	if _, err := s.followTracked(ctx, name, &d, emit); err != nil {
+		return err
+	}
 	plan, err := s.Preview(ctx, name, d.YAML, d.Env, true, d.Host)
 	if err != nil {
 		return err

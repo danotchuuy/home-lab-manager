@@ -5,7 +5,7 @@ import { Spinner } from "../components/common";
 import { DeployProgress } from "../components/DeployProgress";
 import { HostPicker } from "../components/HostPicker";
 import { StackPlanCard } from "../components/StackPlanCard";
-import type { DeployEvent, StackPlan } from "../types";
+import type { DeployEvent, Stack, StackPlan } from "../types";
 
 const EXAMPLE = `services:
   app:
@@ -52,6 +52,8 @@ export function StackEditorPage() {
   const [stackHost, setStackHost] = useState<string>();
   // The Compose file on the host it was adopted from, if it was.
   const [source, setSource] = useState<string>();
+  // Services whose images follow latest.
+  const [track, setTrack] = useState<Stack["track"]>();
 
   useEffect(() => {
     if (!existing) return;
@@ -61,6 +63,7 @@ export function StackEditorPage() {
         setEnv(r.env ?? "");
         setStackHost(r.stack.host);
         setSource(r.stack.source);
+        setTrack(r.stack.track);
         setLoaded(true);
       },
       (e) => setError((e as Error).message),
@@ -174,6 +177,14 @@ export function StackEditorPage() {
             {stackHost && stackHost !== "local" ? ` on ${stackHost}` : ""}. Its relative paths (<code>./data</code>) are
             still relative to that folder. hlm runs it from its own copy of the file below: changes to the file on the host
             aren&apos;t picked up, and <code>docker compose</code> shouldn&apos;t be used on it any more.
+          </p>
+        )}
+        {existing && track && Object.keys(track).length > 0 && (
+          <p className="muted small no-margin">
+            Following <code>latest</code>: {Object.keys(track).sort().join(", ")}. Their images were tagged latest when the
+            stack was adopted, so hlm set them to the versions they were. The update check says when latest moves on to a
+            new version, and updating the stack changes the file to it. Change one&apos;s image tag yourself and it stops
+            following latest.
           </p>
         )}
         <label className="field">

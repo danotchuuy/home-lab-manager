@@ -40,6 +40,14 @@ export function StackPlanCard({ plan }: { plan: StackPlan }) {
               </td>
               <td>
                 <code className="small">{s.image}</code>
+                {s.pinned && (
+                  <div
+                    className="muted small"
+                    title={`The file says ${s.pinned.from}. hlm's copy says the version it is, so you can see what runs; updating the stack moves it to the version latest is then.`}
+                  >
+                    was <code>{s.pinned.from}</code>; follows latest
+                  </div>
+                )}
               </td>
               <td className="small">{s.ports.join(", ") || "—"}</td>
               <td className="small">

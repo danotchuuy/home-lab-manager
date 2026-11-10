@@ -26,6 +26,9 @@ type UpdateStatus struct {
 	State     string    `json:"state"`
 	Reason    string    `json:"reason,omitempty"`
 	CheckedAt time.Time `json:"checkedAt"`
+	// Version is the version tag to update to, for a stack's service that
+	// follows latest.
+	Version string `json:"version,omitempty"`
 }
 
 // UpdateCheckInfo describes the update checker's progress.
@@ -191,7 +194,7 @@ func (m *Manager) checkUpdates(ctx context.Context, queued bool) error {
 			st.CheckedAt = time.Now()
 			// Each server's status as soon as its image is looked up.
 			for _, srv := range list {
-				st := withLocalImage(srv, localID, st)
+				st := m.checkTracked(cctx, srv, withLocalImage(srv, localID, st), lookups.get)
 				t.set(srv.ID, st)
 				if st.State == UpdateAvailable && srv.Name != "" {
 					m.notifyUpdateAvailable(srv)
@@ -417,7 +420,7 @@ func (m *Manager) CheckUpdate(ctx context.Context, id string) (UpdateStatus, err
 	defer cancel()
 	localID, st := m.checkImage(cctx, HostOf(srv.ID), srv.Image)
 	st.CheckedAt = time.Now()
-	st = withLocalImage(srv, localID, st)
+	st = m.checkTracked(cctx, srv, withLocalImage(srv, localID, st), m.docker.RemoteDigest)
 	m.updates.set(srv.ID, st)
 	return st, nil
 }
