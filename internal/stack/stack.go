@@ -12,7 +12,6 @@ import (
 	"io"
 	"log/slog"
 	"maps"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -384,7 +383,10 @@ func (s *Service) preview(ctx context.Context, name string, d Definition, adopt 
 			running[svc] = m
 		}
 	}
-	plan := Plan{project: p, specs: map[string]compose.ContainerSpec{}, Warnings: slices.Clone(p.Warnings), members: running}
+	// Lists are never null, for the web UI: a stack may make no networks
+	// and have nothing to warn about.
+	plan := Plan{project: p, specs: map[string]compose.ContainerSpec{}, Services: []ServicePlan{}, Networks: []string{},
+		Warnings: append([]string{}, p.Warnings...), members: running}
 	if plan.Warnings == nil {
 		plan.Warnings = []string{}
 	}

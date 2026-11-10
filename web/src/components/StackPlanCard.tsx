@@ -10,12 +10,15 @@ const CHANGE: Record<string, string> = {
 
 /** What applying (or adopting) a Compose stack would do, service by service. */
 export function StackPlanCard({ plan }: { plan: StackPlan }) {
+  // Go sends an empty list as null.
+  const networks = plan.networks ?? [];
+  const warnings = plan.warnings ?? [];
   return (
     <div className="card">
       <h2>What happens</h2>
-      {plan.warnings.length > 0 && (
+      {warnings.length > 0 && (
         <ul className="warnings transfer-warnings">
-          {plan.warnings.map((w, i) => (
+          {warnings.map((w, i) => (
             <li key={i}>⚠ {w}</li>
           ))}
         </ul>
@@ -54,7 +57,7 @@ export function StackPlanCard({ plan }: { plan: StackPlan }) {
           ))}
         </tbody>
       </table>
-      {plan.networks.length > 0 && <p className="muted small">Networks: {plan.networks.join(", ")}</p>}
+      {networks.length > 0 && <p className="muted small">Networks: {networks.join(", ")}</p>}
     </div>
   );
 }
