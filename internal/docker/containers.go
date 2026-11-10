@@ -57,6 +57,7 @@ type ContainerJSON struct {
 		Status     string `json:"Status"`
 		Running    bool   `json:"Running"`
 		Restarting bool   `json:"Restarting"`
+		OOMKilled  bool   `json:"OOMKilled"`
 		ExitCode   int    `json:"ExitCode"`
 		Error      string `json:"Error"`
 		StartedAt  string `json:"StartedAt"`

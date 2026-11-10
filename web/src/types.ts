@@ -211,6 +211,9 @@ export interface Server {
   hidden?: string[];
   /** Set when hlm stopped the server because it kept exiting. */
   crashLoop?: CrashLoop;
+  /** Why it isn't running: stopped, exited, crashed, unhealthy, crash_loop or unknown. */
+  stopReason?:
+    "stopped" | "exited" | "crashed" | "unhealthy" | "crash_loop" | "unknown";
   /** The Compose stack (and service in it) the server is part of. */
   stack?: string;
   stackService?: string;

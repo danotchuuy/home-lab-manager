@@ -153,7 +153,7 @@ func (m *Manager) handleEvent(ctx context.Context, st *watchState, e docker.Even
 	st.last = nano
 	id := e.Actor.ID
 	action := e.Action
-	var crashed, oom bool
+	var crashed, oom, requested bool
 	switch {
 	case action == "kill":
 		st.killed[id] = e.When()
@@ -164,7 +164,8 @@ func (m *Manager) handleEvent(ctx context.Context, st *watchState, e docker.Even
 		oom = st.oom[id]
 		delete(st.killed, id)
 		delete(st.oom, id)
-		crashed = oom || !killed || e.When().Sub(killedAt) > expectedStopWindow
+		requested = killed && e.When().Sub(killedAt) <= expectedStopWindow
+		crashed = oom || !requested
 	case strings.HasPrefix(action, "health_status"):
 		status := strings.TrimSpace(strings.TrimPrefix(action, "health_status:"))
 		was := st.unhealthy[id]
@@ -189,6 +190,11 @@ func (m *Manager) handleEvent(ctx context.Context, st *watchState, e docker.Even
 	case id == m.selfID:
 		return
 	case attrs[deploy.LabelManaged] == "true":
+		if action == "die" {
+			if err := m.exits.record(name, id, e.When(), requested, oom, attrs["exitCode"]); err != nil {
+				m.log.Warn("save server's exit", "server", name, "err", err)
+			}
+		}
 		m.serverEvent(ctx, e, name, crashed, oom)
 	default:
 		if !crashed {

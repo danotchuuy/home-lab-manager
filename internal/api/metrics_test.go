@@ -39,7 +39,7 @@ func TestMetricsEndpoint(t *testing.T) {
 	}
 	body := w.Body.String()
 	for _, want := range []string{`hlm_build_info{version="v9.9.9"} 1`, `hlm_server_up{server="valheim",app=`, "# TYPE hlm_server_restarts_total counter",
-		`hlm_server_asleep{server="valheim",`, "# TYPE hlm_server_asleep gauge"} {
+		`hlm_server_asleep{server="valheim",`, "# TYPE hlm_server_asleep gauge", `hlm_server_down{server="valheim",`, `reason="asleep"} 1`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in:\n%s", want, body)
 		}
@@ -49,7 +49,10 @@ func TestMetricsEndpoint(t *testing.T) {
 		case strings.HasPrefix(line, `hlm_server_asleep{server="valheim",`) && !strings.HasSuffix(line, " 1"),
 			strings.HasPrefix(line, `hlm_server_asleep_since_timestamp_seconds{server="valheim",`) && value(line) != float64(since.Unix()),
 			strings.HasPrefix(line, `hlm_server_wake_listener_up{server="valheim",`) && !strings.HasSuffix(line, " 0"),
-			strings.HasPrefix(line, "hlm_server_asleep{") && !strings.Contains(line, `"valheim"`) && !strings.HasSuffix(line, " 0"):
+			strings.HasPrefix(line, "hlm_server_asleep{") && !strings.Contains(line, `"valheim"`) && !strings.HasSuffix(line, " 0"),
+			// Asleep, not crashed.
+			strings.HasPrefix(line, `hlm_server_down{server="valheim",`) && strings.HasSuffix(line, " 1") != strings.Contains(line, `reason="asleep"`),
+			strings.HasPrefix(line, `hlm_server_down_unexpectedly{server="valheim",`) && !strings.HasSuffix(line, " 0"):
 			t.Errorf("wrong: %s", line)
 		}
 	}
