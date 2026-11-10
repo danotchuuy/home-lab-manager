@@ -38,6 +38,11 @@ func TestStopReasons(t *testing.T) {
 	if got := reason(m, "a", "valheim", "exited"); got != StopCrashed {
 		t.Errorf("crashed: %q", got)
 	}
+	srv := Server{ID: "a", Name: "valheim", State: "exited"}
+	m.fillStopReason(&srv, docker.ContainerJSON{})
+	if srv.ExitCode != "1" || srv.StoppedAt == nil || !srv.StoppedAt.Equal(f.t) {
+		t.Errorf("when and how: %v %q", srv.StoppedAt, srv.ExitCode)
+	}
 	f.send("kill", "a", server("valheim"))
 	f.send("oom", "a", server("valheim"))
 	f.send("die", "a", server("valheim", "exitCode", "137"))

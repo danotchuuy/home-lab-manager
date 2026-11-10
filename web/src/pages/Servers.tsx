@@ -592,7 +592,7 @@ export function ServersPage() {
                 </div>
               </Link>
               <div className="server-side">
-                <StateBadge state={s.state} asleep={s.asleep} />
+                <StateBadge state={s.state} asleep={s.asleep} stop={s} />
                 {s.unresponsive && (
                   <span className="badge state-unresponsive" title={s.unresponsive}>
                     busy

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { can, useAdmin } from "../access";
 import { api, ApiError } from "../api";
-import { Ago, AppIcon, CrashLoopBadge, HealthBadge, Spinner, StateBadge } from "../components/common";
+import { Ago, AppIcon, CrashLoopBadge, HealthBadge, Spinner, StateBadge, stoppedUnexpectedly } from "../components/common";
 import { ServerActivity } from "../components/ActivityLog";
 import { ConfigFilesCard } from "../components/ConfigFilesCard";
 import { UpdateBadge } from "../components/UpdateBadge";
@@ -253,7 +253,7 @@ export function ServerDetailPage() {
               {server.favourite ? "★" : "☆"}
             </button>{" "}
             {bareName(server.name)}
-            <HostBadge host={server.host} hosts={hosts} /> <StateBadge state={server.state} asleep={server.asleep} /> <HealthBadge state={server.state} health={server.health} />{" "}
+            <HostBadge host={server.host} hosts={hosts} /> <StateBadge state={server.state} asleep={server.asleep} stop={server} /> <HealthBadge state={server.state} health={server.health} />{" "}
             <CrashLoopBadge crashLoop={server.crashLoop} />
           </h1>
           <div className="muted">
@@ -329,6 +329,40 @@ export function ServerDetailPage() {
               </button>
               <button className="btn small primary" disabled={busy} onClick={() => act("start")}>
                 Start anyway
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!running && !server.asleep && !server.crashLoop && stoppedUnexpectedly(server.stopReason) && (
+        <div className="alert error">
+          <div>
+            <strong>
+              {server.stopReason === "crashed" ? "It crashed." : server.stopReason === "exited" ? "It exited on its own." : "It's down: its health was failing."}
+            </strong>{" "}
+            {server.stopReason === "unhealthy"
+              ? `hlm restarted ${bareName(server.name)} because its health was failing, and it didn't come back`
+              : server.stopReason === "crashed"
+                ? `${bareName(server.name)} exited with an error, or ran out of memory, without anyone stopping it`
+                : `${bareName(server.name)} exited cleanly without anyone stopping it (an in-game shutdown command does this too)`}
+            {server.stoppedAt && (
+              <>
+                {" "}
+                <span title={new Date(server.stoppedAt).toLocaleString()}>
+                  <Ago iso={server.stoppedAt} />
+                </span>
+              </>
+            )}
+            {server.exitCode && server.stopReason !== "unhealthy" && <>, with exit code {server.exitCode}</>}. Its console output usually says why.
+          </div>
+          {operator && (
+            <div className="btn-row">
+              <button className="btn small" onClick={() => setTab("logs")}>
+                View logs
+              </button>
+              <button className="btn small primary" disabled={busy} onClick={() => act("start")}>
+                Start
               </button>
             </div>
           )}

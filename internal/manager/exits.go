@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -190,10 +191,21 @@ func (m *Manager) fillStopReason(srv *Server, info docker.ContainerJSON) {
 	default:
 		if e, ok := m.exits.last(srv.Name); ok && e.ID == srv.ID {
 			srv.StopReason = e.Reason
+			at := e.At
+			srv.StoppedAt, srv.ExitCode = &at, e.Code
+			return
 		} else if info.State.OOMKilled {
 			srv.StopReason = StopCrashed
 		} else {
 			srv.StopReason = StopUnknown
 		}
+	}
+	// Otherwise, from Docker.
+	if srv.State == "created" || info.State.FinishedAt == "" {
+		return
+	}
+	if at, err := time.Parse(time.RFC3339Nano, info.State.FinishedAt); err == nil && at.Year() > 1 {
+		srv.StoppedAt = &at
+		srv.ExitCode = strconv.Itoa(info.State.ExitCode)
 	}
 }

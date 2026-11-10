@@ -394,7 +394,8 @@ select:disabled {
   color: var(--danger);
 }
 
-.badge.crash-loop {
+.badge.crash-loop,
+.badge.stop-reason {
   text-transform: none;
 }
 
