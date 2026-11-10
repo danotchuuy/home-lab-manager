@@ -249,6 +249,9 @@ type Stack struct {
 	// Track are the services whose images follow a tag (latest), by
 	// service; see Definition.Track.
 	Track map[string]Follow `json:"track,omitempty"`
+	// Pinnable are the services whose images are tagged latest (or
+	// stable), which Pin sets to their versions.
+	Pinnable []string `json:"pinnable,omitempty"`
 }
 
 // List returns the stacks, by name.
@@ -279,7 +282,8 @@ func (s *Service) Get(ctx context.Context, name string) (Stack, error) {
 
 func (s *Service) get(ctx context.Context, name string, d Definition) (Stack, error) {
 	ctx = onHost(ctx, d.Host)
-	st := Stack{Name: name, Host: hostOf(ctx), Created: d.Created, Updated: d.Updated, Services: []Member{}, Source: d.Source, Track: followed(d.YAML, d.Track)}
+	st := Stack{Name: name, Host: hostOf(ctx), Created: d.Created, Updated: d.Updated, Services: []Member{}, Source: d.Source, Track: followed(d.YAML, d.Track),
+		Pinnable: Pinnable(d, name)}
 	s.mu.Lock()
 	st.Busy = s.busy[name]
 	s.mu.Unlock()

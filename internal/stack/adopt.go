@@ -190,7 +190,7 @@ func (s *Service) Adopt(ctx context.Context, host, file string, emit func(Event)
 	plan.Warnings = append(plan.Warnings, f.Warnings...)
 	emit(Event{Stage: "create", Message: fmt.Sprintf("Adopting %s from %s", f.Name, f.Source)})
 	for _, svc := range sortedNames(f.Pinned) {
-		emit(Event{Stage: "create", Message: fmt.Sprintf("%s: %s is version %s; the stack uses that, and follows latest when it's updated", svc, f.Pinned[svc].From, f.Pinned[svc].To)})
+		emit(Event{Stage: "create", Message: fmt.Sprintf("%s: %s is version %s; the stack uses that, and follows %s when it's updated", svc, f.Pinned[svc].From, f.Pinned[svc].To, f.Pinned[svc].Tag)})
 	}
 	return s.run(ctx, f.Name, def, plan, emit)
 }
@@ -220,8 +220,8 @@ func (s *Service) adoptable(ctx context.Context, host, file string) (Found, Defi
 			}
 		}
 	}
-	// Latest images get their versions.
-	pins, warnings := s.pinLatest(onHost(ctx, f.Host), f, &def)
+	// Latest (and stable) images get their versions.
+	pins, warnings := s.pinMoving(onHost(ctx, f.Host), f.Name, f.Containers, &def)
 	f.Warnings = append(f.Warnings, warnings...)
 	if len(pins) > 0 {
 		f.Pinned = pins

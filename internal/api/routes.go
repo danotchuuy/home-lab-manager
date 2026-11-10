@@ -211,6 +211,7 @@ func (s *server) routes() []route {
 		{"POST /api/stacks/adopt", admin, s.adoptStack},
 		{"POST /api/stacks", admin, s.createStack},
 		{"PUT /api/stacks/{name}", admin, s.updateStack},
+		{"POST /api/stacks/{name}/pin", admin, s.pinStack},
 		{"POST /api/stacks/{name}/{action}", signedIn, s.stackAction},
 		{"DELETE /api/stacks/{name}", admin, s.deleteStack},
 		{"POST /api/servers/import/preview", admin, s.previewImport},

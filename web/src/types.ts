@@ -593,6 +593,8 @@ export interface Stack {
   source?: string;
   /** Services whose images follow a tag (latest) from version to version, by service. */
   track?: Record<string, { image: string; tag: string; version: string }>;
+  /** Services whose images are tagged latest (or stable): Pin versions sets them to their versions. */
+  pinnable?: string[];
 }
 
 /** What applying a Compose file would do. */
@@ -605,8 +607,8 @@ export interface StackPlan {
     mounts: string[];
     dependsOn?: string[];
     change: "create" | "update" | "unchanged" | "remove" | "adopt";
-    /** Adopting changes its image from latest to the version it is. */
-    pinned?: { from: string; to: string };
+    /** Adopting changes its image from latest (or stable) to the version it is; it then follows tag. */
+    pinned?: { from: string; to: string; tag: string };
   }[];
   networks: string[];
   warnings: string[];
@@ -625,8 +627,8 @@ export interface StackAdoptPlan {
     /** The containers Compose made, by service. */
     containers: Record<string, StackMember>;
     warnings: string[];
-    /** Services whose latest images are changed to their versions. */
-    pinned?: Record<string, { from: string; to: string }>;
+    /** Services whose latest (or stable) images are changed to their versions. */
+    pinned?: Record<string, { from: string; to: string; tag: string }>;
   };
   plan: StackPlan;
 }

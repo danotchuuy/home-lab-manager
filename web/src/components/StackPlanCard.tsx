@@ -46,9 +46,9 @@ export function StackPlanCard({ plan }: { plan: StackPlan }) {
                 {s.pinned && (
                   <div
                     className="muted small"
-                    title={`The file says ${s.pinned.from}. hlm's copy says the version it is, so you can see what runs; updating the stack moves it to the version latest is then.`}
+                    title={`The file says ${s.pinned.from}. hlm's copy says the version it is, so you can see what runs; updating the stack moves it to the version ${s.pinned.tag} is then.`}
                   >
-                    was <code>{s.pinned.from}</code>; follows latest
+                    was <code>{s.pinned.from}</code>; follows {s.pinned.tag}
                   </div>
                 )}
               </td>

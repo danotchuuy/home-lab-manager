@@ -55,12 +55,13 @@ export function StackList({
     }
   };
 
-  async function act(name: string, action: "start" | "stop" | "restart" | "update") {
+  async function act(name: string, action: "start" | "stop" | "restart" | "update" | "pin") {
     setBusy(name);
     setEvents((e) => ({ ...e, [name]: [] }));
     setOpen(name, true);
     try {
-      await api.stackAction(name, action, (ev) => setEvents((e) => ({ ...e, [name]: [...(e[name] ?? []), ev] })));
+      const onEvent = (ev: DeployEvent) => setEvents((e) => ({ ...e, [name]: [...(e[name] ?? []), ev] }));
+      await (action === "pin" ? api.pinStack(name, onEvent) : api.stackAction(name, action, onEvent));
     } catch (err) {
       setEvents((e) => ({ ...e, [name]: [...(e[name] ?? []), { stage: "error", message: (err as Error).message }] }));
     } finally {
@@ -115,6 +116,16 @@ export function StackList({
                   >
                     Update
                   </button>
+                  {admin && (st.pinnable?.length ?? 0) > 0 && (
+                    <button
+                      className="btn small"
+                      disabled={!!working}
+                      onClick={() => act(st.name, "pin")}
+                      title={`Set ${st.pinnable!.join(", ")} from latest (or stable) to the version each runs, and follow that tag from version to version. Only the file changes; nothing is restarted.`}
+                    >
+                      Pin versions
+                    </button>
+                  )}
                   {admin && (
                     <Link className="btn small ghost" to={`/stacks/${encodeURIComponent(st.name)}`}>
                       Edit
