@@ -66,7 +66,9 @@ type Manager struct {
 	// crashes counts unexpected exits; see health.go.
 	crashes *crashTracker
 	// exits keeps why servers last stopped; see exits.go.
-	exits        *exitLog
+	exits *exitLog
+	// stacks connects to Compose stacks; see tracked.go.
+	stacks       StackHooks
 	healthPolicy HealthPolicy
 	audit        audit.Recorder
 	// beforeStop saves a running server's world before hlm stops it; see
@@ -652,6 +654,12 @@ func (m *Manager) ReconfigureAsAdmin(ctx context.Context, id string, req deploy.
 // Update pulls the latest image for a server and recreates it with the same
 // settings.
 func (m *Manager) Update(ctx context.Context, id string, emit func(Event)) (Server, error) {
+	// A stack's server is updated with its stack.
+	if m.stacks.Update != nil {
+		if info, err := m.inspect(ctx, id); err == nil && info.Config.Labels[LabelStack] != "" {
+			return m.updateStack(ctx, strings.TrimPrefix(info.Name, "/"), info.Config.Labels[LabelStack], info.ID, emit)
+		}
+	}
 	return m.recreateJob(ctx, "update", id, nil, false, emit)
 }
 

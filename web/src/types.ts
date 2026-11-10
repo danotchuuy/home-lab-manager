@@ -591,6 +591,8 @@ export interface Stack {
   error?: string;
   /** The Compose file on its host it was adopted from. */
   source?: string;
+  /** Services whose images follow a tag (latest) from version to version, by service. */
+  track?: Record<string, { image: string; tag: string; version: string }>;
 }
 
 /** What applying a Compose file would do. */
@@ -603,6 +605,8 @@ export interface StackPlan {
     mounts: string[];
     dependsOn?: string[];
     change: "create" | "update" | "unchanged" | "remove" | "adopt";
+    /** Adopting changes its image from latest to the version it is. */
+    pinned?: { from: string; to: string };
   }[];
   networks: string[];
   warnings: string[];
@@ -621,6 +625,8 @@ export interface StackAdoptPlan {
     /** The containers Compose made, by service. */
     containers: Record<string, StackMember>;
     warnings: string[];
+    /** Services whose latest images are changed to their versions. */
+    pinned?: Record<string, { from: string; to: string }>;
   };
   plan: StackPlan;
 }
@@ -839,6 +845,8 @@ export interface UpdateStatus {
   state: "current" | "available" | "unknown" | "error";
   reason?: string;
   checkedAt: string;
+  /** For a stack's service that follows latest: the version to update to. */
+  version?: string;
 }
 
 export interface UpdateCheckInfo {

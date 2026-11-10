@@ -53,6 +53,9 @@ type Found struct {
 	// Containers are the containers Compose made, by service.
 	Containers map[string]Member `json:"containers"`
 	Warnings   []string          `json:"warnings"`
+	// Pinned are the services whose latest images are changed to the
+	// versions they are, by service.
+	Pinned map[string]Pin `json:"pinned,omitempty"`
 }
 
 // AdoptPlan is what adopting a stack would do.
@@ -160,6 +163,7 @@ func (s *Service) AdoptPreview(ctx context.Context, host, file string) (AdoptPla
 		return AdoptPlan{}, err
 	}
 	plan.Warnings = append(plan.Warnings, f.Warnings...)
+	markPinned(&plan, f.Pinned)
 	return AdoptPlan{Found: f, Plan: plan}, nil
 }
 
@@ -185,6 +189,9 @@ func (s *Service) Adopt(ctx context.Context, host, file string, emit func(Event)
 	}
 	plan.Warnings = append(plan.Warnings, f.Warnings...)
 	emit(Event{Stage: "create", Message: fmt.Sprintf("Adopting %s from %s", f.Name, f.Source)})
+	for _, svc := range sortedNames(f.Pinned) {
+		emit(Event{Stage: "create", Message: fmt.Sprintf("%s: %s is version %s; the stack uses that, and follows latest when it's updated", svc, f.Pinned[svc].From, f.Pinned[svc].To)})
+	}
 	return s.run(ctx, f.Name, def, plan, emit)
 }
 
@@ -213,7 +220,22 @@ func (s *Service) adoptable(ctx context.Context, host, file string) (Found, Defi
 			}
 		}
 	}
+	// Latest images get their versions.
+	pins, warnings := s.pinLatest(onHost(ctx, f.Host), f, &def)
+	f.Warnings = append(f.Warnings, warnings...)
+	if len(pins) > 0 {
+		f.Pinned = pins
+	}
 	return f, def, nil
+}
+
+// markPinned notes the services whose images were pinned in a plan.
+func markPinned(plan *Plan, pins map[string]Pin) {
+	for i := range plan.Services {
+		if p, ok := pins[plan.Services[i].Service]; ok {
+			plan.Services[i].Pinned = &p
+		}
+	}
 }
 
 // readCompose reads a Compose file on the host (file, or the one Compose

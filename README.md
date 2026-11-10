@@ -407,7 +407,9 @@ with `docker pull`, but the server still runs the old one.
 
 **Update** (one server) and **Update all** pull the new image and recreate the servers one at a time with the same
 settings. They keep going if you close the page, and a failure doesn't stop the remaining updates. Running servers are
-restarted; stopped servers stay stopped.
+restarted; stopped servers stay stopped. A [Compose stack](#compose-stacks)'s server is updated with its stack, as the
+stack's own **Update** does. One of its services that [follows `latest`](#adopting-a-stack-docker-compose-runs) shows an
+update when `latest` moves on to a newer version, and updating moves its file to that version.
 
 <a id="connections"></a>**Connections.** Below the servers, the **Connections** section lists the containers hlm runs for
 its tunnels: `hlm-wireguard` (the [WireGuard tunnel](#wireguard-tunnel-to-this-host)'s end) and `hlm-cloudflared` (the
@@ -1301,6 +1303,20 @@ happens to it, then **Adopt**:
 - Relative paths (`./data`) stay relative to the file's folder, as in Compose, rather than going under `<appdata>`.
 - A service with more than one container (`--scale`) has to be scaled to one first. Containers of services no longer
   in the file are left alone.
+- **Images tagged `latest` (or with no tag) get their version.** hlm asks the image's registry which version tag has
+  the same digest as the image the container runs, and puts that in its copy of the file. For example,
+  `homebridge/homebridge:latest` becomes `homebridge/homebridge:2026-11-02`. A service that isn't running gets the
+  version `latest` is now. When several tags match, hlm picks the most exact: `1.27.3` rather than `1.27` or
+  `1.27.3-bookworm`, and `v2.1.7-ls236` rather than `v2.1.7`. **Check** shows each change ("was `…:latest`; follows
+  latest"). An image whose version can't be found keeps `latest`, with a warning. That happens with an image built on
+  the host, or one older than the tags the registry still lists. Docker Hub's API lists each tag's digest. On other
+  registries (GHCR, lscr.io, Quay and the like), hlm looks up the newest 60 version tags' digests. It uses the logins
+  under [Registries](#private-registries) for private images.
+- **Those services follow `latest` from then on.** The [update check](#updates-and-start-on-boot) looks up the version `latest` now
+  points to. When that's a newer version than the one the file names, the server shows **Update available** with the
+  version. **Update** on the stack (or on the server, **Update all**, or an [automatic update](#automatic-updates))
+  changes the file to that version and recreates the service. To stop following `latest`, change the service's image
+  tag yourself: from then on its update check and updates go by the tag you wrote.
 
 After that, change the stack in hlm (**Edit**): it runs from its own copy, so later changes to the file on the host
 aren't picked up, and `docker compose` shouldn't be used on that folder any more. The stack's page says where it was

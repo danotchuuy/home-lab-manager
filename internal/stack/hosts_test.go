@@ -28,6 +28,9 @@ type memDocker struct {
 	reqs       map[string]docker.CreateRequest // by ID
 	// files are the host's files, by path, for containers' bind mounts.
 	files map[string]string
+	// images are the host's images by reference or ID, where a test needs
+	// their digests.
+	images map[string]docker.Image
 }
 
 func newMemDocker() *memDocker {
@@ -110,6 +113,7 @@ func (m *memDocker) InspectContainer(_ context.Context, id string) (docker.Conta
 	info.ID, info.Name = key, m.containers[key].Names[0]
 	info.State.Status = m.containers[key].State
 	info.State.Running = info.State.Status == "running"
+	info.Image = m.containers[key].Image
 	return info, nil
 }
 
@@ -197,7 +201,12 @@ func (m *memDocker) RemoveNetwork(_ context.Context, id string) error {
 }
 
 func (m *memDocker) PullImage(context.Context, string, func(docker.PullProgress)) error { return nil }
-func (m *memDocker) InspectImage(context.Context, string) (docker.Image, error) {
+func (m *memDocker) InspectImage(_ context.Context, ref string) (docker.Image, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if img, ok := m.images[ref]; ok {
+		return img, nil
+	}
 	return docker.Image{ID: "sha256:img"}, nil
 }
 

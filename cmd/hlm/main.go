@@ -49,6 +49,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
 	"github.com/danotchuuy/home-lab-manager/internal/hosts"
 	"github.com/danotchuuy/home-lab-manager/internal/idle"
+	"github.com/danotchuuy/home-lab-manager/internal/imagetag"
 	"github.com/danotchuuy/home-lab-manager/internal/manager"
 	"github.com/danotchuuy/home-lab-manager/internal/metrics"
 	"github.com/danotchuuy/home-lab-manager/internal/metricstore"
@@ -650,6 +651,11 @@ func run(log *slog.Logger) error {
 	if updateCheckEnv != "" {
 		checkEvery = func() time.Duration { return updateCheck }
 	}
+	stacks := stack.New(store, func(host string) (stack.Docker, error) { return mgr.DockerFor(host) }, mgr, log)
+	// Stacks' latest images are pinned to versions, and follow latest.
+	versions := &imagetag.Finder{Auth: registries.For}
+	stacks.UseVersions(versions)
+	mgr.UseStacks(manager.StackHooks{Tracks: stacks.Tracks, Update: stacks.Update, VersionOf: versions.VersionOf})
 	go mgr.RunUpdateChecker(ctx, checkEvery)
 	go notifier.Run(ctx)
 	pinned := configfiles.New(store, mgr)
@@ -749,7 +755,6 @@ func run(log *slog.Logger) error {
 		return o, err
 	})
 	// Docker Compose stacks.
-	stacks := stack.New(store, func(host string) (stack.Docker, error) { return mgr.DockerFor(host) }, mgr, log)
 	handler := api.Handler(api.Options{
 		Docker:        dc,
 		Catalog:       cat,
