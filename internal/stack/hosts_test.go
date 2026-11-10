@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -312,5 +313,22 @@ func TestStackOnAnotherHost(t *testing.T) {
 	}
 	if st, _ := s.Get(ctx, "here"); st.Host != manager.LocalHost || st.Services[0].Server != st.Services[0].Container || len(local.containers) != 2 {
 		t.Errorf("local stack %+v", st)
+	}
+}
+
+// A stack that makes no networks and has nothing to warn about sends empty
+// lists, not null: the web UI reads them.
+func TestPlanListsNeverNull(t *testing.T) {
+	store, _ := secrets.Open(t.TempDir(), "")
+	local := newMemDocker()
+	mgr := &hostsManager{hosts: map[string]*memDocker{manager.LocalHost: local}}
+	s := New(store, func(string) (Docker, error) { return local, nil }, mgr, slog.New(slog.DiscardHandler))
+	plan, err := s.Preview(context.Background(), "hb", "services:\n  homebridge:\n    image: homebridge/homebridge:latest\n    network_mode: host\n", "", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(plan)
+	if !strings.Contains(string(data), `"networks":[]`) || !strings.Contains(string(data), `"warnings":[]`) {
+		t.Errorf("plan %s", data)
 	}
 }
