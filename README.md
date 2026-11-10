@@ -1303,7 +1303,7 @@ happens to it, then **Adopt**:
 - Relative paths (`./data`) stay relative to the file's folder, as in Compose, rather than going under `<appdata>`.
 - A service with more than one container (`--scale`) has to be scaled to one first. Containers of services no longer
   in the file are left alone.
-- **Images tagged `latest` (or with no tag) get their version.** hlm asks the image's registry which version tag has
+- **Images tagged `latest` (or with no tag) or `stable` get their version.** hlm asks the image's registry which version tag has
   the same digest as the image the container runs, and puts that in its copy of the file. For example,
   `homebridge/homebridge:latest` becomes `homebridge/homebridge:2026-11-02`. A service that isn't running gets the
   version `latest` is now. When several tags match, hlm picks the most exact: `1.27.3` rather than `1.27` or
@@ -1316,7 +1316,11 @@ happens to it, then **Adopt**:
   points to. When that's a newer version than the one the file names, the server shows **Update available** with the
   version. **Update** on the stack (or on the server, **Update all**, or an [automatic update](#automatic-updates))
   changes the file to that version and recreates the service. To stop following `latest`, change the service's image
-  tag yourself: from then on its update check and updates go by the tag you wrote.
+  tag yourself: from then on its update check and updates go by the tag you wrote. (A `stable` image follows `stable`
+  the same way.)
+- **A stack adopted before this, or edited back to `latest`, can be pinned too:** **Pin versions** on the Servers page
+  (shown to admins when a stack has such images) does the same to its file. Only the file changes; the containers keep
+  running, and are recreated with the version's tag the next time the stack is updated or applied.
 
 After that, change the stack in hlm (**Edit**): it runs from its own copy, so later changes to the file on the host
 aren't picked up, and `docker compose` shouldn't be used on that folder any more. The stack's page says where it was

@@ -181,10 +181,14 @@ export function StackEditorPage() {
         )}
         {existing && track && Object.keys(track).length > 0 && (
           <p className="muted small no-margin">
-            Following <code>latest</code>: {Object.keys(track).sort().join(", ")}. Their images were tagged latest when the
-            stack was adopted, so hlm set them to the versions they were. The update check says when latest moves on to a
-            new version, and updating the stack changes the file to it. Change one&apos;s image tag yourself and it stops
-            following latest.
+            Following a tag:{" "}
+            {Object.keys(track)
+              .sort()
+              .map((svc) => `${svc} (${track[svc].tag})`)
+              .join(", ")}
+            . Their images were tagged latest (or stable), so hlm set them to the versions they were. The update check says
+            when the tag moves on to a new version, and updating the stack changes the file to it. Change one&apos;s image
+            tag yourself and it stops following.
           </p>
         )}
         <label className="field">

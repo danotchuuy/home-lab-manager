@@ -230,6 +230,19 @@ func (s *server) stackAction(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// pinStack sets a stack's images tagged latest (or stable) to their
+// versions; see stack.Service.Pin.
+func (s *server) pinStack(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if _, err := s.Stacks.Definition(name); err != nil {
+		writeStackError(w, err)
+		return
+	}
+	s.stream(w, r, func(ctx context.Context, emit func(manager.Event)) error {
+		return s.Stacks.Pin(ctx, name, emit)
+	})
+}
+
 func (s *server) deleteStack(w http.ResponseWriter, r *http.Request) {
 	if err := s.Stacks.Delete(r.Context(), r.PathValue("name")); err != nil {
 		writeStackError(w, err)

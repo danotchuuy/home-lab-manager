@@ -694,6 +694,9 @@ export const api = {
       { method: "POST" },
       onEvent,
     ),
+  /** Sets a stack's images tagged latest (or stable) to the versions they run; only its file changes. */
+  pinStack: (name: string, onEvent: (e: DeployEvent) => void) =>
+    stream(`/api/stacks/${encodeURIComponent(name)}/pin`, { method: "POST" }, onEvent),
   deleteStack: (name: string) =>
     json<void>(`/api/stacks/${encodeURIComponent(name)}`, { method: "DELETE" }),
   /** Reads a Compose file (or the folder it's in) on a host, and says what adopting its stack would do. */

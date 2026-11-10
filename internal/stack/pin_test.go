@@ -154,3 +154,71 @@ func TestAdoptPinsLatest(t *testing.T) {
 		t.Errorf("moved after a hand edit:\n%s", d.YAML)
 	}
 }
+
+func TestPinExisting(t *testing.T) {
+	store, _ := secrets.Open(t.TempDir(), "")
+	pi := newMemDocker()
+	mgr := &hostsManager{hosts: map[string]*memDocker{"pi": pi}}
+	s := New(store, func(host string) (Docker, error) {
+		if d, ok := mgr.hosts[host]; ok {
+			return d, nil
+		}
+		return nil, fmt.Errorf("there's no Docker host %q", host)
+	}, mgr, slog.New(slog.DiscardHandler))
+	ctx := context.Background()
+	file := "services:\n  app:\n    image: example/app\n  matter:\n    image: ghcr.io/x/matter:stable # the server\n  db:\n    image: postgres:16\n"
+	if err := s.Apply(ctx, "st", file, "", false, "pi", func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := s.Get(ctx, "st")
+	if fmt.Sprint(st.Pinnable) != "[app matter]" {
+		t.Errorf("pinnable %v", st.Pinnable)
+	}
+	if err := s.Pin(ctx, "st", func(Event) {}); err == nil {
+		t.Error("pinned without a way to find versions")
+	}
+
+	pi.images = map[string]docker.Image{
+		"example/app":             {ID: "sha256:a", RepoDigests: []string{"example/app@sha256:a1"}},
+		"ghcr.io/x/matter:stable": {ID: "sha256:m", RepoDigests: []string{"ghcr.io/x/matter@sha256:m1"}},
+	}
+	s.UseVersions(fakeVersions{
+		"example/app:latest": "sha256:a2", "example/app:1.3.0": "sha256:a2", "example/app:1.2.0": "sha256:a1",
+		"ghcr.io/x/matter:stable": "sha256:m1", "ghcr.io/x/matter:2026.1.0": "sha256:m1",
+	})
+	var msgs []string
+	if err := s.Pin(ctx, "st", func(e Event) { msgs = append(msgs, e.Message) }); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := s.Definition("st")
+	want := strings.NewReplacer("example/app\n", "example/app:1.2.0\n", "matter:stable", "matter:2026.1.0").Replace(file)
+	if d.YAML != want {
+		t.Errorf("file\n%s", d.YAML)
+	}
+	if s.Tracks("st", "app") != "latest" || s.Tracks("st", "matter") != "stable" || s.Tracks("st", "db") != "" {
+		t.Errorf("tracks %v", d.Track)
+	}
+	if !strings.Contains(strings.Join(msgs, "\n"), "matter: ghcr.io/x/matter:stable is version ghcr.io/x/matter:2026.1.0; the stack uses that, and follows stable") {
+		t.Errorf("events %v", msgs)
+	}
+	// Only the file changed.
+	for _, c := range pi.containers {
+		if c.Image != "example/app" && c.Image != "ghcr.io/x/matter:stable" && c.Image != "postgres:16" {
+			t.Errorf("container recreated: %s", c.Image)
+		}
+	}
+	if st, _ := s.Get(ctx, "st"); len(st.Pinnable) != 0 {
+		t.Errorf("still pinnable: %v", st.Pinnable)
+	}
+	msgs = nil
+	if err := s.Pin(ctx, "st", func(e Event) { msgs = append(msgs, e.Message) }); err != nil || fmt.Sprint(msgs) != "[No image was changed]" {
+		t.Errorf("pinning again: %v %v", err, msgs)
+	}
+	// Updating moves app on to the version latest is now.
+	if err := s.Update(ctx, "st", func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := s.Definition("st"); !strings.Contains(d.YAML, "example/app:1.3.0") || !strings.Contains(d.YAML, "matter:2026.1.0 # the server") {
+		t.Errorf("after the update:\n%s", d.YAML)
+	}
+}
