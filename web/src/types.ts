@@ -212,8 +212,10 @@ export interface Server {
   /** Set when hlm stopped the server because it kept exiting. */
   crashLoop?: CrashLoop;
   /** Why it isn't running: stopped, exited, crashed, unhealthy, crash_loop or unknown. */
-  stopReason?:
-    "stopped" | "exited" | "crashed" | "unhealthy" | "crash_loop" | "unknown";
+  stopReason?: StopReason;
+  /** When its container last exited, and with what code, while it isn't running. */
+  stoppedAt?: string;
+  exitCode?: string;
   /** The Compose stack (and service in it) the server is part of. */
   stack?: string;
   stackService?: string;
@@ -2801,3 +2803,7 @@ export interface MigratePreview extends TransferPreview {
   /** Port forwards, web addresses and the like that are pointed at the new host. */
   follows: string[];
 }
+
+/** Why a server that isn't running stopped. */
+export type StopReason =
+  "stopped" | "exited" | "crashed" | "unhealthy" | "crash_loop" | "unknown";

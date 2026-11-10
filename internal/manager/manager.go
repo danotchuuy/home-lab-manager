@@ -212,6 +212,10 @@ type Server struct {
 	// StopReason says why a server that isn't running stopped: someone
 	// stopped it, it exited or crashed on its own, and so on (Stop*).
 	StopReason string `json:"stopReason,omitempty"`
+	// StoppedAt and ExitCode are when its container last exited, and with
+	// what code, while it isn't running (when known).
+	StoppedAt *time.Time `json:"stoppedAt,omitempty"`
+	ExitCode  string     `json:"exitCode,omitempty"`
 	// GameProfile is the game profile its image matches, if any; the API
 	// fills it in.
 	GameProfile *gameprofile.Ref `json:"gameProfile,omitempty"`

@@ -1,16 +1,19 @@
 import { Fragment, useState } from "react";
-import type { CrashLoop } from "../types";
+import type { CrashLoop, Server, StopReason } from "../types";
 import { timeAgo } from "../util";
 
 export function StateBadge({
   state,
   health,
   asleep,
+  stop,
 }: {
   state: string;
   health?: string;
   /** hlm stopped it because nobody played. */
   asleep?: { since: string; minutes: number };
+  /** Why it stopped, if it isn't running. */
+  stop?: Pick<Server, "stopReason" | "stoppedAt" | "exitCode">;
 }) {
   if (asleep && state !== "running") {
     return (
@@ -22,8 +25,57 @@ export function StateBadge({
       </span>
     );
   }
+  const why = state !== "running" ? stopReasonText(stop) : undefined;
+  if (why) {
+    return (
+      <span className={`badge stop-reason ${why.className}`} title={why.title}>
+        {why.label}
+      </span>
+    );
+  }
   const label = health && state === "running" ? `${state} · ${health}` : state;
   return <span className={`badge state-${state}`}>{label}</span>;
+}
+
+/** Whether a stop reason means nobody asked for the server to go down. */
+export function stoppedUnexpectedly(reason?: StopReason): boolean {
+  return reason === "crashed" || reason === "exited" || reason === "unhealthy";
+}
+
+/**
+ * How to show why a server stopped: undefined for no reason, a crash loop
+ * (which has its own badge) or one hlm didn't see.
+ */
+export function stopReasonText(
+  stop?: Pick<Server, "stopReason" | "stoppedAt" | "exitCode">,
+): { label: string; title: string; className: string } | undefined {
+  if (!stop?.stopReason) return undefined;
+  const when = stop.stoppedAt ? ` ${timeAgo(stop.stoppedAt)}` : "";
+  const code = stop.exitCode ? ` (exit code ${stop.exitCode})` : "";
+  switch (stop.stopReason) {
+    case "stopped":
+      return { label: "Stopped", className: "state-exited", title: `Someone stopped it${when}: hlm, a schedule, a person, or the host shutting down.` };
+    case "exited":
+      return {
+        label: "Exited on its own",
+        className: "state-restarting",
+        title: `It exited cleanly${when}${code} without anyone asking, such as after an in-game shutdown command.`,
+      };
+    case "crashed":
+      return {
+        label: "Crashed",
+        className: "state-dead",
+        title: `It crashed${when}${code}: it exited with an error, or ran out of memory, without anyone asking.`,
+      };
+    case "unhealthy":
+      return {
+        label: "Down: failing health",
+        className: "state-dead",
+        title: `hlm restarted it${when} because its health was failing, and it didn't come back.`,
+      };
+    default:
+      return undefined;
+  }
 }
 
 /** Docker's health check state, for a running server that has one. */
