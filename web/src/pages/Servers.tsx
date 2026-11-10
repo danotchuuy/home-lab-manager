@@ -214,12 +214,14 @@ export function ServersPage() {
   const updatable = servers?.filter((s) => s.update?.state === "available" && can(s, "operator") && !s.stack) ?? [];
   const groups = [...new Set(servers?.flatMap((s) => s.groups ?? []))].sort();
   const tags = allTags(servers ?? []);
-  const listed = servers?.filter((s) => !s.stack) ?? [];
+  // Stacks' servers are listed too, under their stack.
+  const listed = servers ?? [];
   const shown = servers ? sortServers(listed.filter((s) => matches(s, view)), view, { stats, games }) : undefined;
+  const standalone = shown?.filter((s) => !s.stack);
+  const stacked = shown?.filter((s) => s.stack) ?? [];
   const filtering = viewToParams({ ...view, sort: "name" }).toString() !== "";
   const operable = (shown ?? []).filter((s) => can(s, "operator"));
   const chosen = (servers ?? []).filter((s) => selected.has(s.name));
-  const serverGroups = Object.fromEntries((servers ?? []).map((s) => [s.name, s.groups]));
 
   async function checkUpdates() {
     setChecking(true);
@@ -257,7 +259,9 @@ export function ServersPage() {
 
   async function updateOne(s: Server) {
     if (s.state === "running" && !confirm(`Update ${s.name}? It will restart, disconnecting any players.`)) return;
-    await runUpdate(s, (cb) => api.update(s.id, cb));
+    // A stack's server is updated with its stack.
+    const stack = s.stack;
+    await runUpdate(s, (cb) => (stack ? api.stackAction(stack, "update", cb) : api.update(s.id, cb)));
   }
 
   async function updateConnection(c: Connection) {
@@ -317,6 +321,162 @@ export function ServersPage() {
   );
   const jobFor = (name: string) => jobs.find((j) => j.server === name && j.kind !== "install" && !j.finished);
   const checkingNow = checking || !!updateInfo?.checking;
+
+  /** A server's card, in the list or under its stack. */
+  const serverCard = (s: Server) => {
+    const running = s.state === "running" || s.state === "restarting";
+    const link = webUILink(s.webui);
+    const job = jobFor(s.name);
+    const progress = job ? (job.message ?? "Working…") : updating[s.id];
+    return (
+      <div key={s.id} className={`card server-card${selected.has(s.name) ? " selected" : ""}`}>
+        <div className="server-pick">
+          {can(s, "operator") && (
+            <input
+              type="checkbox"
+              aria-label={`Select ${bareName(s.name)}`}
+              checked={selected.has(s.name)}
+              onChange={(e) => toggleSelected(s.name, e.target.checked)}
+            />
+          )}
+          <button
+            type="button"
+            className={`icon-button star${s.favourite ? " on" : ""}`}
+            aria-pressed={!!s.favourite}
+            aria-label={s.favourite ? `Unpin ${bareName(s.name)}` : `Pin ${bareName(s.name)} to the top`}
+            title={s.favourite ? "Pinned to the top: click to unpin" : "Pin to the top"}
+            onClick={() => toggleFavourite(s)}
+          >
+            {s.favourite ? "★" : "☆"}
+          </button>
+        </div>
+        <Link to={`/servers/${encodeURIComponent(s.name)}`} className="server-main">
+          <AppIcon src={s.icon} />
+          <div>
+            <div className="server-name">
+              {bareName(s.name)}
+              <HostBadge host={s.host} hosts={hosts} />{" "}
+              <UpdateBadge
+                update={s.update}
+                auto={(auto?.servers[s.name] || auto?.default) === "auto"}
+                state={auto?.states[s.name]}
+              />{" "}
+              <NextTaskBadge task={nextTasks[s.name]} timezone={timezone} />
+            </div>
+            <div className="muted small">
+              {s.app} · <code>{s.image}</code>
+            </div>
+            <div className="muted small">
+              {formatNetwork(s.network, s.ipAddress)}
+              {s.ports.length > 0 && ` · ${formatPorts(s.ports)}`}
+            </div>
+            {s.tags && s.tags.length > 0 && (
+              <div className="tag-chips">
+                {s.tags.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    className="tag-chip"
+                    title={`Show servers tagged ${t}`}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setView({ tag: t });
+                    }}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            )}
+            {job ? (
+              <JobStatus job={job} />
+            ) : progress ? (
+              <div className="small update-inline">
+                <Spinner /> {progress}
+              </div>
+            ) : (
+              running && <ResourceSummary stats={stats[s.id]} />
+            )}
+          </div>
+        </Link>
+        <div className="server-side">
+          <StateBadge state={s.state} asleep={s.asleep} stop={s} />
+          {s.unresponsive && (
+            <span className="badge state-unresponsive" title={s.unresponsive}>
+              busy
+            </span>
+          )}
+          <CrashLoopBadge crashLoop={s.crashLoop} />
+          <HealthBadge state={s.state} health={s.health} />
+          <GameStatusBadge s={games[s.name]} />
+          <span className="muted small">{s.status}</span>
+          <label className="switch" title={`Restart policy: ${s.restartPolicy}`}>
+            <input
+              type="checkbox"
+              checked={s.autostart}
+              disabled={busy === s.id || !!progress || !can(s, "manager")}
+              onChange={(e) => toggleAutostart(s, e.target.checked)}
+            />
+            <span className="switch-track" aria-hidden="true" />
+            <span className="small">Start on boot</span>
+          </label>
+          <div className="btn-row">
+            {s.update?.state === "available" && can(s, "operator") && (
+              <button
+                className="btn small primary"
+                disabled={!!progress || updatingAll}
+                onClick={() => updateOne(s)}
+              >
+                Update
+              </button>
+            )}
+            {link && running && (
+              <a className="btn ghost small" href={link} target="_blank" rel="noreferrer">
+                Web UI
+              </a>
+            )}
+            {(() => {
+              const first = connectAddresses(s, hosts)[0];
+              return first ? (
+                <CopyButton text={first.address} label={`Copy ${bareName(s.name)}'s address`}>
+                  Copy address
+                </CopyButton>
+              ) : null;
+            })()}
+            {!can(s, "operator") ? null : running ? (
+              <>
+                <button className="btn small" disabled={busy === s.id || !!progress} onClick={() => act(s, "restart")}>
+                  Restart
+                </button>
+                <button
+                  className="btn small danger"
+                  disabled={busy === s.id || !!progress}
+                  onClick={() => act(s, "stop")}
+                >
+                  Stop
+                </button>
+              </>
+            ) : (
+              <>
+                {s.crashLoop && can(s, "operator") && (
+                  <Link className="btn ghost small" to={`/servers/${encodeURIComponent(s.name)}`}>
+                    View logs
+                  </Link>
+                )}
+                <button
+                  className="btn small primary"
+                  disabled={busy === s.id || !!progress}
+                  onClick={() => act(s, "start")}
+                >
+                  {s.crashLoop ? "Start anyway" : "Start"}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="page">
@@ -512,164 +672,9 @@ export function ServersPage() {
         </div>
       )}
 
-      {!filtering && <StackList group={group} groups={serverGroups} />}
+      <StackList servers={stacked} filtering={filtering} renderServer={serverCard} />
 
-      <div className="server-list">
-        {shown?.map((s) => {
-          const running = s.state === "running" || s.state === "restarting";
-          const link = webUILink(s.webui);
-          const job = jobFor(s.name);
-          const progress = job ? (job.message ?? "Working…") : updating[s.id];
-          return (
-            <div key={s.id} className={`card server-card${selected.has(s.name) ? " selected" : ""}`}>
-              <div className="server-pick">
-                {can(s, "operator") && (
-                  <input
-                    type="checkbox"
-                    aria-label={`Select ${bareName(s.name)}`}
-                    checked={selected.has(s.name)}
-                    onChange={(e) => toggleSelected(s.name, e.target.checked)}
-                  />
-                )}
-                <button
-                  type="button"
-                  className={`icon-button star${s.favourite ? " on" : ""}`}
-                  aria-pressed={!!s.favourite}
-                  aria-label={s.favourite ? `Unpin ${bareName(s.name)}` : `Pin ${bareName(s.name)} to the top`}
-                  title={s.favourite ? "Pinned to the top: click to unpin" : "Pin to the top"}
-                  onClick={() => toggleFavourite(s)}
-                >
-                  {s.favourite ? "★" : "☆"}
-                </button>
-              </div>
-              <Link to={`/servers/${encodeURIComponent(s.name)}`} className="server-main">
-                <AppIcon src={s.icon} />
-                <div>
-                  <div className="server-name">
-                    {bareName(s.name)}
-                    <HostBadge host={s.host} hosts={hosts} />{" "}
-                    <UpdateBadge
-                      update={s.update}
-                      auto={(auto?.servers[s.name] || auto?.default) === "auto"}
-                      state={auto?.states[s.name]}
-                    />{" "}
-                    <NextTaskBadge task={nextTasks[s.name]} timezone={timezone} />
-                  </div>
-                  <div className="muted small">
-                    {s.app} · <code>{s.image}</code>
-                  </div>
-                  <div className="muted small">
-                    {formatNetwork(s.network, s.ipAddress)}
-                    {s.ports.length > 0 && ` · ${formatPorts(s.ports)}`}
-                  </div>
-                  {s.tags && s.tags.length > 0 && (
-                    <div className="tag-chips">
-                      {s.tags.map((t) => (
-                        <button
-                          key={t}
-                          type="button"
-                          className="tag-chip"
-                          title={`Show servers tagged ${t}`}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            setView({ tag: t });
-                          }}
-                        >
-                          {t}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {job ? (
-                    <JobStatus job={job} />
-                  ) : progress ? (
-                    <div className="small update-inline">
-                      <Spinner /> {progress}
-                    </div>
-                  ) : (
-                    running && <ResourceSummary stats={stats[s.id]} />
-                  )}
-                </div>
-              </Link>
-              <div className="server-side">
-                <StateBadge state={s.state} asleep={s.asleep} stop={s} />
-                {s.unresponsive && (
-                  <span className="badge state-unresponsive" title={s.unresponsive}>
-                    busy
-                  </span>
-                )}
-                <CrashLoopBadge crashLoop={s.crashLoop} />
-                <HealthBadge state={s.state} health={s.health} />
-                <GameStatusBadge s={games[s.name]} />
-                <span className="muted small">{s.status}</span>
-                <label className="switch" title={`Restart policy: ${s.restartPolicy}`}>
-                  <input
-                    type="checkbox"
-                    checked={s.autostart}
-                    disabled={busy === s.id || !!progress || !can(s, "manager")}
-                    onChange={(e) => toggleAutostart(s, e.target.checked)}
-                  />
-                  <span className="switch-track" aria-hidden="true" />
-                  <span className="small">Start on boot</span>
-                </label>
-                <div className="btn-row">
-                  {s.update?.state === "available" && can(s, "operator") && (
-                    <button
-                      className="btn small primary"
-                      disabled={!!progress || updatingAll}
-                      onClick={() => updateOne(s)}
-                    >
-                      Update
-                    </button>
-                  )}
-                  {link && running && (
-                    <a className="btn ghost small" href={link} target="_blank" rel="noreferrer">
-                      Web UI
-                    </a>
-                  )}
-                  {(() => {
-                    const first = connectAddresses(s, hosts)[0];
-                    return first ? (
-                      <CopyButton text={first.address} label={`Copy ${bareName(s.name)}'s address`}>
-                        Copy address
-                      </CopyButton>
-                    ) : null;
-                  })()}
-                  {!can(s, "operator") ? null : running ? (
-                    <>
-                      <button className="btn small" disabled={busy === s.id || !!progress} onClick={() => act(s, "restart")}>
-                        Restart
-                      </button>
-                      <button
-                        className="btn small danger"
-                        disabled={busy === s.id || !!progress}
-                        onClick={() => act(s, "stop")}
-                      >
-                        Stop
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      {s.crashLoop && can(s, "operator") && (
-                        <Link className="btn ghost small" to={`/servers/${encodeURIComponent(s.name)}`}>
-                          View logs
-                        </Link>
-                      )}
-                      <button
-                        className="btn small primary"
-                        disabled={busy === s.id || !!progress}
-                        onClick={() => act(s, "start")}
-                      >
-                        {s.crashLoop ? "Start anyway" : "Start"}
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      <div className="server-list">{standalone?.map(serverCard)}</div>
 
       {connections.length > 0 && (
         <section className="connections">
