@@ -1831,6 +1831,47 @@ Two settings, in the same card:
 - **Every week** (off by default): old images and leftover containers, the ticked-by-default items, on every host. The
   last run and what it freed are shown, and each run is in the activity log as `host.cleanup.weekly`.
 
+### UPS and power cuts (Network UPS Tools)
+
+hlm can watch each host's UPS on a [Network UPS Tools](https://networkupstools.org/) server (upsd). Under **System →
+Monitoring → UPS**, enter the NUT server (`nas.lan`, or `nas.lan:3493`) and, for each host, the name of the UPS it's
+plugged into on that server. **List the server's UPSes** shows the names, as seen from any host. Several hosts can share
+one UPS.
+
+- **Who asks:** a host with hlm's [agent](#more-docker-hosts) reads its UPS itself, so the NUT server only has to be
+  reachable from that host, not from hlm. hlm reads it for this host and for hosts reached over SSH or TLS. Agents from
+  before UPS support say to update them.
+- **Account:** reading a UPS usually needs none. If upsd asks for one, use a read-only user from `upsd.users`. NUT sends
+  the password unencrypted, and hlm only sends the saved password to the saved server.
+- **Host page:** a UPS card shows whether the host is on mains or battery, the charge, runtime, load and input voltage,
+  read every 15 seconds.
+- **Notifications** (the **Power** events): a host going on battery, its power coming back, its battery running low, and
+  its UPS being unreadable for a minute.
+- **When the battery runs low** (on by default): when the UPS is on battery and says its battery is low, or the charge or
+  runtime drop below the limits you set (30% and 5 minutes to start with; 0 leaves one out), hlm stops the host's running
+  servers and stacks. It stops them all at once, each with its usual stop timeout, so leave enough runtime for that.
+  Containers hlm doesn't manage are left alone.
+- **Shutting the host down** (off by default, for hosts with hlm's agent): tick **Shut down when low** for a host,
+  and once its servers have stopped, hlm tells its agent to power it off. The agent only does this when hlm says so,
+  never on its own. The agent's container can't power the machine off itself, so it starts a short-lived privileged
+  helper from its own image (already on the host, so nothing is downloaded while the power is out). The helper shares
+  the host's processes (`--pid=host`) and runs the host's own `systemctl poweroff` (or `shutdown -h now`, or
+  `poweroff`) in PID 1's namespaces, so the host shuts down cleanly. hlm could already start such a container through
+  Docker, so this gives it no new power. "UPS unreachable" notifications stay quiet while the host is off, and the
+  shutdown is in the activity log as `ups.shutdown`. **One catch:** if mains comes back before the battery runs out,
+  the UPS never cuts its output, so a machine set to power on when AC returns stays off. Use Wake-on-LAN, or NUT's
+  upsmon with `killpower` (which has the UPS cycle its power), if the host has to come back by itself.
+- **Idle hosts go first** (on by default, for hosts ticked to shut down): a host that's been on battery for a minute
+  (you can change this, 0 is straight away) with none of hlm's servers or stacks running is shut down then, without
+  waiting for the battery to run low, leaving the battery to the hosts that have servers. A host whose last server
+  stops during the outage (idle sleep, say) goes then. The minute's wait is so a flicker doesn't switch off a machine
+  that may not come back on by itself. Containers hlm doesn't manage don't count as running. Each time is a
+  `power.host_shut_down` notification.
+- **When the power comes back** (on by default): once the UPS has had mains power for 5 minutes (you can change this),
+  (and, for a host hlm shut down, once it is up again) hlm starts what it stopped again, and only that. The list survives hlm restarting with the power. The UPS card shows
+  what's waiting, with **Don't start them again** to drop it. Each stop and start is in the activity log as `ups.stop`
+  and `ups.start`.
+
 ## Resource usage
 
 The server list shows each running server's CPU, memory and network use, and the server page adds disk I/O and process

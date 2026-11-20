@@ -70,6 +70,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/statuspage"
 	"github.com/danotchuuy/home-lab-manager/internal/tlscert"
 	"github.com/danotchuuy/home-lab-manager/internal/transfer"
+	"github.com/danotchuuy/home-lab-manager/internal/ups"
 )
 
 // version is set at build time with -ldflags "-X main.version=v1.2.3".
@@ -656,6 +657,13 @@ func run(log *slog.Logger) error {
 	versions := &imagetag.Finder{Auth: registries.For}
 	stacks.UseVersions(versions)
 	mgr.UseStacks(manager.StackHooks{Tracks: stacks.Tracks, Update: stacks.Update, VersionOf: versions.VersionOf})
+	// UPSes on a NUT server: notifications about power, and stopping a
+	// host's servers when its battery runs low. Agents read their host's.
+	upsWatch := ups.New(ups.Options{
+		Store: store, Reader: dockerHosts, Servers: mgr, Stacks: upsStacks{stacks}, Hosts: dockerHosts,
+		Notifier: notifier, Audit: auditLog, HostName: mgr.HostName, Log: log,
+	})
+	go upsWatch.Run(ctx, 15*time.Second)
 	go mgr.RunUpdateChecker(ctx, checkEvery)
 	go notifier.Run(ctx)
 	pinned := configfiles.New(store, mgr)
@@ -781,6 +789,7 @@ func run(log *slog.Logger) error {
 		History:       history,
 		Sampler:       sampler,
 		MetricsConfig: metrics.NewConfig(store),
+		UPS:           upsWatch,
 		Health:        healthStore,
 		HealthMonitor: healthMonitor,
 		Prober:        prober,
@@ -1091,4 +1100,11 @@ func ownLANAddress(ctx context.Context, dc *docker.Client, so cftunnel.SelfOrigi
 		}
 	}
 	return ""
+}
+
+// upsStacks starts and stops stacks for the UPS watcher.
+type upsStacks struct{ s *stack.Service }
+
+func (u upsStacks) Act(ctx context.Context, name, action string) error {
+	return u.s.Act(ctx, name, action, func(stack.Event) {})
 }

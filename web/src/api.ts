@@ -5,6 +5,9 @@ import type {
   UsedPasskeyJSON,
 } from "./passkeys";
 import type {
+  HostUPS,
+  NUTUPS,
+  UPSSettings,
   Account,
   AllBackups,
   UpdateStatus,
@@ -1506,6 +1509,21 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(s),
     }),
+  ups: () => json<HostUPS[]>("/api/ups"),
+  upsSettings: () => json<UPSSettings>("/api/system/ups"),
+  setUPSSettings: (s: UPSSettings) =>
+    json<UPSSettings>("/api/system/ups", {
+      method: "PUT",
+      body: JSON.stringify(s),
+    }),
+  /** The NUT server's UPSes, as host (through its agent, if it has one) sees it. */
+  listUPS: (s: UPSSettings, host: string) =>
+    json<NUTUPS[]>("/api/system/ups/list", {
+      method: "POST",
+      body: JSON.stringify({ ...s, host }),
+    }),
+  forgetUPSStopped: (host: string) =>
+    json<void>(`/api/ups/${encodeURIComponent(host)}/forget`, { method: "POST" }),
   discord: () => json<DiscordView>("/api/integrations/discord"),
   saveDiscord: (settings: DiscordSettings, token?: string) =>
     json<DiscordView>("/api/integrations/discord", {

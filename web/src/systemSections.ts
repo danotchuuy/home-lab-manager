@@ -43,6 +43,7 @@ export const SYSTEM_SECTIONS: SystemSection[] = [
   { id: "linode", tab: "network", title: "Linode firewall", keywords: "firewall vps proxy cloud" },
   { id: "notifications", tab: "monitoring", title: "Notifications", keywords: "alerts email webhook ntfy discord gotify pushover" },
   { id: "activity", tab: "monitoring", title: "Activity", keywords: "audit log history who" },
+  { id: "ups", tab: "monitoring", title: "UPS (Network UPS Tools)", keywords: "nut upsd power battery outage shutdown ups" },
   { id: "prometheus", tab: "monitoring", title: "Prometheus", keywords: "metrics grafana scrape" },
 ];
 

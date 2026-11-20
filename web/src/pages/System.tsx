@@ -19,6 +19,7 @@ import { SystemActivity } from "../components/ActivityLog";
 import { RegistrySettings } from "../components/RegistrySettings";
 import { GameProfiles } from "../components/GameProfiles";
 import { PrometheusSettings } from "../components/PrometheusSettings";
+import { UPSMonitoring } from "../components/UPSMonitoring";
 import { SystemUpdateSettings } from "../components/UpdatePolicy";
 import { ServerGroups } from "../components/ServerGroups";
 import { APIKeys } from "../components/APIKeys";
@@ -327,6 +328,7 @@ export function SystemPage() {
 
     { ...systemSection("notifications"), body: <NotificationSettings /> },
     { ...systemSection("activity"), body: <SystemActivity /> },
+    { ...systemSection("ups"), body: <UPSMonitoring /> },
     { ...systemSection("prometheus"), body: <PrometheusSettings /> },
   ];
   const tabParam = params.get("tab");

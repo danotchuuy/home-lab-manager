@@ -172,6 +172,7 @@ var expected = map[string]string{
 	"POST /api/registries":                              "confirmed",
 	"GET /metrics":                                      "public",
 	"PUT /api/system/metrics":                           "confirmed",
+	"PUT /api/system/ups":                               "confirmed",
 	"GET /api/servers/{id}/history":                     "viewer",
 	"PUT /api/registries/{host}":                        "confirmed",
 	"GET /api/servers/{id}/activity":                    "manager",

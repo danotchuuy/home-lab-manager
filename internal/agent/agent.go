@@ -208,7 +208,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	defer dc.Close()
 	fb := browser(dc, cfg.RootPath)
-	proxy := Handler(DockerProxy(cfg.Socket, cfg.Log), metrics, move, archiveHandler(fb, dc), listHandler(fb, dc))
+	proxy := Handler(DockerProxy(cfg.Socket, cfg.Log), metrics, move, archiveHandler(fb, dc), listHandler(fb, dc), upsHandler(), shutdownHandler(dc))
 	backoff = firstRetry
 	failures := 0
 	for {
@@ -510,10 +510,18 @@ func DockerProxy(socket string, log *slog.Logger) http.Handler {
 
 // Handler is what the agent serves hlm: the host's metrics, moving to hlm's
 // new address (with move), servers' folders as tar (with archive) and their
-// listings (with list), and the
-// Docker API calls it passes on.
-func Handler(docker http.Handler, metrics *hostmetrics.Collector, move func(ctx context.Context, server string) error, archive, list http.Handler) http.Handler {
+// listings (with list), UPSes on a NUT server (with ups), shutting the
+// host down (with shutdown), and the Docker API calls it passes on.
+func Handler(docker http.Handler, metrics *hostmetrics.Collector, move func(ctx context.Context, server string) error, archive, list, ups, shutdown http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == ShutdownPath && r.Method == http.MethodPost && shutdown != nil {
+			shutdown.ServeHTTP(w, r)
+			return
+		}
+		if (r.URL.Path == UPSPath || r.URL.Path == UPSListPath) && r.Method == http.MethodPost && ups != nil {
+			ups.ServeHTTP(w, r)
+			return
+		}
 		if r.URL.Path == ArchivePath && r.Method == http.MethodPost && archive != nil {
 			archive.ServeHTTP(w, r)
 			return

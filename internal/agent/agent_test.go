@@ -20,6 +20,8 @@ import (
 
 	"github.com/danotchuuy/home-lab-manager/internal/docker"
 	"github.com/danotchuuy/home-lab-manager/internal/hostmetrics"
+	"github.com/danotchuuy/home-lab-manager/internal/nut"
+	"github.com/danotchuuy/home-lab-manager/internal/nut/nuttest"
 )
 
 func TestAllowed(t *testing.T) {
@@ -222,6 +224,23 @@ func TestAgentEndToEnd(t *testing.T) {
 	// The path isn't one of Docker's: an older agent refuses it.
 	if Allowed("GET", HostMetricsPath) {
 		t.Error("host metrics path in the Docker allow-list")
+	}
+
+	// A UPS on a NUT server, read by the agent.
+	upsd := nuttest.New(t)
+	upsd.Set("rack", map[string]string{"ups.status": "OB", "battery.charge": "71"})
+	ups, err := hub.UPS(ctx, "nas", nut.Query{Address: upsd.Addr, UPS: "rack"})
+	if err != nil || !ups.OnBattery || ups.Charge == nil || *ups.Charge != 71 {
+		t.Errorf("UPS: %+v %v", ups, err)
+	}
+	if _, err := hub.UPS(ctx, "nas", nut.Query{Address: upsd.Addr, UPS: "desk"}); err == nil || !strings.Contains(err.Error(), `no UPS called "desk"`) {
+		t.Errorf("unknown UPS: %v", err)
+	}
+	if list, err := hub.UPSList(ctx, "nas", nut.Query{Address: upsd.Addr}); err != nil || len(list) != 1 || list[0].Name != "rack" {
+		t.Errorf("UPS list: %+v %v", list, err)
+	}
+	if Allowed("POST", UPSPath) || Allowed("POST", UPSListPath) {
+		t.Error("UPS path in the Docker allow-list")
 	}
 
 	// A stream arrives as it's sent.

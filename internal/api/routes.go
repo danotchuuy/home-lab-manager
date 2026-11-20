@@ -282,6 +282,13 @@ func (s *server) routes() []route {
 		{"GET /metrics", public, s.prometheus},
 		{"GET /api/system/metrics", admin, s.metricsSettings},
 		{"PUT /api/system/metrics", confirmed, s.setMetricsSettings},
+		// UPSes on a NUT server; the settings hold its password, and hlm
+		// stops servers when a battery runs low.
+		{"GET /api/ups", admin, s.upsStatus},
+		{"GET /api/system/ups", admin, s.upsSettings},
+		{"PUT /api/system/ups", confirmed, s.setUPSSettings},
+		{"POST /api/system/ups/list", admin, s.listUPS},
+		{"POST /api/ups/{host}/forget", admin, s.forgetUPSStopped},
 		{"GET /api/game-profiles", admin, s.gameProfiles},
 		{"POST /api/game-profiles", admin, s.importGameProfile},
 		{"POST /api/game-profiles/reload", admin, s.reloadGameProfiles},

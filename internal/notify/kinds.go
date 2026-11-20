@@ -43,6 +43,11 @@ const (
 	KindHLMUpdate          = "hlm.update_available"
 	KindHLMUpdateFailed    = "hlm.update_failed"
 	KindDiskLow            = "disk.low"
+	KindPowerOnBattery     = "power.on_battery"
+	KindPowerLow           = "power.low_battery"
+	KindPowerRestored      = "power.restored"
+	KindPowerShutdown      = "power.host_shut_down"
+	KindUPSUnreachable     = "power.ups_unreachable"
 	KindLockedOut          = "auth.locked_out"
 	KindTaskFailed         = "task.failed"
 	// KindTest is the test message; targets can't choose it.
@@ -85,6 +90,11 @@ var Kinds = []Kind{
 	{KindHTTPSRenewFailed, "Host", Error, "Getting or renewing hlm's HTTPS certificate failed", 6 * time.Hour},
 	{KindHTTPSExpiring, "Host", Warning, "hlm's HTTPS certificate is getting close to expiring and renewing it keeps failing", 24 * time.Hour},
 	{KindDiskLow, "Host", Warning, "A filesystem on the Docker host is nearly full", 24 * time.Hour},
+	{KindPowerOnBattery, "Power", Warning, "A host's UPS lost mains power and is running on battery", 0},
+	{KindPowerLow, "Power", Error, "A host's UPS battery is low, so hlm stopped the host's servers (if set to)", 0},
+	{KindPowerShutdown, "Power", Warning, "A host on battery had none of hlm's servers running, so hlm shut it down to save the battery for the others", 0},
+	{KindPowerRestored, "Power", Info, "A host's UPS has mains power again, and hlm started the servers it stopped", 0},
+	{KindUPSUnreachable, "Power", Warning, "hlm couldn't read a host's UPS from the NUT server for a while", 6 * time.Hour},
 	{KindLockedOut, "Sign-in", Warning, "Sign-in for an account was locked after repeated wrong passwords", time.Hour},
 }
 

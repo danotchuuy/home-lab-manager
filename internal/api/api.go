@@ -66,6 +66,7 @@ import (
 	"github.com/danotchuuy/home-lab-manager/internal/tlscert"
 	"github.com/danotchuuy/home-lab-manager/internal/transfer"
 	"github.com/danotchuuy/home-lab-manager/internal/unifi"
+	"github.com/danotchuuy/home-lab-manager/internal/ups"
 	"github.com/danotchuuy/home-lab-manager/web"
 )
 
@@ -106,6 +107,8 @@ type Options struct {
 	Sampler *metrics.Sampler
 	// MetricsConfig is /metrics' settings.
 	MetricsConfig *metrics.Config
+	// UPS watches hosts' UPSes on a NUT server.
+	UPS *ups.Service
 	// Health keeps servers' health settings, and HealthMonitor restarts
 	// those whose health keeps failing.
 	Health        *health.Store
