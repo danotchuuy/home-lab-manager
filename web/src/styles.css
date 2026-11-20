@@ -4951,3 +4951,24 @@ pre .muted {
 .game-backups > .btn-row {
   margin-top: 0.75rem;
 }
+
+/* Host page: a host's UPS. */
+.ups-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+}
+.ups-card-head h2 {
+  margin: 0;
+}
+.ups-card-settings {
+  margin-left: auto;
+}
+.ups-card .stats {
+  margin-bottom: 0;
+}
+.ups-card .alert {
+  margin-top: 12px;
+}

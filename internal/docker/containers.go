@@ -164,6 +164,9 @@ type HostConfig struct {
 	ReadonlyRootfs bool                     `json:"ReadonlyRootfs,omitempty"`
 	Runtime        string                   `json:"Runtime,omitempty"`
 	LogConfig      *LogConfig               `json:"LogConfig,omitempty"`
+	// PidMode "host" shares the host's processes (hlm's helpers only).
+	PidMode    string `json:"PidMode,omitempty"`
+	AutoRemove bool   `json:"AutoRemove,omitempty"`
 }
 
 // PortBinding maps a container port to a host address.

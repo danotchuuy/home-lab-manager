@@ -2522,6 +2522,81 @@ export interface MetricsSettings {
   allowFrom: string[];
 }
 
+/** A UPS's state, read from a Network UPS Tools server. */
+export interface UPSStatus {
+  ups: string;
+  available: boolean;
+  reason?: string;
+  model?: string;
+  /** ups.status as the NUT server gives it: "OL", "OB LB", "OL CHRG". */
+  flags?: string;
+  onLine: boolean;
+  onBattery: boolean;
+  lowBattery: boolean;
+  charging: boolean;
+  /** Percent. */
+  charge?: number;
+  /** Seconds. */
+  runtime?: number;
+  /** Percent. */
+  load?: number;
+  inputVoltage?: number;
+  sampledAt: string;
+}
+
+/** What hlm stopped on a host because its UPS battery ran low. */
+export interface UPSStopped {
+  servers: string[];
+  stacks: string[];
+  at: string;
+  /** hlm then told the host to shut down. */
+  shutDown?: boolean;
+  /** Why shutting it down failed. */
+  shutdownError?: string;
+}
+
+/** GET /api/ups: a watched host's UPS. */
+export interface HostUPS {
+  host: string;
+  ups: string;
+  status?: UPSStatus;
+  error?: string;
+  stopped?: UPSStopped;
+  /** When hlm starts what it stopped again, once the power is back. */
+  restartAt?: string;
+}
+
+/** GET/PUT /api/system/ups */
+export interface UPSSettings {
+  /** The NUT server, nas.lan or nas.lan:3493. */
+  address: string;
+  username?: string;
+  /** Only sent; empty keeps the saved one. */
+  password?: string;
+  hasPassword?: boolean;
+  /** The UPS each host is on (its name on the NUT server), by host ID. */
+  hosts: Record<string, string>;
+  stopOnLow: boolean;
+  /** Percent; 0 leaves it out. */
+  stopBelowCharge: number;
+  /** Minutes; 0 leaves it out. */
+  stopBelowRuntime: number;
+  /** Hosts (with hlm's agent) shut down after their servers stop, by ID. */
+  shutdown: string[];
+  /** Shut those hosts down sooner: once on battery this many minutes with none of hlm's servers or stacks running. */
+  shutdownIdle: boolean;
+  shutdownIdleAfter: number;
+  restartOnPower: boolean;
+  /** Minutes the power has to be back before servers start again. */
+  restartAfter: number;
+}
+
+/** A UPS on the NUT server. */
+export interface NUTUPS {
+  name: string;
+  description?: string;
+}
+
 /** A Docker host servers can be on. Admins see how it's reached. */
 export interface DockerHost {
   id: string;

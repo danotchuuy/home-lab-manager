@@ -168,7 +168,7 @@ func TestAgentArchive(t *testing.T) {
 	}
 
 	// An older agent: its Docker allow-list answers.
-	old := httptest.NewServer(Handler(DockerProxy(sock, log), nil, nil, nil, nil))
+	old := httptest.NewServer(Handler(DockerProxy(sock, log), nil, nil, nil, nil, nil, nil))
 	defer old.Close()
 	resp, err := http.Post(old.URL+ArchivePath, "application/json", strings.NewReader(`{}`))
 	if err != nil {

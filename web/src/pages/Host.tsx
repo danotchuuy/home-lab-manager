@@ -1,11 +1,12 @@
 import { Fragment, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { StackedBar, TimeSeriesChart, usePoll } from "../components/charts";
 import { Ago, AppIcon, Spinner } from "../components/common";
 import { DiskCleanup } from "../components/DiskCleanup";
 import { DockerHosts } from "../components/DockerHosts";
 import { HostHistory, RangePicker } from "../components/ResourceHistory";
+import { UPSCard } from "../components/UPSCard";
 import type { HistoryRange, DataFolder, DeletedStorage, HostSnapshot, ServerStorage, StorageReport } from "../types";
 import { formatBytes, timeAgo } from "../util";
 
@@ -43,7 +44,9 @@ function Tile({ label, value, detail, percent }: { label: string; value: string;
 
 export function HostPage() {
   // Which Docker host the page is about.
-  const [selected, setSelected] = useState("local");
+  // ?host= picks one, as notifications about a host's UPS link to it.
+  const [params] = useSearchParams();
+  const [selected, setSelected] = useState(params.get("host") || "local");
   const [hostList] = usePoll(api.hosts, 30000);
   const otherHosts = hostList?.hosts.filter((h) => !h.local) ?? [];
   const local = selected === "local";
@@ -98,6 +101,7 @@ export function HostPage() {
           {" Disk usage per server is still shown below from Docker's figures."}
         </div>
       )}
+      <UPSCard hostId={selected} />
       {host?.available && <HostMetrics key={selected} host={host} hostId={selected} />}
 
       <StorageSection
